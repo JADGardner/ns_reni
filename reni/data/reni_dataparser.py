@@ -20,8 +20,9 @@ from pathlib import Path
 from typing import Type
 
 import imageio
-import numpy as np
 import torch
+import wget
+import zipfile
 
 from nerfstudio.cameras.cameras import Cameras, CameraType
 from nerfstudio.data.dataparsers.base_dataparser import (
@@ -29,77 +30,68 @@ from nerfstudio.data.dataparsers.base_dataparser import (
     DataParserConfig,
     DataparserOutputs,
 )
-from nerfstudio.data.scene_box import SceneBox
-from nerfstudio.utils.colors import get_color
-from nerfstudio.utils.io import load_from_json
 
 
 @dataclass
 class RENIDataParserConfig(DataParserConfig):
-    """Blender dataset parser config"""
+    """RENI dataset parser config"""
 
     _target: Type = field(default_factory=lambda: RENIDataParser)
     """target class to instantiate"""
-    data: Path = Path("data/blender/lego")
+    data: Path = Path("data/RENI_HDR")
     """Directory specifying location of data."""
+    download_data: bool = False
+    """Whether to download data."""
     convert_to_ldr: bool = False
     """Whether to convert images to LDR."""
+    augment_with_mirror: bool = False
+    """Whether to augment with mirror images."""
 
 
 @dataclass
 class RENIDataParser(DataParser):
-    """Blender Dataset
-    Some of this code comes from https://github.com/yenchenlin/nerf-pytorch/blob/master/load_blender.py#L37.
-    """
+    """RENI Dataparser"""
 
-    config: BlenderDataParserConfig
+    config: RENIDataParserConfig
 
-    def __init__(self, config: BlenderDataParserConfig):
+    def __init__(self, config: RENIDataParserConfig):
         super().__init__(config=config)
         self.data: Path = config.data
-        self.scale_factor: float = config.scale_factor
-        self.alpha_color = config.alpha_color
 
     def _generate_dataparser_outputs(self, split="train"):
-        if self.alpha_color is not None:
-            alpha_color_tensor = get_color(self.alpha_color)
-        else:
-            alpha_color_tensor = None
+        path = self.data / split
 
-        meta = load_from_json(self.data / f"transforms_{split}.json")
-        image_filenames = []
-        poses = []
-        for frame in meta["frames"]:
-            fname = self.data / Path(frame["file_path"].replace("./", "") + ".png")
-            image_filenames.append(fname)
-            poses.append(np.array(frame["transform_matrix"]))
-        poses = np.array(poses).astype(np.float32)
+        # if it doesn't exist, download the data
+        url = "https://www.dropbox.com/s/15gn7zlzgua7s8n/RENI_HDR.zip?dl=1"
+        if not path.exists() and self.config.download_data:
+            wget.download(url, out=str(self.data) + ".zip")
+            with zipfile.ZipFile(str(self.data) + ".zip", "r") as zip_ref:
+                zip_ref.extractall(str(self.data))
+            Path(str(self.data) + ".zip").unlink()
+        else:
+            raise ValueError("Data not found. Please check path or download the data.")
+        
+        # get paths for all images in the directory
+        image_filenames = sorted(path.glob("*.exr"))
 
         img_0 = imageio.v2.imread(image_filenames[0])
         image_height, image_width = img_0.shape[:2]
-        camera_angle_x = float(meta["camera_angle_x"])
-        focal_length = 0.5 * image_width / np.tan(0.5 * camera_angle_x)
+        num_images = len(image_filenames)
 
-        cx = image_width / 2.0
-        cy = image_height / 2.0
-        camera_to_world = torch.from_numpy(poses[:, :3])  # camera to world transform
+        cx = torch.tensor(image_width // 2, dtype=torch.float32).repeat(num_images)
+        cy = torch.tensor(image_height // 2, dtype=torch.float32).repeat(num_images)
+        fx = torch.tensor(image_height, dtype=torch.float32).repeat(num_images)
+        fy = torch.tensor(image_height, dtype=torch.float32).repeat(num_images)
 
-        # in x,y,z order
-        camera_to_world[..., 3] *= self.scale_factor
-        scene_box = SceneBox(aabb=torch.tensor([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]], dtype=torch.float32))
-        
-        cameras = Cameras(
-            camera_to_worlds=camera_to_world,
-            fx=focal_length,
-            fy=focal_length,
-            cx=cx,
-            cy=cy,
-            camera_type=CameraType.EQUIRECTANGULAR,
-        )
+        c2w = torch.eye(4)[None, :3, :].repeat(num_images, 1, 1)
+
+        cameras = Cameras(fx=fx, fy=fy, cx=cx, cy=cy, camera_to_worlds=c2w, camera_type=CameraType.EQUIRECTANGULAR)
 
         dataparser_outputs = DataparserOutputs(
             image_filenames=image_filenames,
             cameras=cameras,
+            metadata={'convert_to_ldr': self.config.convert_to_ldr,
+                      'augment_with_mirror': self.config.augment_with_mirror}
         )
 
         return dataparser_outputs

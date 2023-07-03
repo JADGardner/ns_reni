@@ -18,27 +18,28 @@ Base class for the graphs.
 
 from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import Literal, Type
+from typing import Literal, Type, Union
 
 import torch
 from torch import nn
 
 from nerfstudio.configs.base_config import InstantiateConfig
+from nerfstudio.cameras.rays import Frustums, RaySamples, RayBundle
 
 
 # Field related configs
 @dataclass
-class IlluminationFieldConfig(InstantiateConfig):
+class SphericalIlluminationFieldConfig(InstantiateConfig):
     """Configuration for model instantiation"""
 
-    _target: Type = field(default_factory=lambda: IlluminationField)
+    _target: Type = field(default_factory=lambda: SphericalIlluminationField)
     """target class to instantiate"""
 
 
-class IlluminationField(nn.Module):
+class SphericalIlluminationField(nn.Module):
     """Base class for illumination fields."""
 
-    config: IlluminationFieldConfig
+    config: SphericalIlluminationFieldConfig
 
     def __init__(
         self,
@@ -59,17 +60,12 @@ class IlluminationField(nn.Module):
     def get_latents(self):
         """Returns the latents of the field."""
 
-    @abstractmethod
-    def set_no_grad(self):
-        """Sets the latents of the field to no_grad."""
-
-    def forward(self, camera_indices, positions, directions, rotation=None):
-        """Evaluates illumination field for cameras and directions.
+    def forward(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None]):
+        """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:
-            camera_indicies: [rays_per_batch, samples_per_ray]
-            positions: [rays_per_batch, samples_per_ray, 3]
-            directions: [num_directions, 3] -> Nerfstudio Convention
+            ray_bundle: [num_rays, 3]
+            rotation: [3, 3]
         """
         unique_indices, inverse_indices = torch.unique(camera_indices, return_inverse=True)
         illumination_colours, illumination_directions = self.get_outputs(

@@ -1,0 +1,13 @@
+[project]
+name = "ns_reni"
+version = "0.1.0"
+
+dependencies=[
+    "nerfstudio>=0.2.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["reni*"]
+
+[project.entry-points.'nerfstudio.method_configs']
+reni_neus = 'reni_neus.reni_neus_config:RENINeuS'
