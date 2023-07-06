@@ -42,16 +42,16 @@ from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import profiler
 from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig, VanillaPipeline
 
-from reni_neus.data.reni_neus_datamanager import RENINeuSDataManagerConfig, RENINeuSDataManager
+from reni.data.reni_datamanager import RENIDataManagerConfig, RENIDataManager
 
 
 @dataclass
-class RENINeuSPipelineConfig(VanillaPipelineConfig):
+class RENIPipelineConfig(VanillaPipelineConfig):
     """Configuration for pipeline instantiation"""
 
-    _target: Type = field(default_factory=lambda: RENINeuSPipeline)
+    _target: Type = field(default_factory=lambda: RENIPipeline)
     """target class to instantiate"""
-    datamanager: DataManagerConfig = RENINeuSDataManagerConfig()
+    datamanager: DataManagerConfig = RENIDataManagerConfig()
     """specifies the datamanager config"""
     model: ModelConfig = ModelConfig()
     """specifies the model config"""
@@ -63,7 +63,7 @@ class RENINeuSPipelineConfig(VanillaPipelineConfig):
     """Learning rate for latent optimisation during eval"""
 
 
-class RENINeuSPipeline(VanillaPipeline):
+class RENIPipeline(VanillaPipeline):
     """The pipeline class for the vanilla nerf setup of multiple cameras for one or a few scenes.
 
     Args:
@@ -83,7 +83,7 @@ class RENINeuSPipeline(VanillaPipeline):
 
     def __init__(
         self,
-        config: RENINeuSPipelineConfig,
+        config: RENIPipelineConfig,
         device: str,
         test_mode: Literal["test", "val", "inference"] = "val",
         world_size: int = 1,
@@ -92,7 +92,7 @@ class RENINeuSPipeline(VanillaPipeline):
         super(VanillaPipeline, self).__init__()  # Call grandparent class constructor ignoring parent class
         self.config = config
         self.test_mode = test_mode
-        self.datamanager: RENINeuSDataManager = config.datamanager.setup(
+        self.datamanager: RENIDataManager = config.datamanager.setup(
             device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank
         )
         self.datamanager.to(device)
@@ -101,15 +101,13 @@ class RENINeuSPipeline(VanillaPipeline):
         if test_mode in ["val", "test"]:
             assert self.datamanager.eval_dataset is not None, "Missing validation dataset"
 
-        num_test_data = self.datamanager.num_test
-        num_val_data = self.datamanager.num_val
+        num_train_data = self.datamanager.num_train
+        num_eval_data = self.datamanager.num_eval
 
         self._model = config.model.setup(
-            scene_box=self.datamanager.train_dataset.scene_box,
-            num_train_data=len(self.datamanager.train_dataset),
-            num_val_data=num_val_data,
-            num_test_data=num_test_data,
-            test_mode=test_mode,
+            scene_box=None,
+            num_train_data=num_train_data,
+            num_eval_data=num_eval_data,
             metadata=self.datamanager.train_dataset.metadata,
         )
         self.model.to(device)
@@ -126,16 +124,6 @@ class RENINeuSPipeline(VanillaPipeline):
         we do not need a forward() method"""
         raise NotImplementedError
 
-    def _optimise_evaluation_latents(self):
-        # If we are optimising per eval image latents then we need to do that first
-        if self.config.eval_latent_optimisation_source in ["envmap", "image_half", "image_full"]:
-            self.model.fit_latent_codes_for_eval(
-                datamanager=self.datamanager,
-                gt_source=self.config.eval_latent_optimisation_source,
-                epochs=self.config.eval_latent_optimisation_epochs,
-                learning_rate=self.config.eval_latent_optimisation_lr,
-            )
-
     @profiler.time_function
     def get_train_loss_dict(self, step: int):
         """This function gets your training loss dict. This will be responsible for
@@ -146,7 +134,7 @@ class RENINeuSPipeline(VanillaPipeline):
             step: current iteration step to update sampler if using DDP (distributed)
         """
         ray_bundle, batch = self.datamanager.next_train(step)
-        model_outputs = self._model(ray_bundle, batch=batch)  # train distributed data parallel model if world_size > 1
+        model_outputs = self._model(ray_bundle)  # train distributed data parallel model if world_size > 1
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
 
         if self.config.datamanager.camera_optimizer is not None:
@@ -160,7 +148,7 @@ class RENINeuSPipeline(VanillaPipeline):
                     self.datamanager.get_param_groups()[camera_opt_param_group][0].data[:, 3:].norm()
                 )
 
-        loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
+        loss_dict = self.model.get_loss_dict(model_outputs, batch, ray_bundle, metrics_dict)
 
         return model_outputs, loss_dict, metrics_dict
     
@@ -172,9 +160,9 @@ class RENINeuSPipeline(VanillaPipeline):
         Args:
             step: current iteration step
         """
-        self._optimise_evaluation_latents()
         self.eval()
         ray_bundle, batch = self.datamanager.next_eval(step)
+        self._model.fit_eval_latents(ray_bundle, batch)
         model_outputs = self.model(ray_bundle)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
@@ -189,10 +177,10 @@ class RENINeuSPipeline(VanillaPipeline):
         Args:
             step: current iteration step
         """
-        self._optimise_evaluation_latents()
         self.eval()
         image_idx, camera_ray_bundle, batch = self.datamanager.next_eval_image(step)
-        outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle, show_progress=True)
+        self.model.fit_eval_latents(camera_ray_bundle, batch)
+        outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
         metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
         assert "image_idx" not in metrics_dict
         metrics_dict["image_idx"] = image_idx
@@ -208,10 +196,11 @@ class RENINeuSPipeline(VanillaPipeline):
         Returns:
             metrics_dict: dictionary of metrics
         """
-        self._optimise_evaluation_latents()
         self.eval()
         metrics_dict_list = []
         num_images = len(self.datamanager.fixed_indices_eval_dataloader)
+        # get all eval images
+
         with Progress(
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Type
+from typing import Type, Union
 
 import imageio
 import torch
@@ -46,6 +46,8 @@ class RENIDataParserConfig(DataParserConfig):
     """Whether to convert images to LDR."""
     augment_with_mirror: bool = False
     """Whether to augment with mirror images."""
+    train_subset_size: Union[int, None] = None
+    """Size of training subset."""
 
 
 @dataclass
@@ -59,6 +61,7 @@ class RENIDataParser(DataParser):
         self.data: Path = config.data
 
     def _generate_dataparser_outputs(self, split="train"):
+        split = 'train'
         path = self.data / split
 
         # if it doesn't exist, download the data
@@ -68,11 +71,12 @@ class RENIDataParser(DataParser):
             with zipfile.ZipFile(str(self.data) + ".zip", "r") as zip_ref:
                 zip_ref.extractall(str(self.data))
             Path(str(self.data) + ".zip").unlink()
-        else:
-            raise ValueError("Data not found. Please check path or download the data.")
-        
+
         # get paths for all images in the directory
         image_filenames = sorted(path.glob("*.exr"))
+
+        if self.config.train_subset_size and split == "train":
+            image_filenames = image_filenames[: self.config.train_subset_size]
 
         img_0 = imageio.v2.imread(image_filenames[0])
         image_height, image_width = img_0.shape[:2]

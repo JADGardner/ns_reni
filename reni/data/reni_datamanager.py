@@ -105,7 +105,6 @@ class RENIDataManager(VanillaDataManager):
         local_rank: int = 0,
         **kwargs,
     ):
-        self.dataset_type: Type[RENIDataset] = kwargs.get("_dataset_type", getattr(RENIDataset, "__default__"))
         self.config = config
         self.device = device
         self.world_size = world_size
@@ -124,6 +123,9 @@ class RENIDataManager(VanillaDataManager):
 
         self.train_dataset = self.create_train_dataset()
         self.eval_dataset = self.create_eval_dataset()
+
+        self.num_train = len(self.train_dataset)
+        self.num_eval = len(self.eval_dataset)
 
         if self.train_dataparser_outputs is not None:
             cameras = self.train_dataparser_outputs.cameras
@@ -145,14 +147,14 @@ class RENIDataManager(VanillaDataManager):
 
     def create_train_dataset(self) -> RENIDataset:
         """Sets up the data loaders for training"""
-        return self.dataset_type(
+        return RENIDataset(
             dataparser_outputs=self.train_dataparser_outputs,
             scale_factor=self.config.camera_res_scale_factor,
         )
 
     def create_eval_dataset(self) -> RENIDataset:
         """Sets up the data loaders for evaluation"""
-        return self.dataset_type(
+        return RENIDataset(
             dataparser_outputs=self.dataparser.get_dataparser_outputs(split=self.test_split),
             scale_factor=self.config.camera_res_scale_factor,
         )

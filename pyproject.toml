@@ -10,4 +10,4 @@ dependencies=[
 include = ["reni*"]
 
 [project.entry-points.'nerfstudio.method_configs']
-reni_neus = 'reni_neus.reni_neus_config:RENINeuS'
+reni = 'reni.reni_config:RENIField'

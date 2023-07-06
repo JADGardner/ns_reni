@@ -26,7 +26,7 @@ from nerfstudio.engine.trainer import TrainerConfig
 
 from reni.data.reni_dataparser import RENIDataParserConfig
 from reni.data.reni_datamanager import RENIDataManagerConfig
-from reni.model.reni_model import RENIModelConfig
+from reni.reni_model import RENIModelConfig
 from reni.reni_pipeline import RENIPipelineConfig
 from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
 
@@ -43,11 +43,27 @@ RENIField = MethodSpecification(
         pipeline=RENIPipelineConfig(
             datamanager=RENIDataManagerConfig(
                 dataparser=RENIDataParserConfig(
+                    download_data=True,
+                    train_subset_size=1,
+                    convert_to_ldr=False,
                 ),
+                train_num_rays_per_batch=8192,
             ),
             model=RENIModelConfig(
                 field=RENIFieldConfig(
+                    equivariance="SO2",
+                    positional_encoding="None",
+                    latent_dim=36,
+                    hidden_features=256,
+                    hidden_layers=9,
+                    output_activation="exp",
+                    split_head=True,
                 ),
+                loss_coefficients={
+                    "rgb_hdr_loss": 0.1,
+                    "rgb_ldr_loss": 10.0,
+                    "kld_loss": 0.0001,
+                }
             ),
         ),
         optimizers={
@@ -57,7 +73,7 @@ RENIField = MethodSpecification(
             },
         },
         viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
-        vis="viewer",
+        vis="wandb",
     ),
     description="Base config for Directional Distance Field.",
 )

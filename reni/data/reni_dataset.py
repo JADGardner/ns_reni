@@ -29,6 +29,7 @@ from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
 from nerfstudio.data.datasets.base_dataset import InputDataset
 
+from reni.utils.colourspace import linear_to_sRGB
 
 class RENIDataset(InputDataset):
     """Dataset that returns images.
@@ -53,7 +54,7 @@ class RENIDataset(InputDataset):
             image_idx: The image index in the dataset.
         """
         image_filename = self._dataparser_outputs.image_filenames[image_idx]
-        image = imageio.imread(image_filename, dtype=np.float32)
+        image = imageio.imread(image_filename).astype("float32")
         if self.scale_factor != 1.0:
             width, height = image.shape[1], image.shape[0]
             newsize = (int(width * self.scale_factor), int(height * self.scale_factor))
@@ -74,4 +75,6 @@ class RENIDataset(InputDataset):
         """
         image = torch.from_numpy(self.get_numpy_image(image_idx).astype("float32"))
         image = image[:, :, :3] # remove alpha channel if present
+        if self._dataparser_outputs.metadata["convert_to_ldr"]:
+            image = linear_to_sRGB(image)
         return image

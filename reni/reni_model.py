@@ -26,6 +26,7 @@ from torch.nn import Parameter
 from torchmetrics import PeakSignalNoiseRatio
 from torchmetrics.functional import structural_similarity_index_measure
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
+from torch.nn import KLDivLoss
 
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.configs.config_utils import to_immutable_dict
@@ -43,28 +44,25 @@ from nerfstudio.model_components.renderers import (
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import colormaps, colors, misc
 
+from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
+from reni.field_components.field_heads import RENIFieldHeadNames
+from reni.model_components.losses import WeightedMSE, KLD
+from reni.utils.colourspace import linear_to_sRGB
 
 @dataclass
 class RENIModelConfig(ModelConfig):
     """Vanilla Model Config"""
 
     _target: Type = field(default_factory=lambda: RENIModel)
-    num_coarse_samples: int = 64
-    """Number of samples in coarse field evaluation"""
-    num_importance_samples: int = 128
-    """Number of samples in fine field evaluation"""
-
-    enable_temporal_distortion: bool = False
-    """Specifies whether or not to include ray warping based on time."""
-    temporal_distortion_params: Dict[str, Any] = to_immutable_dict({"kind": TemporalDistortionKind.DNERF})
-    """Parameters to instantiate temporal distortion with"""
+    field: RENIFieldConfig = RENIFieldConfig()
+    """Field configuration"""
 
 
 class RENIModel(Model):
-    """Vanilla NeRF model
+    """Rotation-Equivariant Neural Illumination Model
 
     Args:
-        config: Basic NeRF configuration to instantiate model
+        config: Model config
     """
 
     config: RENIModelConfig
@@ -72,12 +70,10 @@ class RENIModel(Model):
     def __init__(
         self,
         config: RENIModelConfig,
+        num_eval_data: int,
         **kwargs,
     ) -> None:
-        self.field_coarse = None
-        self.field_fine = None
-        self.temporal_distortion = None
-
+        self.num_eval_data = num_eval_data
         super().__init__(
             config=config,
             **kwargs,
@@ -87,146 +83,123 @@ class RENIModel(Model):
         """Set the fields and modules"""
         super().populate_modules()
 
-        self.field = None
-
-        # samplers
-        self.sampler_uniform = UniformSampler(num_samples=self.config.num_coarse_samples)
-        self.sampler_pdf = PDFSampler(num_samples=self.config.num_importance_samples)
-
-        # renderers
-        self.renderer_rgb = RGBRenderer(background_color=colors.WHITE)
-        self.renderer_accumulation = AccumulationRenderer()
-        self.renderer_depth = DepthRenderer()
+        self.field = self.config.field.setup(num_train_data=self.num_train_data, num_eval_data=self.num_eval_data)
 
         # losses
-        self.rgb_loss = MSELoss()
+        self.rgb_loss = WeightedMSE()
+        self.kld_loss = KLD(Z_dims=self.field.latent_dim)
 
         # metrics
-        self.psnr = PeakSignalNoiseRatio(data_range=1.0)
+        self.psnr = PeakSignalNoiseRatio()
         self.ssim = structural_similarity_index_measure
         self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
 
-        if getattr(self.config, "enable_temporal_distortion", False):
-            params = self.config.temporal_distortion_params
-            kind = params.pop("kind")
-            self.temporal_distortion = kind.to_temporal_distortion(params)
-
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
         param_groups = {}
-        if self.field_coarse is None or self.field_fine is None:
-            raise ValueError("populate_fields() must be called before get_param_groups")
-        param_groups["fields"] = list(self.field_coarse.parameters()) + list(self.field_fine.parameters())
-        if self.temporal_distortion is not None:
-            param_groups["temporal_distortion"] = list(self.temporal_distortion.parameters())
+        param_groups["field"] = list(self.field.parameters())
         return param_groups
 
     def get_outputs(self, ray_bundle: RayBundle):
-        if self.field_coarse is None or self.field_fine is None:
+        if self.field is None:
             raise ValueError("populate_fields() must be called before get_outputs")
 
-        # uniform sampling
-        ray_samples_uniform = self.sampler_uniform(ray_bundle)
-        if self.temporal_distortion is not None:
-            offsets = None
-            if ray_samples_uniform.times is not None:
-                offsets = self.temporal_distortion(
-                    ray_samples_uniform.frustums.get_positions(), ray_samples_uniform.times
-                )
-            ray_samples_uniform.frustums.set_offsets(offsets)
-
-        # coarse field:
-        field_outputs_coarse = self.field_coarse.forward(ray_samples_uniform)
-        weights_coarse = ray_samples_uniform.get_weights(field_outputs_coarse[FieldHeadNames.DENSITY])
-        rgb_coarse = self.renderer_rgb(
-            rgb=field_outputs_coarse[FieldHeadNames.RGB],
-            weights=weights_coarse,
-        )
-        accumulation_coarse = self.renderer_accumulation(weights_coarse)
-        depth_coarse = self.renderer_depth(weights_coarse, ray_samples_uniform)
-
-        # pdf sampling
-        ray_samples_pdf = self.sampler_pdf(ray_bundle, ray_samples_uniform, weights_coarse)
-        if self.temporal_distortion is not None:
-            offsets = None
-            if ray_samples_pdf.times is not None:
-                offsets = self.temporal_distortion(ray_samples_pdf.frustums.get_positions(), ray_samples_pdf.times)
-            ray_samples_pdf.frustums.set_offsets(offsets)
-
-        # fine field:
-        field_outputs_fine = self.field_fine.forward(ray_samples_pdf)
-        weights_fine = ray_samples_pdf.get_weights(field_outputs_fine[FieldHeadNames.DENSITY])
-        rgb_fine = self.renderer_rgb(
-            rgb=field_outputs_fine[FieldHeadNames.RGB],
-            weights=weights_fine,
-        )
-        accumulation_fine = self.renderer_accumulation(weights_fine)
-        depth_fine = self.renderer_depth(weights_fine, ray_samples_pdf)
+        field_outputs = self.field.forward(ray_bundle, None)
 
         outputs = {
-            "rgb_coarse": rgb_coarse,
-            "rgb_fine": rgb_fine,
-            "accumulation_coarse": accumulation_coarse,
-            "accumulation_fine": accumulation_fine,
-            "depth_coarse": depth_coarse,
-            "depth_fine": depth_fine,
+            "rgb": field_outputs[RENIFieldHeadNames.RGB],
+            "mu": field_outputs[RENIFieldHeadNames.MU],
+            "log_var": field_outputs[RENIFieldHeadNames.LOG_VAR],
+            "hdr": field_outputs[RENIFieldHeadNames.HDR],
+            "ldr": field_outputs[RENIFieldHeadNames.LDR],
+            "mixing": field_outputs[RENIFieldHeadNames.MIXING],
         }
-        return outputs
 
-    def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
+        return outputs
+    
+    def get_metrics_dict(self, outputs, batch) -> Dict[str, torch.Tensor]:
+        
+        device = outputs["rgb"].device
+        image = batch["image"].to(device)
+                
+        psnr = self.psnr(image, outputs["rgb"])
+
+        metrics_dict = {"psnr": psnr}
+        return metrics_dict
+
+
+    def get_loss_dict(self, outputs, batch, ray_bundle, metrics_dict=None) -> Dict[str, torch.Tensor]:
         # Scaling metrics by coefficients to create the losses.
-        device = outputs["rgb_coarse"].device
+        device = outputs["rgb"].device
         image = batch["image"].to(device)
 
-        rgb_loss_coarse = self.rgb_loss(image, outputs["rgb_coarse"])
-        rgb_loss_fine = self.rgb_loss(image, outputs["rgb_fine"])
+        ldr_image = linear_to_sRGB(image)
+        # ldr_rgb = linear_to_sRGB(outputs["rgb"])
 
-        loss_dict = {"rgb_loss_coarse": rgb_loss_coarse, "rgb_loss_fine": rgb_loss_fine}
+        sineweight = self.get_sineweighting(ray_bundle.directions)
+        sineweight = sineweight.unsqueeze(-1).expand_as(outputs["rgb"])
+
+        rgb_hdr_loss = self.rgb_loss(outputs["hdr"], image, sineweight)
+        rgb_ldr_loss = self.rgb_loss(outputs["ldr"], ldr_image, sineweight)
+        kld_loss = self.kld_loss(outputs["mu"], outputs["log_var"])
+
+        loss_dict = {"rgb_hdr_loss": rgb_hdr_loss, "rgb_ldr_loss": rgb_ldr_loss, "kld_loss": kld_loss}
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
+
         return loss_dict
 
     def get_image_metrics_and_images(
         self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
     ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
-        image = batch["image"].to(outputs["rgb_coarse"].device)
-        rgb_coarse = outputs["rgb_coarse"]
-        rgb_fine = outputs["rgb_fine"]
-        acc_coarse = colormaps.apply_colormap(outputs["accumulation_coarse"])
-        acc_fine = colormaps.apply_colormap(outputs["accumulation_fine"])
-        assert self.config.collider_params is not None
-        depth_coarse = colormaps.apply_depth_colormap(
-            outputs["depth_coarse"],
-            accumulation=outputs["accumulation_coarse"],
-            near_plane=self.config.collider_params["near_plane"],
-            far_plane=self.config.collider_params["far_plane"],
-        )
-        depth_fine = colormaps.apply_depth_colormap(
-            outputs["depth_fine"],
-            accumulation=outputs["accumulation_fine"],
-            near_plane=self.config.collider_params["near_plane"],
-            far_plane=self.config.collider_params["far_plane"],
-        )
+        image = batch["image"].to(outputs["rgb"].device)
+        rgb = outputs["rgb"]
+        
+        image = linear_to_sRGB(image)
+        rgb = linear_to_sRGB(rgb)
 
-        combined_rgb = torch.cat([image, rgb_coarse, rgb_fine], dim=1)
-        combined_acc = torch.cat([acc_coarse, acc_fine], dim=1)
-        combined_depth = torch.cat([depth_coarse, depth_fine], dim=1)
+        combined_rgb = torch.cat([image, rgb], dim=1)
 
         # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
         image = torch.moveaxis(image, -1, 0)[None, ...]
-        rgb_coarse = torch.moveaxis(rgb_coarse, -1, 0)[None, ...]
-        rgb_fine = torch.moveaxis(rgb_fine, -1, 0)[None, ...]
+        rgb = torch.moveaxis(rgb, -1, 0)[None, ...]
 
-        coarse_psnr = self.psnr(image, rgb_coarse)
-        fine_psnr = self.psnr(image, rgb_fine)
-        fine_ssim = self.ssim(image, rgb_fine)
-        fine_lpips = self.lpips(image, rgb_fine)
-        assert isinstance(fine_ssim, torch.Tensor)
+        psnr = self.psnr(image, rgb)
+        ssim = self.ssim(image, rgb)
+        # lpips = self.lpips(image, rgb)
+        assert isinstance(ssim, torch.Tensor)
 
         metrics_dict = {
-            "psnr": float(fine_psnr.item()),
-            "coarse_psnr": float(coarse_psnr),
-            "fine_psnr": float(fine_psnr),
-            "fine_ssim": float(fine_ssim),
-            "fine_lpips": float(fine_lpips),
+            "psnr": float(psnr),
+            "ssim": float(ssim),
+            # "lpips": float(lpips),
         }
-        images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth}
+
+        mixing = outputs["mixing"] # [H, W, C]
+
+
+        images_dict = {"img": combined_rgb, "mixing": mixing}
+
         return metrics_dict, images_dict
+
+    def get_sineweighting(self, directions):
+        """
+          Returns a sineweight based on the vertical Z axis for a set of directions.
+          Assumes directions are normalized.
+        """
+        assert directions.shape[1] == 3
+        assert len(directions.shape) == 2
+
+        # Extract the z coordinates
+        z_coordinates = directions[:, 2]
+        
+        # The inclination angle (θ) is the angle from the positive z-axis, calculated as arccos(z)
+        theta = torch.acos(z_coordinates)
+        
+        # Calculate sineweight
+        sineweight = torch.sin(theta)
+        
+        return sineweight
+
+    def fit_eval_latents(self, ray_bundle, batch):
+        
+        with self.field.fixed_decoder(self.field):
+            pass
