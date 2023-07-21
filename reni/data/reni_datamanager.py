@@ -157,4 +157,5 @@ class RENIDataManager(VanillaDataManager):
         return RENIDataset(
             dataparser_outputs=self.dataparser.get_dataparser_outputs(split=self.test_split),
             scale_factor=self.config.camera_res_scale_factor,
+            min_max=self.train_dataset.metadata["min_max"],
         )

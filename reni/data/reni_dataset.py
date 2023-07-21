@@ -25,6 +25,8 @@ import imageio
 from PIL import Image
 from torch import Tensor
 
+from typing import Type, Union, Tuple, Dict
+
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
 from nerfstudio.data.datasets.base_dataset import InputDataset
@@ -41,8 +43,13 @@ class RENIDataset(InputDataset):
 
     cameras: Cameras
 
-    def __init__(self, dataparser_outputs: DataparserOutputs, scale_factor: float = 1.0):
+    def __init__(self, dataparser_outputs: DataparserOutputs, scale_factor: float = 1.0, min_max: Union[Tuple[float, float], None] = None):
         super().__init__(dataparser_outputs=dataparser_outputs, scale_factor=scale_factor)
+        self.min_max_normalize = self._dataparser_outputs.metadata["min_max_normalize"]
+        if self.min_max_normalize and min_max is None:
+            print("Computing min and max values of the dataset...")
+            min_max = self.get_dataset_min_max()
+        self.metadata["min_max"] = min_max
 
     def __len__(self):
         return len(self._dataparser_outputs.image_filenames)
@@ -77,4 +84,32 @@ class RENIDataset(InputDataset):
         image = image[:, :, :3] # remove alpha channel if present
         if self._dataparser_outputs.metadata["convert_to_ldr"]:
             image = linear_to_sRGB(image)
+        if self._dataparser_outputs.metadata["convert_to_log_domain"]:
+            image = torch.log(image + 1e-8)
+        if self._dataparser_outputs.metadata["min_max_normalize"]:
+            min_val, max_val = self.metadata["min_max"]
+            # convert to between -1 and 1
+            image = (image - min_val) / (max_val - min_val) * 2 - 1
         return image
+    
+    def get_dataset_min_max(self) -> Tuple[float, float]:
+        """Returns the min and max values of the dataset."""
+
+        # Initialize the min and max with the values from the first image.
+        first_image = torch.from_numpy(self.get_numpy_image(0).astype("float32"))
+        first_image = first_image[:, :, :3] # remove alpha channel if present
+        min_val = torch.min(first_image)
+        max_val = torch.max(first_image)
+
+        # Iterate over the rest of the images in the dataset.
+        for image_idx in range(1, len(self)):
+            image = torch.from_numpy(self.get_numpy_image(image_idx).astype("float32"))
+            image = image[:, :, :3] # remove alpha channel if present
+
+            # Update the min and max values.
+            min_val = min(min_val, torch.min(image))
+            max_val = max(max_val, torch.max(image))
+
+        return min_val.item(), max_val.item()
+
+        

@@ -74,6 +74,7 @@ class RENIModel(Model):
         **kwargs,
     ) -> None:
         self.num_eval_data = num_eval_data
+        self.metadata = kwargs["metadata"]
         super().__init__(
             config=config,
             **kwargs,
@@ -83,7 +84,7 @@ class RENIModel(Model):
         """Set the fields and modules"""
         super().populate_modules()
 
-        self.field = self.config.field.setup(num_train_data=self.num_train_data, num_eval_data=self.num_eval_data)
+        self.field = self.config.field.setup(num_train_data=self.num_train_data, num_eval_data=self.num_eval_data, min_max=self.metadata['min_max'])
 
         # losses
         self.rgb_loss = WeightedMSE()
@@ -109,10 +110,12 @@ class RENIModel(Model):
             "rgb": field_outputs[RENIFieldHeadNames.RGB],
             "mu": field_outputs[RENIFieldHeadNames.MU],
             "log_var": field_outputs[RENIFieldHeadNames.LOG_VAR],
-            "hdr": field_outputs[RENIFieldHeadNames.HDR],
-            "ldr": field_outputs[RENIFieldHeadNames.LDR],
-            "mixing": field_outputs[RENIFieldHeadNames.MIXING],
         }
+
+        if self.field.split_head:
+            outputs["hdr"] = field_outputs[RENIFieldHeadNames.HDR]
+            outputs["ldr"] = field_outputs[RENIFieldHeadNames.LDR]
+            outputs["mixing"] = field_outputs[RENIFieldHeadNames.MIXING]
 
         return outputs
     
@@ -132,19 +135,25 @@ class RENIModel(Model):
         device = outputs["rgb"].device
         image = batch["image"].to(device)
 
-        ldr_image = linear_to_sRGB(image)
-        # ldr_rgb = linear_to_sRGB(outputs["rgb"])
-
         sineweight = self.get_sineweighting(ray_bundle.directions)
         sineweight = sineweight.unsqueeze(-1).expand_as(outputs["rgb"])
 
-        rgb_hdr_loss = self.rgb_loss(outputs["hdr"], image, sineweight)
-        rgb_ldr_loss = self.rgb_loss(outputs["ldr"], ldr_image, sineweight)
+        loss_dict = {}
+
+        if self.field.split_head:
+            ldr_image = linear_to_sRGB(image)
+            rgb_hdr_loss = self.rgb_loss(outputs["hdr"], image, sineweight)
+            rgb_ldr_loss = self.rgb_loss(outputs["ldr"], ldr_image, sineweight)
+            loss_dict['rgb_hdr_loss'] = rgb_hdr_loss
+            loss_dict['rgb_ldr_loss'] = rgb_ldr_loss
+        else:
+            rgb_hdr_loss = self.rgb_loss(outputs["rgb"], image, sineweight)
+            loss_dict['rgb_hdr_loss'] = rgb_hdr_loss
+
         kld_loss = self.kld_loss(outputs["mu"], outputs["log_var"])
+        loss_dict["kld_loss"] = kld_loss
 
-        loss_dict = {"rgb_hdr_loss": rgb_hdr_loss, "rgb_ldr_loss": rgb_ldr_loss, "kld_loss": kld_loss}
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
-
         return loss_dict
 
     def get_image_metrics_and_images(
@@ -152,9 +161,22 @@ class RENIModel(Model):
     ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
         image = batch["image"].to(outputs["rgb"].device)
         rgb = outputs["rgb"]
+
+        if self.metadata["min_max_normalize"]:
+            min_val, max_val = self.metadata["min_max"]
+            # ned to unnormalize the image from between -1 and 1
+            image = 0.5 * (image + 1) * (max_val - min_val) + min_val
+            rgb = 0.5 * (rgb + 1) * (max_val - min_val) + min_val
         
-        image = linear_to_sRGB(image)
-        rgb = linear_to_sRGB(rgb)
+        if self.metadata['convert_to_log_domain']:
+            # undo log domain conversion
+            image = torch.exp(image)
+            rgb = torch.exp(rgb)
+
+        if not self.metadata['convert_to_ldr']:
+            # convert from linear HDR to sRGB for viewing
+            image = linear_to_sRGB(image)
+            rgb = linear_to_sRGB(rgb)
 
         combined_rgb = torch.cat([image, rgb], dim=1)
 
@@ -164,7 +186,7 @@ class RENIModel(Model):
 
         psnr = self.psnr(image, rgb)
         ssim = self.ssim(image, rgb)
-        # lpips = self.lpips(image, rgb)
+        # lpips = self.lpips(image, rgb) # TODO Needs -1 to 1 range
         assert isinstance(ssim, torch.Tensor)
 
         metrics_dict = {
@@ -173,10 +195,13 @@ class RENIModel(Model):
             # "lpips": float(lpips),
         }
 
-        mixing = outputs["mixing"] # [H, W, C]
+        images_dict = {}
 
+        if self.field.split_head:
+          mixing = outputs["mixing"] # [H, W, C]
+          images_dict["mixing"] = mixing
 
-        images_dict = {"img": combined_rgb, "mixing": mixing}
+        images_dict["img"] = combined_rgb
 
         return metrics_dict, images_dict
 
@@ -193,13 +218,13 @@ class RENIModel(Model):
         
         # The inclination angle (θ) is the angle from the positive z-axis, calculated as arccos(z)
         theta = torch.acos(z_coordinates)
-        
+
         # Calculate sineweight
         sineweight = torch.sin(theta)
-        
+
         return sineweight
 
     def fit_eval_latents(self, ray_bundle, batch):
-        
-        with self.field.fixed_decoder(self.field):
+        """Fit eval latents"""
+        with self.field.fixed_decoder():
             pass

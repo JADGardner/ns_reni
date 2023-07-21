@@ -14,11 +14,12 @@
 
 """RENI field"""
 
-from typing import Literal, Type, Union, Optional, Dict, Union
+from typing import Literal, Type, Union, Optional, Dict, Union, Tuple
 from dataclasses import dataclass, field
 import wget
 import zipfile
 import os
+import contextlib
 
 import numpy as np
 import torch
@@ -163,6 +164,7 @@ class RENIField(ConditionalSphericalField):
         config: RENIFieldConfig,
         num_train_data: int,
         num_eval_data: int,
+        min_max: Union[Tuple[float, float], None] = None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -178,9 +180,11 @@ class RENIField(ConditionalSphericalField):
         self.output_activation = self.config.output_activation
         self.first_omega_0 = self.config.first_omega_0
         self.hidden_omega_0 = self.config.hidden_omega_0
+        self.split_head = self.config.split_head
         
         self.num_train_data = num_train_data
         self.num_eval_data = num_eval_data
+        self.min_max = min_max
 
         train_mu, train_logvar = self.init_latent_codes(self.num_train_data)
         eval_mu, eval_logvar = self.init_latent_codes(self.num_eval_data)
@@ -199,29 +203,27 @@ class RENIField(ConditionalSphericalField):
                 for param in value.parameters():
                     param.requires_grad = False
 
-    class fixed_decoder:
+    @contextlib.contextmanager
+    def fixed_decoder(self):
         """Context manager to fix the decoder weights
 
         Example usage:
         ```
-        with instance_of_RENIField.fixed_decoder(instance_of_RENIField):
+        with instance_of_RENIField.fixed_decoder():
             # do stuff
-        
+        ```
         """
-        def __init__(self, outer):
-            self.outer = outer
-
-        def __enter__(self):
-            self.prev_state = {k: p.requires_grad for k, p in self.outer.named_parameters() if 'siren' in k}
-            for name, param in self.outer.named_parameters():
+        prev_state = {k: p.requires_grad for k, p in self.named_parameters() if 'siren' in k}
+        for name, param in self.named_parameters():
+            if 'siren' in name:
+                param.requires_grad_(False)
+        try:
+            yield
+        finally:
+            for name, param in self.named_parameters():
                 if 'siren' in name:
-                    param.requires_grad_(False)
-            return self
+                    param.requires_grad_(prev_state[name])
 
-        def __exit__(self, type, value, traceback):
-            for name, param in self.outer.named_parameters():
-                if 'siren' in name:
-                    param.requires_grad_(self.prev_state[name])
 
     def setup_network(self):
         # TODO handle FiLM

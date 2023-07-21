@@ -44,8 +44,10 @@ RENIField = MethodSpecification(
             datamanager=RENIDataManagerConfig(
                 dataparser=RENIDataParserConfig(
                     download_data=True,
-                    train_subset_size=1,
+                    train_subset_size=10,
                     convert_to_ldr=False,
+                    convert_to_log_domain=True,
+                    min_max_normalize=True,
                 ),
                 train_num_rays_per_batch=8192,
             ),
@@ -54,13 +56,13 @@ RENIField = MethodSpecification(
                     equivariance="SO2",
                     positional_encoding="None",
                     latent_dim=36,
-                    hidden_features=256,
-                    hidden_layers=9,
-                    output_activation="exp",
-                    split_head=True,
+                    hidden_features=128,
+                    hidden_layers=5,
+                    output_activation="None",
+                    split_head=False,
                 ),
                 loss_coefficients={
-                    "rgb_hdr_loss": 0.1,
+                    "rgb_hdr_loss": 1.0,
                     "rgb_ldr_loss": 10.0,
                     "kld_loss": 0.0001,
                 }
@@ -68,7 +70,7 @@ RENIField = MethodSpecification(
         ),
         optimizers={
             "field": {
-                "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
+                "optimizer": AdamOptimizerConfig(lr=1e-5, eps=1e-15),
                 "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=20001),
             },
         },

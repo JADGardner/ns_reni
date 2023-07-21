@@ -44,10 +44,14 @@ class RENIDataParserConfig(DataParserConfig):
     """Whether to download data."""
     convert_to_ldr: bool = False
     """Whether to convert images to LDR."""
+    convert_to_log_domain: bool = False
+    """Whether to convert images to log domain."""
     augment_with_mirror: bool = False
     """Whether to augment with mirror images."""
     train_subset_size: Union[int, None] = None
     """Size of training subset."""
+    min_max_normalize: bool = False
+    """Whether to min-max normalize the images."""
 
 
 @dataclass
@@ -61,7 +65,7 @@ class RENIDataParser(DataParser):
         self.data: Path = config.data
 
     def _generate_dataparser_outputs(self, split="train"):
-        split = 'train'
+        split = 'train' # TODO don't hardcode this, just for testing
         path = self.data / split
 
         # if it doesn't exist, download the data
@@ -95,7 +99,9 @@ class RENIDataParser(DataParser):
             image_filenames=image_filenames,
             cameras=cameras,
             metadata={'convert_to_ldr': self.config.convert_to_ldr,
-                      'augment_with_mirror': self.config.augment_with_mirror}
+                      'convert_to_log_domain': self.config.convert_to_log_domain,
+                      'augment_with_mirror': self.config.augment_with_mirror,
+                      'min_max_normalize': self.config.min_max_normalize}
         )
 
         return dataparser_outputs
