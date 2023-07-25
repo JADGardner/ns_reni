@@ -111,6 +111,7 @@ class Siren(nn.Module):
 
         self.net = nn.Sequential(*self.net)
         
-    def forward(self, coords):
-        output = self.net(coords)
+    def forward(self, model_input):
+        """Forward pass through the network"""
+        output = self.net(model_input)
         return output  

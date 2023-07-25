@@ -65,7 +65,7 @@ class RENIDataParser(DataParser):
         self.data: Path = config.data
 
     def _generate_dataparser_outputs(self, split="train"):
-        split = 'train' # TODO don't hardcode this, just for testing
+        # split = 'train' # TODO don't hardcode this, just for testing
         path = self.data / split
 
         # if it doesn't exist, download the data

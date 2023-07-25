@@ -46,22 +46,24 @@ from reni.data.reni_datamanager import RENIDataManagerConfig, RENIDataManager
 
 
 @dataclass
-class RENIPipelineConfig(VanillaPipelineConfig):
+class RESGANPipelineConfig(VanillaPipelineConfig):
     """Configuration for pipeline instantiation"""
 
-    _target: Type = field(default_factory=lambda: RENIPipeline)
+    _target: Type = field(default_factory=lambda: RESGANPipeline)
     """target class to instantiate"""
     datamanager: DataManagerConfig = RENIDataManagerConfig()
     """specifies the datamanager config"""
     model: ModelConfig = ModelConfig()
     """specifies the model config"""
+    eval_latent_optimisation_source: Literal["none", "envmap", "image_half", "image_full"] = "image_half"
+    """Source for latent optimisation during eval"""
     eval_latent_optimisation_epochs: int = 100
     """Number of epochs to optimise latent during eval"""
     eval_latent_optimisation_lr: float = 0.1
     """Learning rate for latent optimisation during eval"""
 
 
-class RENIPipeline(VanillaPipeline):
+class RESGANPipeline(VanillaPipeline):
     """The pipeline class for the vanilla nerf setup of multiple cameras for one or a few scenes.
 
     Args:
@@ -81,7 +83,7 @@ class RENIPipeline(VanillaPipeline):
 
     def __init__(
         self,
-        config: RENIPipelineConfig,
+        config: RESGANPipelineConfig,
         device: str,
         test_mode: Literal["test", "val", "inference"] = "val",
         world_size: int = 1,
@@ -114,9 +116,6 @@ class RENIPipeline(VanillaPipeline):
         if world_size > 1:
             self._model = typing.cast(Model, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
             dist.barrier(device_ids=[local_rank])
-
-
-        self.last_step_of_eval_optimisation = 0
 
     def forward(self):
         """Blank forward method
@@ -162,10 +161,8 @@ class RENIPipeline(VanillaPipeline):
             step: current iteration step
         """
         self.eval()
-        if self.last_step_of_eval_optimisation != step:
-            self._model.fit_eval_latents(self.datamanager)
-            self.last_step_of_eval_optimisation = step
         ray_bundle, batch = self.datamanager.next_eval(step)
+        self._model.fit_eval_latents(ray_bundle, batch)
         model_outputs = self.model(ray_bundle)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
@@ -181,10 +178,8 @@ class RENIPipeline(VanillaPipeline):
             step: current iteration step
         """
         self.eval()
-        if self.last_step_of_eval_optimisation != step:
-            self._model.fit_eval_latents(self.datamanager)
-            self.last_step_of_eval_optimisation = step
         image_idx, camera_ray_bundle, batch = self.datamanager.next_eval_image(step)
+        self.model.fit_eval_latents(camera_ray_bundle, batch)
         outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
         metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
         assert "image_idx" not in metrics_dict
@@ -202,9 +197,6 @@ class RENIPipeline(VanillaPipeline):
             metrics_dict: dictionary of metrics
         """
         self.eval()
-        if self.last_step_of_eval_optimisation != step:
-            self._model.fit_eval_latents(self.datamanager)
-            self.last_step_of_eval_optimisation = step
         metrics_dict_list = []
         num_images = len(self.datamanager.fixed_indices_eval_dataloader)
         # get all eval images

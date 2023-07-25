@@ -48,7 +48,9 @@ class RENIDataset(InputDataset):
         self.min_max_normalize = self._dataparser_outputs.metadata["min_max_normalize"]
         if self.min_max_normalize and min_max is None:
             print("Computing min and max values of the dataset...")
-            min_max = self.get_dataset_min_max()
+            # min_max = self.get_dataset_min_max()
+            min_max = self.get_dataset_percentiles(0.3, 0.999)
+            print(f"Min and max values of the dataset are {min_max}.")
         self.metadata["min_max"] = min_max
 
     def __len__(self):
@@ -69,6 +71,13 @@ class RENIDataset(InputDataset):
             image = image.resize(newsize, Image.ANTIALIAS)
         if len(image.shape) == 2:
             image = image[:, :, None].repeat(3, axis=2)
+
+        # make any inf values equal to max non inf
+        image[image == np.inf] = np.nanmax(image[image != np.inf])
+        # make any values less than zero equal to min non negative
+        image[image <= 0] = np.nanmin(image[image > 0])
+        assert np.all(np.isfinite(image)), "Image contains non finite values."
+        assert np.all(image >= 0), "Image contains negative values."
         assert len(image.shape) == 3
         assert image.dtype == np.float32
         assert image.shape[2] in [3, 4], f"Image shape of {image.shape} is in correct."
@@ -98,6 +107,10 @@ class RENIDataset(InputDataset):
         # Initialize the min and max with the values from the first image.
         first_image = torch.from_numpy(self.get_numpy_image(0).astype("float32"))
         first_image = first_image[:, :, :3] # remove alpha channel if present
+
+        if self._dataparser_outputs.metadata["convert_to_log_domain"]:
+            first_image = torch.log(first_image + 1e-8)
+        
         min_val = torch.min(first_image)
         max_val = torch.max(first_image)
 
@@ -106,10 +119,39 @@ class RENIDataset(InputDataset):
             image = torch.from_numpy(self.get_numpy_image(image_idx).astype("float32"))
             image = image[:, :, :3] # remove alpha channel if present
 
+            if self._dataparser_outputs.metadata["convert_to_log_domain"]:
+                image = torch.log(image + 1e-8)
+
             # Update the min and max values.
             min_val = min(min_val, torch.min(image))
             max_val = max(max_val, torch.max(image))
 
         return min_val.item(), max_val.item()
 
+    def get_dataset_percentiles(self, lower_percentile=0.01, upper_percentile=0.99) -> Tuple[float, float]:
+        """Returns the lower and upper percentiles of the dataset."""
+
+        # Initialize the percentiles with the values from the first image.
+        first_image = torch.from_numpy(self.get_numpy_image(0).astype("float32"))
+        first_image = first_image[:, :, :3] # remove alpha channel if present
+
+        if self._dataparser_outputs.metadata["convert_to_log_domain"]:
+            first_image = torch.log(first_image + 1e-8)
         
+        lower_perc = torch.quantile(first_image, lower_percentile)
+        upper_perc = torch.quantile(first_image, upper_percentile)
+
+        # Iterate over the rest of the images in the dataset.
+        for image_idx in range(1, len(self)):
+            image = torch.from_numpy(self.get_numpy_image(image_idx).astype("float32"))
+            image = image[:, :, :3] # remove alpha channel if present
+
+            if self._dataparser_outputs.metadata["convert_to_log_domain"]:
+                image = torch.log(image + 1e-8)
+
+            # Update the percentiles.
+            lower_perc = min(lower_perc, torch.quantile(image, lower_percentile))
+            upper_perc = max(upper_perc, torch.quantile(image, upper_percentile))
+
+        return lower_perc.item(), upper_perc.item()
+

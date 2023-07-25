@@ -31,12 +31,12 @@ from nerfstudio.field_components.encodings import NeRFEncoding, SHEncoding, Enco
 
 from reni.illumination_fields.base_spherical_field import ConditionalSphericalField, ConditionalSphericalFieldConfig
 from reni.field_components.siren import Siren
+from reni.field_components.film_siren import FiLMSiren
 from reni.field_components.activations import ExpLayer
 from reni.field_components.field_heads import RENIFieldHeadNames
 
 def invariant_grammatrix_representation(
     Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2", 
-    conditioning: Literal["FiLM", "Concat"] = "Concat",
     axis_of_invariance: int = 1,
     posiiton_encoding: Union[Encoding, None] = None,
 ):
@@ -46,7 +46,6 @@ def invariant_grammatrix_representation(
         Z (torch.Tensor): Latent code (num_rays x latent_dim x 3)
         D (torch.Tensor): Direction coordinates (num_rays x 3)
         equivariance (str): Type of equivariance to use. Options are 'none', 'SO2', and 'SO3'
-        conditioning (str): Type of conditioning to use. Options are 'Concat' and 'FiLM'
         axis_of_invariance (int): The axis of rotation invariance. Should be 0 (x-axis), 1 (y-axis), or 2 (z-axis).
             Default is 1 (y-axis).
     Returns:
@@ -59,12 +58,7 @@ def invariant_grammatrix_representation(
     if equivariance == "None":
         innerprod = torch.bmm(D, torch.transpose(Z, 1, 2))
         z_input = Z.flatten(start_dim=1).unsqueeze(1).repeat(1, D.shape[1], 1)
-        if conditioning == "FiLM":
-            return innerprod, z_input
-        if conditioning == "Concat":
-            model_input = torch.cat((innerprod, z_input), 2)
-            return model_input
-        raise ValueError(f"Invalid conditioning type {conditioning}")
+        return innerprod, z_input
 
     if equivariance == "SO2":
         # Select components along axes orthogonal to the axis of invariance
@@ -78,37 +72,28 @@ def invariant_grammatrix_representation(
         # Flatten G to be size num_rays x latent_dim^2
         z_other_invar = G.flatten(start_dim=1)
 
+        # Get invariant component of Z along the axis of invariance 
+        z_invar = Z[:, :, axis_of_invariance] # [num_rays, latent_dim]
+
         # Innerprod is size num_rays x latent_dim
         innerprod = (z_other * d_other).sum(dim=-1) # [num_rays, latent_dim]
 
         # Compute norm along the axes orthogonal to the axis of invariance
         d_other_norm = torch.sqrt(D[::, other_axes[0]] ** 2 + D[:, other_axes[1]] ** 2).unsqueeze(-1) # [num_rays, 1]
 
-        # Get invariant component of Z along the axis of invariance 
-        z_invar = Z[:, :, axis_of_invariance] # [num_rays, latent_dim]
-
         # Get invariant component of D along the axis of invariance
         d_invar = D[:, axis_of_invariance].unsqueeze(-1) # [num_rays, 1]
 
-        if conditioning == "FiLM":
-            model_input = torch.cat((d_other_norm, d_invar, innerprod), 1)  # [num_rays, 2 + ndims]
-            conditioning_input = torch.cat((z_other_invar, z_invar), 1)  # [num_rays, ndims^2 + ndims]
-            return model_input, conditioning_input
-        if conditioning == "Concat":
-            # model_input is size [num_rays, 2 x ndims + ndims^2 + 2]
-            model_input = torch.cat((innerprod, z_other_invar, d_other_norm, z_invar, d_invar), 1)
-            return model_input
-        raise ValueError(f"Invalid conditioning type {conditioning}")
+        directional_input = torch.cat((innerprod, d_invar, d_other_norm), 1)  # [num_rays, latent_dim + 2]
+        conditioning_input = torch.cat((z_other_invar, z_invar), 1)  # [num_rays, latent_dim^2 + latent_dim]
+
+        return directional_input, conditioning_input
 
     if equivariance == "SO3":
         G = Z @ torch.transpose(Z, 1, 2)
         innerprod = torch.bmm(D, torch.transpose(Z, 1, 2))
         z_invar = G.flatten(start_dim=1).unsqueeze(1).repeat(1, D.shape[1], 1)
-        if conditioning == "FiLM":
-            return innerprod, z_invar
-        if conditioning == "Concat":
-            return torch.cat((innerprod, z_invar), 2)
-        raise ValueError(f"Invalid conditioning type {conditioning}")
+        return innerprod, z_invar
 
 def invariant_vn_representation(
     Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2",
@@ -125,12 +110,16 @@ class RENIFieldConfig(ConditionalSphericalFieldConfig):
     """target class to instantiate"""
     equivariance: Literal["None", "SO2", "SO3"] = "SO2"
     """Type of equivariance to use"""
+    axis_of_invariance: Literal["x", "y", "z"] = "y"
+    """Which axis should SO2 equivariance be invariant to"""
     invariant_function: Literal["GramMatrix", "VN"] = "GramMatrix"
     """Type of invariant function to use"""
     conditioning: Literal["FiLM", "Concat"] = "Concat"
     """Type of conditioning to use"""
     positional_encoding: Literal["None", "NeRF"] = "None"
     """Type of positional encoding to use"""
+    encoded_input: Literal["InvarDirection", "Directions", "Conditioning", "Both"] = "Both"
+    """Type of input to encode"""
     latent_dim: int = 36
     """Dimensionality of latent code"""
     hidden_layers: int = 3
@@ -181,13 +170,15 @@ class RENIField(ConditionalSphericalField):
         self.first_omega_0 = self.config.first_omega_0
         self.hidden_omega_0 = self.config.hidden_omega_0
         self.split_head = self.config.split_head
+        self.fixed_decoder = self.config.fixed_decoder
+        self.axis_of_invariance = ["x", "y", "z"].index(self.config.axis_of_invariance)
         
         self.num_train_data = num_train_data
         self.num_eval_data = num_eval_data
         self.min_max = min_max
 
-        train_mu, train_logvar = self.init_latent_codes(self.num_train_data)
-        eval_mu, eval_logvar = self.init_latent_codes(self.num_eval_data)
+        train_mu, train_logvar = self.init_latent_codes(self.num_train_data, 'train')
+        eval_mu, eval_logvar = self.init_latent_codes(self.num_eval_data, 'eval')
 
         self.register_parameter("train_mu", train_mu)
         self.register_parameter("train_logvar", train_logvar)
@@ -198,39 +189,59 @@ class RENIField(ConditionalSphericalField):
 
         self.network = self.setup_network() # ModuleDict {'siren': siren [mlp], 'hdr_head': Union[mlp, None], 'ldr_head': Union[mlp, None], 'mixing_head': Union[mlp, None]}
         
-        if self.config.fixed_decoder:
+        if self.fixed_decoder:
             for _, value in self.network.items():
                 for param in value.parameters():
                     param.requires_grad = False
 
     @contextlib.contextmanager
-    def fixed_decoder(self):
+    def hold_decoder_fixed(self):
         """Context manager to fix the decoder weights
 
         Example usage:
         ```
-        with instance_of_RENIField.fixed_decoder():
+        with instance_of_RENIField.hold_decoder_fixed():
             # do stuff
         ```
         """
         prev_state = {k: p.requires_grad for k, p in self.named_parameters() if 'siren' in k}
+        prev_decoder_state = self.fixed_decoder
         for name, param in self.named_parameters():
             if 'siren' in name:
                 param.requires_grad_(False)
+        self.fixed_decoder = True
         try:
             yield
         finally:
             for name, param in self.named_parameters():
                 if 'siren' in name:
                     param.requires_grad_(prev_state[name])
+            self.fixed_decoder = prev_decoder_state
 
 
     def setup_network(self):
-        # TODO handle FiLM
         input_dim = 2 * self.latent_dim + self.latent_dim**2 + 2
         if self.config.positional_encoding == "NeRF":
-            self.positional_encoding = NeRFEncoding(in_dim=input_dim, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
-            input_dim = self.positional_encoding.get_out_dim()
+            if self.config.encoded_input == "InvarDirection":
+                # pos encoding on just invariant directional input
+                input_dim = 2 * self.latent_dim + self.latent_dim**2 + 1
+                self.positional_encoding = NeRFEncoding(in_dim=1, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
+                input_dim += self.positional_encoding.get_out_dim()
+            elif self.config.encoded_input == "Conditioning":
+                # pos encoding on conditioning input
+                input_dim = self.latent_dim + 2
+                self.positional_encoding = NeRFEncoding(in_dim=self.latent_dim * self.latent_dim + self.latent_dim, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
+                input_dim += self.positional_encoding.get_out_dim()
+            elif self.config.encoded_input == "Directions":
+                # pos encoding on directional input
+                input_dim = self.latent_dim * self.latent_dim + self.latent_dim
+                self.positional_encoding = NeRFEncoding(in_dim=self.latent_dim + 2, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
+                input_dim += self.positional_encoding.get_out_dim()
+            elif self.config.encoded_input == "Both":
+                # pos encoding on model input
+                input_dim = 2 * self.latent_dim + self.latent_dim**2 + 2
+                self.positional_encoding = NeRFEncoding(in_dim=input_dim, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
+                input_dim = self.positional_encoding.get_out_dim()
 
         output_activation = None
         if self.config.output_activation == "exp":
@@ -246,15 +257,29 @@ class RENIField(ConditionalSphericalField):
         ldr_head = None
         mixing_head = None
         if not self.config.split_head:
-            siren = Siren(in_dim=input_dim,
-                          hidden_layers=self.hidden_layers,
-                          hidden_features=self.hidden_features,
-                          out_dim=self.out_features,
-                          outermost_linear=self.last_layer_linear,
-                          first_omega_0=self.first_omega_0,
-                          hidden_omega_0=self.hidden_omega_0,
-                          out_activation=output_activation)
-            network = nn.ModuleDict({'siren': siren})
+            if self.conditioning == "Concat":
+                siren = Siren(in_dim=input_dim,
+                              hidden_layers=self.hidden_layers,
+                              hidden_features=self.hidden_features,
+                              out_dim=self.out_features,
+                              outermost_linear=self.last_layer_linear,
+                              first_omega_0=self.first_omega_0,
+                              hidden_omega_0=self.hidden_omega_0,
+                              out_activation=output_activation)
+                network = nn.ModuleDict({'siren': siren})
+            elif self.conditioning == "FiLM":
+                siren = FiLMSiren(
+                    in_dim=self.positional_encoding.get_out_dim(),
+                    hidden_layers=self.hidden_layers,
+                    hidden_features=self.hidden_features,
+                    mapping_network_in_dim=self.latent_dim + self.latent_dim**2,
+                    mapping_network_layers=self.mapping_layers,
+                    mapping_network_features=self.mapping_features,
+                    out_dim=self.out_features,
+                    outermost_linear=True,
+                    out_activation=output_activation
+                )
+                network = nn.ModuleDict({'siren': siren})
         else:
             # we want a single siren with output_dim of hidden_features and then three heads with in_dim of hidden_features and out_dim of 3, 3 and 1 respectively
             siren = Siren(in_dim=input_dim,
@@ -312,34 +337,49 @@ class RENIField(ConditionalSphericalField):
         tuple (torch.Tensor, torch.Tensor, torch.Tensor): A tuple containing the sampled latent variable, the mean of the latent variable and the log variance of the latent variable
         """
 
-        if self.training:
+        if self.training and not self.fixed_decoder:
             mu = self.train_mu[idx, :, :]
             log_var = self.train_logvar[idx, :, :]
             std = torch.exp(0.5 * log_var)
             eps = torch.randn_like(std)
             sample = mu + (eps * std)
+        elif self.training and self.fixed_decoder:
+            mu = self.eval_mu[idx, :, :]
+            log_var = self.eval_logvar[idx, :, :]
+            std = torch.exp(0.5 * log_var)
+            eps = torch.randn_like(std)
+            sample = mu + (eps * std)
         else:
-            sample = self.train_mu[idx, :, :]
-            mu = self.train_mu[idx, :, :]
-            log_var = self.train_logvar[idx, :, :]
+            sample = self.eval_mu[idx, :, :]
+            mu = self.eval_mu[idx, :, :]
+            log_var = self.eval_logvar[idx, :, :]
 
         return sample, mu, log_var
 
-    def init_latent_codes(self, num_latents: int):
+    def init_latent_codes(self, num_latents: int, mode: Literal["train", "eval"]):
         """Initializes the latent codes
         
         """
         log_var = torch.nn.Parameter(torch.normal(-5, 1, size=(num_latents, self.latent_dim, 3)))
         
-        if self.config.fixed_decoder:
+        if mode == 'eval':
+            # init latents as all zeros for eval (the mean of the prior)
             log_var.requires_grad = False
             mu = torch.nn.Parameter(torch.zeros(num_latents, self.latent_dim, 3))
         else:
             mu = torch.nn.Parameter(torch.randn(num_latents, self.latent_dim, 3))    
         
         return mu, log_var
+    
+    def reset_eval_latents(self):
+        """Resets the eval latents"""
+        eval_mu, eval_logvar = self.init_latent_codes(self.num_eval_data, 'eval')
+        eval_mu = eval_mu.type_as(self.eval_mu)
+        eval_logvar = eval_logvar.type_as(self.eval_logvar)
+        self.eval_mu.data = eval_mu.data
+        self.eval_logvar.data = eval_logvar.data
 
-    def get_outputs(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
+    def get_outputs(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None], latent_codes: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
         """Returns the outputs of the field.
 
         Args:
@@ -349,17 +389,41 @@ class RENIField(ConditionalSphericalField):
         # we want to batch over camera_indices as these correspond to unique latent codes
         camera_indices = ray_bundle.camera_indices.squeeze() # [num_rays]
 
-        latent_codes, mu, log_var = self.sample_latent(camera_indices) # [num_rays, latent_dim, 3]
+        if latent_codes is None:
+            latent_codes, mu, log_var = self.sample_latent(camera_indices) # [num_rays, latent_dim, 3]
+        else:
+            mu = None
+            log_var = None
+            latent_codes = latent_codes.repeat(ray_bundle.shape[0], 1, 1) # [num_rays, latent_dim, 3]
 
         if rotation is not None:
             latent_codes = torch.matmul(latent_codes, rotation)
 
         directions = ray_bundle.directions # [num_rays, 3] # each has unique latent code defined by camera index
 
-        model_input = self.invariant_function(latent_codes, directions) # [num_rays, 3]
+        directional_input, conditioning_input  = self.invariant_function(latent_codes, directions, axis_of_invariance=self.axis_of_invariance) # [num_rays, 3]
 
         if self.config.positional_encoding == "NeRF":
-            model_input = self.positional_encoding(model_input)
+            # conditioning on just invariant directional input
+            if self.config.encoded_input == "InvarDirection":
+                innerprod = directional_input[:, :self.latent_dim] # [num_rays, latent_dim]
+                d_invar = directional_input[:, self.latent_dim:self.latent_dim+1] # [num_rays, 1]
+                d_norm = directional_input[:, self.latent_dim+1:self.latent_dim+2] # [num_rays, 1]
+                d_invar = self.positional_encoding(d_invar) # [num_rays, embedding_dim]
+                directional_input = torch.cat((innerprod, d_invar, d_norm), 1) # [num_rays, latent_dim + embedding_dim + 1]
+                model_input = torch.cat((directional_input, conditioning_input), dim=1) # [num_rays, model_input_dim]
+            elif self.config.encoded_input == "Conditioning":
+                # get directional components of input first latent_dim + 2 components
+                conditioning_input = self.positional_encoding(conditioning_input) # [num_rays, embedding_dim]
+                # concatenate onto model_input
+                model_input = torch.cat((directional_input, conditioning_input), dim=1) # [num_rays, model_input_dim + embedding_dim]
+            elif self.config.encoded_input == "Directions":
+                directional_input = self.positional_encoding(directional_input) # [num_rays, embedding_dim]
+                model_input = torch.cat((directional_input, conditioning_input), dim=1) # [num_rays, model_input_dim + embedding_dim]
+            elif self.config.encoded_input == "Both":
+                model_input = self.positional_encoding(model_input)
+        else:
+            model_input = torch.cat((directional_input, conditioning_input), dim=1)
 
         outputs = {}
 
@@ -373,7 +437,10 @@ class RENIField(ConditionalSphericalField):
             outputs[RENIFieldHeadNames.LDR] = ldr_output
             outputs[RENIFieldHeadNames.MIXING] = mixing_output
         else:
-            model_outputs = self.network["siren"](model_input) # [num_rays, 3]
+            if self.conditioning == "Concat":
+                model_outputs = self.network["siren"](model_input) # [num_rays, 3]
+            elif self.conditioning == "FiLM":
+                model_outputs = self.network["siren"](directional_input, conditioning_input)
 
         outputs[RENIFieldHeadNames.RGB] = model_outputs
         outputs[RENIFieldHeadNames.MU] = mu
@@ -381,14 +448,11 @@ class RENIField(ConditionalSphericalField):
 
         return outputs
 
-    def get_latents(self):
-        """Returns the latents of the field."""
-
-    def forward(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
+    def forward(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None], latent_codes: Union[torch.Tensor, None] = None) -> Dict[RENIFieldHeadNames, TensorType]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:
             ray_bundle: [num_rays, 3]
             rotation: [3, 3]
         """
-        return self.get_outputs(ray_bundle=ray_bundle, rotation=rotation)
+        return self.get_outputs(ray_bundle=ray_bundle, rotation=rotation, latent_codes=latent_codes)

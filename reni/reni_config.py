@@ -34,17 +34,18 @@ from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
 RENIField = MethodSpecification(
     config=TrainerConfig(
         method_name="reni",
-        steps_per_eval_image=500,
+        steps_per_eval_image=5000,
         steps_per_eval_batch=100000,
         steps_per_save=1000,
-        steps_per_eval_all_images=1000000,  # set to a very large model so we don't eval with all images
-        max_num_iterations=20001,
+        steps_per_eval_all_images=5000,  # set to a very large model so we don't eval with all images
+        max_num_iterations=50001,
         mixed_precision=False,
         pipeline=RENIPipelineConfig(
             datamanager=RENIDataManagerConfig(
                 dataparser=RENIDataParserConfig(
-                    download_data=True,
-                    train_subset_size=10,
+                    data=Path("data/RENI_HDR_AUG"),
+                    download_data=False,
+                    train_subset_size=None,
                     convert_to_ldr=False,
                     convert_to_log_domain=True,
                     min_max_normalize=True,
@@ -53,25 +54,31 @@ RENIField = MethodSpecification(
             ),
             model=RENIModelConfig(
                 field=RENIFieldConfig(
+                    conditioning='FiLM',
                     equivariance="SO2",
-                    positional_encoding="None",
+                    axis_of_invariance="y",
+                    positional_encoding="NeRF",
+                    encoded_input="Directions",
                     latent_dim=36,
-                    hidden_features=128,
-                    hidden_layers=5,
+                    hidden_features=256,
+                    hidden_layers=9,
+                    mapping_layers=5,
+                    mapping_features=128,
                     output_activation="None",
                     split_head=False,
                 ),
                 loss_coefficients={
-                    "rgb_hdr_loss": 1.0,
+                    "rgb_hdr_loss": 10.0,
                     "rgb_ldr_loss": 10.0,
-                    "kld_loss": 0.0001,
-                }
+                    "kld_loss": 0.00001,
+                },
+                training_regime="autodecoder",
             ),
         ),
         optimizers={
             "field": {
                 "optimizer": AdamOptimizerConfig(lr=1e-5, eps=1e-15),
-                "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=20001),
+                "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
             },
         },
         viewer=ViewerConfig(num_rays_per_chunk=1 << 15),

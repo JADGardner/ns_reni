@@ -136,7 +136,7 @@ class RENIDataManager(VanillaDataManager):
                         self.config.collate_fn = variable_res_collate
                         break
 
-        super().__init__(config=config, device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank, kwargs=kwargs)
+        super(VanillaDataManager, self).__init__()  # Call grandparent class constructor ignoring parent class
 
     def __class_getitem__(cls, item):
         return type(
@@ -159,3 +159,10 @@ class RENIDataManager(VanillaDataManager):
             scale_factor=self.config.camera_res_scale_factor,
             min_max=self.train_dataset.metadata["min_max"],
         )
+    
+    def next_train_image(self, step: int) -> Tuple[int, RayBundle, Dict]:
+        for camera_ray_bundle, batch in self.train_image_dataloader:
+            assert camera_ray_bundle.camera_indices is not None
+            image_idx = int(camera_ray_bundle.camera_indices[0, 0, 0])
+            return image_idx, camera_ray_bundle, batch
+        raise ValueError("No more eval images")

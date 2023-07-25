@@ -19,7 +19,9 @@ Implementation of vanilla nerf.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple, Type
+from typing import Any, Dict, List, Tuple, Type, Literal
+from rich.progress import BarColumn, Console, Progress, TextColumn, TimeRemainingColumn
+import functools
 
 import torch
 from torch.nn import Parameter
@@ -43,11 +45,14 @@ from nerfstudio.model_components.renderers import (
 )
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import colormaps, colors, misc
+from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
 
 from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
 from reni.field_components.field_heads import RENIFieldHeadNames
 from reni.model_components.losses import WeightedMSE, KLD
 from reni.utils.colourspace import linear_to_sRGB
+
+CONSOLE = Console(width=120)
 
 @dataclass
 class RENIModelConfig(ModelConfig):
@@ -56,6 +61,8 @@ class RENIModelConfig(ModelConfig):
     _target: Type = field(default_factory=lambda: RENIModel)
     field: RENIFieldConfig = RENIFieldConfig()
     """Field configuration"""
+    training_regime: Literal["autodecoder", "gan"] = "autodecoder"
+    """Type of training, either as an autodecoder or generative adversarial network"""
 
 
 class RENIModel(Model):
@@ -164,7 +171,7 @@ class RENIModel(Model):
 
         if self.metadata["min_max_normalize"]:
             min_val, max_val = self.metadata["min_max"]
-            # ned to unnormalize the image from between -1 and 1
+            # need to unnormalize the image from between -1 and 1
             image = 0.5 * (image + 1) * (max_val - min_val) + min_val
             rgb = 0.5 * (rgb + 1) * (max_val - min_val) + min_val
         
@@ -173,6 +180,7 @@ class RENIModel(Model):
             image = torch.exp(image)
             rgb = torch.exp(rgb)
 
+        # i.e. we are not already in LDR space
         if not self.metadata['convert_to_ldr']:
             # convert from linear HDR to sRGB for viewing
             image = linear_to_sRGB(image)
@@ -224,7 +232,39 @@ class RENIModel(Model):
 
         return sineweight
 
-    def fit_eval_latents(self, ray_bundle, batch):
+    def fit_eval_latents(self, datamanager: VanillaDataManager):
         """Fit eval latents"""
-        with self.field.fixed_decoder():
-            pass
+        steps = 5000
+        lr_start = 0.1
+        lr_end = 0.0001
+
+        opt = torch.optim.Adam(self.field.parameters(), lr=lr_start)
+        
+        # create exponential learning rate scheduler decaying 
+        # from lr_start to lr_end over the course of steps
+        lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(opt, gamma=(lr_end/lr_start)**(1/steps))
+
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeRemainingColumn(),
+            TextColumn("[blue]Loss: {task.fields[extra]}"),
+        ) as progress:
+            task = progress.add_task("[green]Optimising eval latents... ", total=steps, extra="")
+
+            with self.field.hold_decoder_fixed():
+                self.field.reset_eval_latents()
+
+                for step in range(steps):
+                    ray_bundle, batch = datamanager.next_eval(step)
+                    model_outputs = self(ray_bundle)  # train distributed data parallel model if world_size > 1
+                    loss_dict = self.get_loss_dict(model_outputs, batch, ray_bundle)
+                    # add all losses together
+                    loss = functools.reduce(torch.add, loss_dict.values())
+                    opt.zero_grad()
+                    loss.backward()
+                    opt.step()
+                    lr_scheduler.step()
+
+                    progress.update(task, advance=1, extra=f"{loss.item():.4f}")
