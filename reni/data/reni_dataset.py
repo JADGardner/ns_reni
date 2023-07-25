@@ -46,10 +46,11 @@ class RENIDataset(InputDataset):
     def __init__(self, dataparser_outputs: DataparserOutputs, scale_factor: float = 1.0, min_max: Union[Tuple[float, float], None] = None):
         super().__init__(dataparser_outputs=dataparser_outputs, scale_factor=scale_factor)
         self.min_max_normalize = self._dataparser_outputs.metadata["min_max_normalize"]
+        min_max = (-4.5, 7.0)
         if self.min_max_normalize and min_max is None:
             print("Computing min and max values of the dataset...")
             # min_max = self.get_dataset_min_max()
-            min_max = self.get_dataset_percentiles(0.3, 0.999)
+            min_max = self.get_dataset_percentiles(0.5, 0.999)
             print(f"Min and max values of the dataset are {min_max}.")
         self.metadata["min_max"] = min_max
 

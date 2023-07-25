@@ -54,12 +54,12 @@ RENIField = MethodSpecification(
             ),
             model=RENIModelConfig(
                 field=RENIFieldConfig(
-                    conditioning='FiLM',
+                    conditioning='Concat',
                     equivariance="SO2",
                     axis_of_invariance="y",
                     positional_encoding="NeRF",
                     encoded_input="Directions",
-                    latent_dim=36,
+                    latent_dim=9,
                     hidden_features=256,
                     hidden_layers=9,
                     mapping_layers=5,
