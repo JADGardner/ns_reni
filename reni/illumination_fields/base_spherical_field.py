@@ -13,19 +13,19 @@
 # limitations under the License.
 
 """
-Base class for the graphs.
+Base class for the Spherical Neural Fields.
 """
 
 from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import Literal, Type, Union, Dict
+from typing import Type, Union, Dict
 
 import torch
 from torch import nn
 from torchtyping import TensorType
 
 from nerfstudio.configs.base_config import InstantiateConfig
-from nerfstudio.cameras.rays import Frustums, RaySamples, RayBundle
+from nerfstudio.cameras.rays import RayBundle
 
 from reni.field_components.field_heads import RENIFieldHeadNames
 
@@ -47,9 +47,9 @@ class SphericalField(nn.Module):
         super().__init__()
 
     @abstractmethod
-    def get_outputs(self,  ray_bundle: RayBundle, rotation: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
+    def get_outputs(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
         """Returns the outputs of the field."""
-        pass
+        raise NotImplementedError
 
     def forward(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
         """Evaluates spherical field for a given ray bundle and rotation.

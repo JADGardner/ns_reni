@@ -38,7 +38,6 @@ from reni.field_components.field_heads import RENIFieldHeadNames
 def invariant_grammatrix_representation(
     Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2", 
     axis_of_invariance: int = 1,
-    posiiton_encoding: Union[Encoding, None] = None,
 ):
     """Generates an invariant representation from latent code Z and direction coordinates D.
 
@@ -97,10 +96,9 @@ def invariant_grammatrix_representation(
 
 def invariant_vn_representation(
     Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2",
-    conditioning: Literal["FiLM", "Concat"] = "Concat",
     axis_of_invariance: int = 1
 ):
-    return None
+    raise NotImplementedError
 
 @dataclass
 class RENIFieldConfig(SphericalFieldConfig):
