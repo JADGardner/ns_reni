@@ -28,3 +28,4 @@ class RENIFieldHeadNames(Enum):
     HDR = "hdr"
     LDR = "ldr"
     MIXING = "mixing"
+    SH_COEFFS = "sh_coeffs"

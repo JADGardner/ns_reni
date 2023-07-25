@@ -29,7 +29,7 @@ from torchtyping import TensorType
 from nerfstudio.cameras.rays import RayBundle, RaySamples, Frustums
 from nerfstudio.field_components.encodings import NeRFEncoding, SHEncoding, Encoding
 
-from reni.illumination_fields.base_spherical_field import ConditionalSphericalField, ConditionalSphericalFieldConfig
+from reni.illumination_fields.base_spherical_field import SphericalField, SphericalFieldConfig
 from reni.field_components.siren import Siren
 from reni.field_components.film_siren import FiLMSiren
 from reni.field_components.activations import ExpLayer
@@ -103,7 +103,7 @@ def invariant_vn_representation(
     return None
 
 @dataclass
-class RENIFieldConfig(ConditionalSphericalFieldConfig):
+class RENIFieldConfig(SphericalFieldConfig):
     """Configuration for model instantiation"""
 
     _target: Type = field(default_factory=lambda: RENIField)
@@ -145,7 +145,7 @@ class RENIFieldConfig(ConditionalSphericalFieldConfig):
     split_head: bool = False
     """Whether to split the head into three separate heads, HDR, LDR and BlendWeight"""
 
-class RENIField(ConditionalSphericalField):
+class RENIField(SphericalField):
     """Base class for illumination fields."""
 
     def __init__(
@@ -454,5 +454,8 @@ class RENIField(ConditionalSphericalField):
         Args:
             ray_bundle: [num_rays, 3]
             rotation: [3, 3]
+
+        Returns:
+            Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.
         """
         return self.get_outputs(ray_bundle=ray_bundle, rotation=rotation, latent_codes=latent_codes)

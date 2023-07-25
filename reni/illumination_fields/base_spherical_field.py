@@ -31,14 +31,14 @@ from reni.field_components.field_heads import RENIFieldHeadNames
 
 # Field related configs
 @dataclass
-class ConditionalSphericalFieldConfig(InstantiateConfig):
+class SphericalFieldConfig(InstantiateConfig):
     """Configuration for model instantiation"""
 
-    _target: Type = field(default_factory=lambda: ConditionalSphericalField)
+    _target: Type = field(default_factory=lambda: SphericalField)
     """target class to instantiate"""
 
 
-class ConditionalSphericalField(nn.Module):
+class SphericalField(nn.Module):
     """Base class for illumination fields."""
 
     def __init__(
