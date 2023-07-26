@@ -91,7 +91,10 @@ class RENIDataParser(DataParser):
         fx = torch.tensor(image_height, dtype=torch.float32).repeat(num_images)
         fy = torch.tensor(image_height, dtype=torch.float32).repeat(num_images)
 
-        c2w = torch.eye(4)[None, :3, :].repeat(num_images, 1, 1)
+        # c2w = torch.eye(4)[None, :3, :].repeat(num_images, 1, 1)
+        c2w = torch.tensor([[[-1, 0, 0, 0],
+                             [0, 0, 1, 0],
+                             [0, 1, 0, 0]]], dtype=torch.float32).repeat(num_images, 1, 1) # convert from nerfstudio camera to nerfstudio world
 
         cameras = Cameras(fx=fx, fy=fy, cx=cx, cy=cy, camera_to_worlds=c2w, camera_type=CameraType.EQUIRECTANGULAR)
 

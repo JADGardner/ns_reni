@@ -139,7 +139,7 @@ class EnvironmentMapField(SphericalField):
     
     def cart_to_spherical(self, directions):
         """Converts cartesian coordinates to spherical coordinates."""
-        phi = torch.atan2(directions[:,1], directions[:,0])  # azimuthal angle
+        phi = torch.atan2(directions[:, 0], directions[:, 1]) # azimuthal angle
         theta = torch.acos(directions[:,2])  # polar angle
         return theta, phi
     

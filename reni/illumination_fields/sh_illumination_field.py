@@ -20,7 +20,7 @@ import wget
 import zipfile
 import os
 import contextlib
-import cv2
+import torch.nn.functional as F
 
 import numpy as np
 import torch
@@ -319,52 +319,17 @@ def getSolidAngle(y, width, is3D=False):
         torch.cos(theta - (piOverHeight / 2.0)) - torch.cos(theta + (piOverHeight / 2.0))
     )
 
-# Misc functions
-def resizeImage(img, width, height, interpolation=cv2.INTER_CUBIC):
-    if img.shape[1] < width:  # up res
-        if interpolation == "max_pooling":
-            return cv2.resize(img, (width, height), interpolation=cv2.INTER_CUBIC)
-        else:
-            return cv2.resize(img, (width, height), interpolation=interpolation)
-    if interpolation == "max_pooling":  # down res, max pooling
-        try:
-            import skimage.measure
-
-            scaleFactor = int(float(img.shape[1]) / width)
-            factoredWidth = width * scaleFactor
-            img = cv2.resize(
-                img,
-                (factoredWidth, int(factoredWidth / 2)),
-                interpolation=cv2.INTER_CUBIC,
-            )
-            blockSize = scaleFactor
-            r = skimage.measure.block_reduce(
-                img[:, :, 0], (blockSize, blockSize), np.max
-            )
-            g = skimage.measure.block_reduce(
-                img[:, :, 1], (blockSize, blockSize), np.max
-            )
-            b = skimage.measure.block_reduce(
-                img[:, :, 2], (blockSize, blockSize), np.max
-            )
-            img = np.dstack((np.dstack((r, g)), b)).astype(np.float32)
-            return img
-        except:
-            print("Failed to do max_pooling, using default")
-            return cv2.resize(img, (width, height), interpolation=cv2.INTER_CUBIC)
-    else:  # down res, using interpolation
-        return cv2.resize(img, (width, height), interpolation=interpolation)
-
 
 def getCoefficientsFromImage(ibl, lmax=2, resizeWidth=None, filterAmount=None, device=torch.device("cpu")):
     # Resize if necessary (I recommend it for large images)
     if resizeWidth is not None:
-        # ibl = cv2.resize(ibl, dsize=(resizeWidth,int(resizeWidth/2)), interpolation=cv2.INTER_CUBIC)
-        ibl = resizeImage(ibl, resizeWidth, int(resizeWidth / 2), cv2.INTER_CUBIC)
+        ibl = ibl.permute(2, 0, 1)
+        ibl = F.interpolate(ibl.unsqueeze(0), size=(resizeWidth // 2, resizeWidth), mode='bilinear', align_corners=False).squeeze(0)
+        ibl = ibl.permute(1, 2, 0)
     elif ibl.shape[1] > 1000:
-        # print("Input resolution is large, reducing for efficiency")
-        # ibl = cv2.resize(ibl, dsize=(1000,500), interpolation=cv2.INTER_CUBIC)
-        ibl = resizeImage(ibl, 1000, 500, cv2.INTER_CUBIC)
+        ibl = ibl.permute(2, 0, 1)
+        ibl = F.interpolate(ibl.unsqueeze(0), size=(1000 // 2, 1000), mode='bilinear', align_corners=False).squeeze(0)
+        ibl = ibl.permute(1, 2, 0)
         
     xres = ibl.shape[1]
     yres = ibl.shape[0]
@@ -489,8 +454,8 @@ class SphericalHarmonicIlluminationField(SphericalField):
         directions = ray_bundle.directions # [num_rays, 3] # each has unique latent code defined by camera index
 
         # convert from cartesian to spherical coordinates with y-up convention
-        theta = torch.acos(directions[:, 1]) # [num_rays]
-        phi = torch.atan2(-directions[:, 0], directions[:, 2]) # [num_rays]
+        theta = torch.acos(directions[:, 2]) # [num_rays]
+        phi = torch.atan2(directions[:, 0], directions[:, 1]) # [num_rays]
 
         # evaluate spherical harmonics
         sh_basis_matrix = shEvaluate(theta, phi, 2, device='cpu') # [num_rays, num_sh_coeffs]
@@ -506,7 +471,7 @@ class SphericalHarmonicIlluminationField(SphericalField):
         return outputs
     
 
-    def forward(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None], latent_codes: Union[torch.Tensor, None] = None) -> Dict[RENIFieldHeadNames, TensorType]:
+    def forward(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None] = None, latent_codes: Union[torch.Tensor, None] = None) -> Dict[RENIFieldHeadNames, TensorType]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:
