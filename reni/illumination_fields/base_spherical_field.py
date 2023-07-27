@@ -25,7 +25,7 @@ from torch import nn
 from torchtyping import TensorType
 
 from nerfstudio.configs.base_config import InstantiateConfig
-from nerfstudio.cameras.rays import RayBundle
+from nerfstudio.cameras.rays import RayBundle, RaySamples
 
 from reni.field_components.field_heads import RENIFieldHeadNames
 
@@ -47,15 +47,20 @@ class SphericalField(nn.Module):
         super().__init__()
 
     @abstractmethod
-    def get_outputs(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
-        """Returns the outputs of the field."""
+    def get_outputs(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
+        """Returns the outputs of the field.
+        
+        Args:
+            ray_samples: [num_rays]
+            rotation: [3, 3]
+        """
         raise NotImplementedError
 
-    def forward(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
+    def forward(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:
-            ray_bundle: [num_rays, 3]
+            ray_bundle: [num_rays]
             rotation: [3, 3]
         """
         return self.get_outputs(ray_bundle=ray_bundle, rotation=rotation)

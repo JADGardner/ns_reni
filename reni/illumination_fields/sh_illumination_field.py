@@ -429,38 +429,40 @@ class SphericalHarmonicIlluminationField(SphericalField):
         self.eval_latent_codes.data = eval_latent_codes.data
 
 
-    def get_outputs(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None], latent_codes: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
+    def get_outputs(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None], latent_codes: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
         """Returns the outputs of the field.
 
         Args:
-            ray_bundle: [num_rays, 3]
+            ray_samples: [num_rays]
             rotation: [3, 3]
-            latent_codes: [latent_dim, 3]
+            latent_codes: [1, latent_dim, 3]
 
         Returns:
             Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.
         """
         # we want to batch over camera_indices as these correspond to unique latent codes
-        camera_indices = ray_bundle.camera_indices.squeeze() # [num_rays]
+        camera_indices = ray_samples.camera_indices.squeeze() # [num_rays]
 
         if latent_codes is None:
             sh_coeffs = self.sample_latent(camera_indices) # [num_rays, num_sh_coeffs, 3]
         else:
-            sh_coeffs = latent_codes.repeat(ray_bundle.shape[0], 1, 1) # [num_rays, num_sh_coeffs, 3]
+            sh_coeffs = latent_codes.repeat(ray_samples.shape[0], 1, 1) # [num_rays, num_sh_coeffs, 3]
+
+        directions = ray_samples.frustums.directions # [num_rays, 3] # each has unique latent code defined by camera index
 
         if rotation is not None:
-            latent_codes = torch.matmul(latent_codes, rotation)
-
-        directions = ray_bundle.directions # [num_rays, 3] # each has unique latent code defined by camera index
+            rotation = rotation.T
+            directions = torch.matmul(ray_bundle.directions, rotation) # [num_rays, 3]
 
         # convert from cartesian to spherical coordinates with y-up convention
         theta = torch.acos(directions[:, 2]) # [num_rays]
         phi = torch.atan2(directions[:, 0], directions[:, 1]) # [num_rays]
 
         # evaluate spherical harmonics
-        sh_basis_matrix = shEvaluate(theta, phi, 2, device='cpu') # [num_rays, num_sh_coeffs]
+        sh_basis_matrix = shEvaluate(theta, phi, self.spherical_harmonic_order, device=camera_indices.device) # [num_rays, num_sh_coeffs]
 
         # get radiance
+        print(f'sh_basis_matrix shape = {sh_basis_matrix.shape}, sh_coeffs shape = {sh_coeffs.shape}')
         radiance = torch.einsum("ij,ijk->ik", sh_basis_matrix, sh_coeffs) # [num_rays, 3]
 
         outputs = {
@@ -471,14 +473,15 @@ class SphericalHarmonicIlluminationField(SphericalField):
         return outputs
     
 
-    def forward(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None] = None, latent_codes: Union[torch.Tensor, None] = None) -> Dict[RENIFieldHeadNames, TensorType]:
+    def forward(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None] = None, latent_codes: Union[torch.Tensor, None] = None) -> Dict[RENIFieldHeadNames, TensorType]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:
-            ray_bundle: [num_rays, 3]
+            ray_samples: [num_rays]
             rotation: [3, 3]
+            latent_codes: [1, latent_dim, 3]
 
         Returns:
             Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.
         """
-        return self.get_outputs(ray_bundle=ray_bundle, rotation=rotation, latent_codes=latent_codes)
+        return self.get_outputs(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes)

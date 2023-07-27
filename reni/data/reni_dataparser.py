@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Type, Union
+from typing import Type, Union, Literal, Tuple
 
 import imageio
 import torch
@@ -50,7 +50,7 @@ class RENIDataParserConfig(DataParserConfig):
     """Whether to augment with mirror images."""
     train_subset_size: Union[int, None] = None
     """Size of training subset."""
-    min_max_normalize: bool = False
+    min_max_normalize: Union[Literal['min_max', 'quantile'], Tuple[float, float], None] = 'min_max'
     """Whether to min-max normalize the images."""
 
 

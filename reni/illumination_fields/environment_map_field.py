@@ -61,6 +61,7 @@ class EnvironmentMapField(SphericalField):
         config: EnvironmentMapFieldConfig,
         num_train_data: int,
         num_eval_data: int,
+        min_max: Union[Tuple[float, float], None] = None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -71,6 +72,7 @@ class EnvironmentMapField(SphericalField):
         self.trainable = config.trainable
         self.apply_padding = config.apply_padding
         self.fixed_decoder = config.fixed_decoder
+        self.min_max = min_max # needed for parity of implementation with RENI
 
         assert self.resolution[0] == self.resolution[1] // 2, "Environment map must have a 2:1 aspect ratio."
 
@@ -197,16 +199,15 @@ class EnvironmentMapField(SphericalField):
 
         return wa[..., None]*Ia + wb[..., None]*Ib + wc[..., None]*Ic + wd[..., None]*Id
 
-    def get_outputs(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
+    def get_outputs(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
         """Returns the outputs of the field.
 
         Args:
-            ray_bundle: [num_rays, 3]
+            ray_samples: [num_rays]
             rotation: [3, 3]
-            latent_codes: [latent_dim, 3]
         """
         # we want to batch over camera_indices as these correspond to unique latent codes
-        camera_indices = ray_bundle.camera_indices.squeeze() # [num_rays]
+        camera_indices = ray_samples.camera_indices.squeeze() # [num_rays]
         if not self.trainable:
             camera_indices = torch.zeros_like(camera_indices) # [num_rays]
 
@@ -220,10 +221,11 @@ class EnvironmentMapField(SphericalField):
             # we are using a single pre-provided environment map for all cameras
             envmaps = self.eval_envmaps # [1, 3, H, W]
 
-        directions = ray_bundle.directions # [num_rays, 3] # each has unique latent code defined by camera index
+        directions = ray_samples.frustums.directions # [num_rays, 3] # each has unique latent code defined by camera index
         
         if rotation is not None:
             # apply rotation to directions
+            rotation = rotation.T
             directions = torch.matmul(ray_bundle.directions, rotation) # [num_rays, 3]
 
         theta, phi = self.cart_to_spherical(directions) # [num_rays], [num_rays]
@@ -236,14 +238,14 @@ class EnvironmentMapField(SphericalField):
 
         return outputs
 
-    def forward(self, ray_bundle: RayBundle, rotation: Union[torch.Tensor, None] = None) -> Dict[RENIFieldHeadNames, TensorType]:
+    def forward(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None] = None) -> Dict[RENIFieldHeadNames, TensorType]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:
-            ray_bundle: [num_rays, 3]
+            ray_samples: [num_rays]
             rotation: [3, 3]
 
         Returns:
             Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.
         """
-        return self.get_outputs(ray_bundle=ray_bundle, rotation=rotation)
+        return self.get_outputs(ray_samples=ray_samples, rotation=rotation)

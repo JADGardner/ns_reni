@@ -13,38 +13,80 @@
 # limitations under the License.
 
 """
-Collection of Losses.
+Collection of RENI Losses.
 """
-from enum import Enum
-from typing import Dict, Literal, Optional, Tuple, cast
-
-import torch
-from jaxtyping import Bool, Float
-from torch import Tensor, nn
-
-from nerfstudio.cameras.rays import RaySamples
-from nerfstudio.field_components.field_heads import FieldHeadNames
-from nerfstudio.utils.math import masked_reduction, normalized_depth_scale_and_shift
-
 import torch
 from torch import nn
+from torch.functional import F
 
 class WeightedMSE(nn.Module):
+    """
+    CSlass for the weighted Mean Squared Error (MSE) loss.
+    """
     def __init__(self):
         super(WeightedMSE, self).__init__()
 
     def forward(self, model_output, ground_truth, sineweight):
+        """
+        WeightedMSE class.
+
+        Parameters:
+        model_output (torch.Tensor): The output of the model.
+        ground_truth (torch.Tensor): The actual truth or label.
+        sineweight (torch.Tensor): The weight for each prediction.
+
+        Returns:
+        torch.Tensor: The weighted mean squared error.
+        """
         MSE = (((model_output - ground_truth) ** 2) * sineweight).mean(0).sum()
         return MSE
 
 
 class KLD(nn.Module):
+    """
+    Kullback-Leibler Divergence (KLD) loss, normalised by the number of latent dimensions.
+    """
+
     def __init__(self, Z_dims=1):
         super(KLD, self).__init__()
         self.Z_dims = Z_dims
 
     def forward(self, mu, log_var):
+        """
+        forward method for the KLD class.
+
+        Parameters:
+        mu (torch.Tensor): The mean.
+        log_var (torch.Tensor): The logarithm of the variance.
+
+        Returns:
+        torch.Tensor: The Kullback-Leibler divergence.
+        """
         kld = -0.5 * ((1 + log_var - mu.pow(2) - log_var.exp()).view(mu.shape[0], -1)).sum(1)
         kld /= self.Z_dims
         kld = kld.sum(0)
         return kld
+
+class WeightedCosineSimilarity(nn.Module):
+    """Weighted Cosine Similarity loss"""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super(WeightedCosineSimilarity, self).__init__()
+
+    def forward(self, model_output, ground_truth, sineweight):
+        return (1 - (F.cosine_similarity(model_output, ground_truth, dim=1, eps=1e-20)* sineweight[:, 0]).mean(0)).sum(0)
+    
+
+class ScaleInvariantLogLoss(nn.Module):
+    def __init__(self):
+        super(ScaleInvariantLogLoss, self).__init__()
+
+    def forward(self, log_predicted, log_gt):
+        R = log_predicted - log_gt
+
+        term1 = torch.mean(R**2)
+        term2 = torch.pow(torch.sum(R), 2) / (log_predicted.numel()**2)
+
+        loss = term1 - term2
+
+        return loss

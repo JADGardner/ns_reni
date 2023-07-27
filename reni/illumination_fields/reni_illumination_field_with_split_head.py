@@ -14,7 +14,7 @@
 
 """RENI field"""
 
-from typing import Literal, Type, Union, Optional, Dict, Union, Tuple, Any
+from typing import Literal, Type, Union, Optional, Dict, Union, Tuple
 from dataclasses import dataclass, field
 import wget
 import zipfile
@@ -116,7 +116,7 @@ class RENIFieldConfig(SphericalFieldConfig):
     """Type of conditioning to use"""
     positional_encoding: Literal["None", "NeRF"] = "None"
     """Type of positional encoding to use"""
-    encoded_input: Literal["InvarDirection", "Directions", "Conditioning", "Both"] = "Directions"
+    encoded_input: Literal["InvarDirection", "Directions", "Conditioning", "Both"] = "Both"
     """Type of input to encode"""
     latent_dim: int = 36
     """Dimensionality of latent code"""
@@ -140,6 +140,8 @@ class RENIFieldConfig(SphericalFieldConfig):
     """Omega_0 for hidden layers"""
     fixed_decoder: bool = False
     """Whether to fix the decoder weights"""
+    split_head: bool = False
+    """Whether to split the head into three separate heads, HDR, LDR and BlendWeight"""
 
 class RENIField(SphericalField):
     """Base class for illumination fields."""
@@ -149,7 +151,7 @@ class RENIField(SphericalField):
         config: RENIFieldConfig,
         num_train_data: Union[int, None],
         num_eval_data: Union[int, None],
-        normalisations: Dict[str, Any],
+        min_max: Union[Tuple[float, float], None] = None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -165,13 +167,13 @@ class RENIField(SphericalField):
         self.output_activation = self.config.output_activation
         self.first_omega_0 = self.config.first_omega_0
         self.hidden_omega_0 = self.config.hidden_omega_0
+        self.split_head = self.config.split_head
         self.fixed_decoder = self.config.fixed_decoder
         self.axis_of_invariance = ["x", "y", "z"].index(self.config.axis_of_invariance)
         
         self.num_train_data = num_train_data
         self.num_eval_data = num_eval_data
-        self.min_max = normalisations["min_max"] if "min_max" in normalisations else None
-        self.log_domain = normalisations["log_domain"] if "log_domain" in normalisations else False
+        self.min_max = min_max
 
         if self.num_train_data is not None:
             train_mu, train_logvar = self.init_latent_codes(self.num_train_data, 'train')
@@ -216,45 +218,30 @@ class RENIField(SphericalField):
                     param.requires_grad_(prev_state[name])
             self.fixed_decoder = prev_decoder_state
 
-    def unnormalise(self, x):
-        """Undo normalisation of the image"""
-        if self.min_max is not None:
-            min_val, max_val = self.min_max
-            # need to unnormalize the image from between -1 and 1
-            x = 0.5 * (x + 1) * (max_val - min_val) + min_val
-        
-        if self.log_domain:
-            # undo log domain conversion
-            x = torch.exp(x)
-        
-        return x
 
     def setup_network(self):
-        """Sets up the network architecture"""
-        directional_input_dim = self.latent_dim + 2
-        conditioning_input_dim = self.latent_dim * self.latent_dim + self.latent_dim
-        
+        input_dim = 2 * self.latent_dim + self.latent_dim**2 + 2
         if self.config.positional_encoding == "NeRF":
             if self.config.encoded_input == "InvarDirection":
                 # pos encoding on just invariant directional input
+                input_dim = 2 * self.latent_dim + self.latent_dim**2 + 1
                 self.positional_encoding = NeRFEncoding(in_dim=1, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
-                directional_input_dim = self.latent_dim + 1 + self.positional_encoding.get_out_dim()
-                conditioning_input_dim = self.latent_dim * self.latent_dim + self.latent_dim
+                input_dim += self.positional_encoding.get_out_dim()
             elif self.config.encoded_input == "Conditioning":
                 # pos encoding on conditioning input
+                input_dim = self.latent_dim + 2
                 self.positional_encoding = NeRFEncoding(in_dim=self.latent_dim * self.latent_dim + self.latent_dim, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
-                directional_input_dim = self.latent_dim + 2
-                conditioning_input_dim = self.positional_encoding.get_out_dim()
+                input_dim += self.positional_encoding.get_out_dim()
             elif self.config.encoded_input == "Directions":
                 # pos encoding on directional input
+                input_dim = self.latent_dim * self.latent_dim + self.latent_dim
                 self.positional_encoding = NeRFEncoding(in_dim=self.latent_dim + 2, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
-                directional_input_dim = self.positional_encoding.get_out_dim()
-                conditioning_input_dim = self.latent_dim * self.latent_dim + self.latent_dim
+                input_dim += self.positional_encoding.get_out_dim()
             elif self.config.encoded_input == "Both":
-                self.dirctional_encoding = NeRFEncoding(in_dim=self.latent_dim + 2, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
-                self.conditioning_encoding = NeRFEncoding(in_dim=self.latent_dim * self.latent_dim + self.latent_dim, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
-                directional_input_dim = self.dirctional_encoding.get_out_dim()
-                conditioning_input_dim = self.conditioning_encoding.get_out_dim()
+                # pos encoding on model input
+                input_dim = 2 * self.latent_dim + self.latent_dim**2 + 2
+                self.positional_encoding = NeRFEncoding(in_dim=input_dim, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
+                input_dim = self.positional_encoding.get_out_dim()
 
         output_activation = None
         if self.config.output_activation == "exp":
@@ -266,32 +253,78 @@ class RENIField(SphericalField):
         elif self.config.output_activation == "relu":
             output_activation = nn.ReLU()
         
-        network = None
-        if self.conditioning == "Concat":
-            input_dim = directional_input_dim + conditioning_input_dim
+        hdr_head = None
+        ldr_head = None
+        mixing_head = None
+        if not self.config.split_head:
+            if self.conditioning == "Concat":
+                siren = Siren(in_dim=input_dim,
+                              hidden_layers=self.hidden_layers,
+                              hidden_features=self.hidden_features,
+                              out_dim=self.out_features,
+                              outermost_linear=self.last_layer_linear,
+                              first_omega_0=self.first_omega_0,
+                              hidden_omega_0=self.hidden_omega_0,
+                              out_activation=output_activation)
+                network = nn.ModuleDict({'siren': siren})
+            elif self.conditioning == "FiLM":
+                siren = FiLMSiren(
+                    in_dim=self.positional_encoding.get_out_dim(),
+                    hidden_layers=self.hidden_layers,
+                    hidden_features=self.hidden_features,
+                    mapping_network_in_dim=self.latent_dim + self.latent_dim**2,
+                    mapping_network_layers=self.mapping_layers,
+                    mapping_network_features=self.mapping_features,
+                    out_dim=self.out_features,
+                    outermost_linear=True,
+                    out_activation=output_activation
+                )
+                network = nn.ModuleDict({'siren': siren})
+        else:
+            # we want a single siren with output_dim of hidden_features and then three heads with in_dim of hidden_features and out_dim of 3, 3 and 1 respectively
             siren = Siren(in_dim=input_dim,
-                          hidden_layers=self.hidden_layers,
+                          hidden_layers=3,
                           hidden_features=self.hidden_features,
-                          out_dim=self.out_features,
-                          outermost_linear=self.last_layer_linear,
+                          out_dim=self.hidden_features,
+                          outermost_linear=False,
                           first_omega_0=self.first_omega_0,
                           hidden_omega_0=self.hidden_omega_0,
-                          out_activation=output_activation)
-            network = nn.ModuleDict({'siren': siren})
-        elif self.conditioning == "FiLM":
-            siren = FiLMSiren(
-                in_dim=directional_input_dim,
-                hidden_layers=self.hidden_layers,
-                hidden_features=self.hidden_features,
-                mapping_network_in_dim=conditioning_input_dim,
-                mapping_network_layers=self.mapping_layers,
-                mapping_network_features=self.mapping_features,
-                out_dim=self.out_features,
-                outermost_linear=True,
-                out_activation=output_activation
-            )
-            network = nn.ModuleDict({'siren': siren})
-      
+                          out_activation=None)
+            
+            hdr_head = Siren(in_dim=self.hidden_features,
+                              hidden_layers=3,
+                              hidden_features=self.hidden_features,
+                              out_dim=3,
+                              outermost_linear=False,
+                              first_omega_0=self.first_omega_0,
+                              hidden_omega_0=self.hidden_omega_0,
+                              out_activation=ExpLayer())
+            
+            ldr_head = Siren(in_dim=self.hidden_features,
+                              hidden_layers=3,
+                              hidden_features=self.hidden_features,
+                              out_dim=3,
+                              outermost_linear=False,
+                              first_omega_0=self.first_omega_0,
+                              hidden_omega_0=self.hidden_omega_0,
+                              out_activation=nn.ReLU())
+            
+            mixing_head = Siren(in_dim=self.hidden_features,
+                                hidden_layers=3,
+                                hidden_features=self.hidden_features,
+                                out_dim=1,
+                                outermost_linear=False,
+                                first_omega_0=self.first_omega_0,
+                                hidden_omega_0=self.hidden_omega_0,
+                                out_activation=nn.Sigmoid())
+            
+            network = nn.ModuleDict({
+                'siren': siren,  # Assuming 'siren' is a PyTorch model (nn.Module instance)
+                'hdr_head': hdr_head,  # Assuming 'hdr_head' is a PyTorch model (nn.Module instance)
+                'ldr_head': ldr_head,  # Assuming 'ldr_head' is a PyTorch model (nn.Module instance)
+                'mixing_head': mixing_head,  # Assuming 'mixing_head' is a PyTorch model (nn.Module instance)
+            })
+
         return network
 
     def sample_latent(self, idx):
@@ -340,26 +373,6 @@ class RENIField(SphericalField):
         self.eval_mu.data = eval_mu.data
         self.eval_logvar.data = eval_logvar.data
 
-    def apply_positional_encoding(self, directional_input, conditioning_input):
-        # conditioning on just invariant directional input
-        if self.config.encoded_input == "InvarDirection":
-            innerprod = directional_input[:, :self.latent_dim] # [num_rays, latent_dim]
-            d_invar = directional_input[:, self.latent_dim:self.latent_dim+1] # [num_rays, 1]
-            d_norm = directional_input[:, self.latent_dim+1:self.latent_dim+2] # [num_rays, 1]
-            d_invar = self.positional_encoding(d_invar) # [num_rays, embedding_dim]
-            directional_input = torch.cat((innerprod, d_invar, d_norm), 1) # [num_rays, latent_dim + embedding_dim + 1]
-        elif self.config.encoded_input == "Conditioning":
-            # get directional components of input first latent_dim + 2 components
-            conditioning_input = self.positional_encoding(conditioning_input) # [num_rays, embedding_dim]
-            # concatenate onto model_input
-        elif self.config.encoded_input == "Directions":
-            directional_input = self.positional_encoding(directional_input) # [num_rays, embedding_dim]
-        elif self.config.encoded_input == "Both":
-            directional_input = self.dirctional_encoding(directional_input)
-            conditioning_input = self.conditioning_encoding(conditioning_input)
-        
-        return directional_input, conditioning_input
-
     def get_outputs(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None], latent_codes: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
         """Returns the outputs of the field.
 
@@ -386,14 +399,43 @@ class RENIField(SphericalField):
         directional_input, conditioning_input  = self.invariant_function(latent_codes, directions, axis_of_invariance=self.axis_of_invariance) # [num_rays, 3]
 
         if self.config.positional_encoding == "NeRF":
-            directional_input, conditioning_input = self.apply_positional_encoding(directional_input, conditioning_input)
+            # conditioning on just invariant directional input
+            if self.config.encoded_input == "InvarDirection":
+                innerprod = directional_input[:, :self.latent_dim] # [num_rays, latent_dim]
+                d_invar = directional_input[:, self.latent_dim:self.latent_dim+1] # [num_rays, 1]
+                d_norm = directional_input[:, self.latent_dim+1:self.latent_dim+2] # [num_rays, 1]
+                d_invar = self.positional_encoding(d_invar) # [num_rays, embedding_dim]
+                directional_input = torch.cat((innerprod, d_invar, d_norm), 1) # [num_rays, latent_dim + embedding_dim + 1]
+                model_input = torch.cat((directional_input, conditioning_input), dim=1) # [num_rays, model_input_dim]
+            elif self.config.encoded_input == "Conditioning":
+                # get directional components of input first latent_dim + 2 components
+                conditioning_input = self.positional_encoding(conditioning_input) # [num_rays, embedding_dim]
+                # concatenate onto model_input
+                model_input = torch.cat((directional_input, conditioning_input), dim=1) # [num_rays, model_input_dim + embedding_dim]
+            elif self.config.encoded_input == "Directions":
+                directional_input = self.positional_encoding(directional_input) # [num_rays, embedding_dim]
+                model_input = torch.cat((directional_input, conditioning_input), dim=1) # [num_rays, model_input_dim + embedding_dim]
+            elif self.config.encoded_input == "Both":
+                model_input = self.positional_encoding(model_input)
+        else:
+            model_input = torch.cat((directional_input, conditioning_input), dim=1)
 
         outputs = {}
 
-        if self.conditioning == "Concat":
-            model_outputs = self.network["siren"](torch.cat((directional_input, conditioning_input), dim=1)) # [num_rays, 3]
-        elif self.conditioning == "FiLM":
-            model_outputs = self.network["siren"](directional_input, conditioning_input) # [num_rays, 3]
+        if self.config.split_head:
+            base_output = self.network["siren"](model_input) # [num_rays, hidden_features]
+            hdr_output = self.network["hdr_head"](base_output) # [num_rays, 3]
+            ldr_output = self.network["ldr_head"](base_output) # [num_rays, 3]
+            mixing_output = self.network["mixing_head"](base_output) # [num_rays, 1]
+            model_outputs = hdr_output * mixing_output + ldr_output * (1 - mixing_output) # [num_rays, 3]
+            outputs[RENIFieldHeadNames.HDR] = hdr_output
+            outputs[RENIFieldHeadNames.LDR] = ldr_output
+            outputs[RENIFieldHeadNames.MIXING] = mixing_output
+        else:
+            if self.conditioning == "Concat":
+                model_outputs = self.network["siren"](model_input) # [num_rays, 3]
+            elif self.conditioning == "FiLM":
+                model_outputs = self.network["siren"](directional_input, conditioning_input)
 
         outputs[RENIFieldHeadNames.RGB] = model_outputs
         outputs[RENIFieldHeadNames.MU] = mu
