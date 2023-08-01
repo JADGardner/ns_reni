@@ -24,10 +24,11 @@ from jaxtyping import Float
 import imageio
 from PIL import Image
 from torch import Tensor
+import scipy
 
 from typing import Type, Union, Tuple, Dict
 
-from nerfstudio.cameras.cameras import Cameras
+from nerfstudio.cameras.cameras import Cameras, CameraType
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
 from nerfstudio.data.datasets.base_dataset import InputDataset
 
@@ -64,6 +65,8 @@ class RENIDataset(InputDataset):
             print(f"Min and max values of the dataset are {min_max}.")
 
         self.metadata["min_max"] = min_max
+        self.metadata["image_height"] = self._dataparser_outputs.metadata["image_height"]
+        self.metadata["image_width"] = self._dataparser_outputs.metadata["image_width"]
 
     def __len__(self):
         return len(self._dataparser_outputs.image_filenames)
@@ -112,6 +115,18 @@ class RENIDataset(InputDataset):
             # convert to between -1 and 1
             image = (image - min_val) / (max_val - min_val) * 2 - 1
         return image
+    
+    def get_metadata(self, data: Dict) -> Dict:
+        """Method that can be used to process any additional metadata that may be part of the model inputs.
+
+        Args:
+            image_idx: The image index in the dataset.
+        """
+        # use top 1% of values as estimate of sun mask
+        sun_mask = torch.mean(data["image"], dim=-1)
+        sun_mask = sun_mask > torch.quantile(sun_mask, 0.99)
+        data["sun_mask"] = sun_mask
+        return data
     
     def get_dataset_min_max(self) -> Tuple[float, float]:
         """Returns the min and max values of the dataset."""
@@ -166,4 +181,3 @@ class RENIDataset(InputDataset):
             upper_perc = max(upper_perc, torch.quantile(image, upper_percentile))
 
         return lower_perc.item(), upper_perc.item()
-

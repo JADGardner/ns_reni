@@ -49,9 +49,76 @@ class BaseDiscriminator(nn.Module):
     @abstractmethod
     def get_outputs(self, image):
         """Returns the prediction of the discriminator."""
-        pass
+        raise NotImplementedError
 
-    def forward(self, x):
+    def forward(self, image):
+        """Evaluates discriminator for a given image batch.
+
+        Args:
+            image: [batch_size, 3, H, W]
+        """
+        return self.get_outputs(image)
+
+
+@dataclass
+class CNNDiscriminatorConfig(BaseDiscriminatorConfig):
+    """Configuration for model instantiation"""
+
+    _target: Type = field(default_factory=lambda: CNNDiscriminator)
+    """target class to instantiate"""
+    channels: int = 64
+    """Number of channels in the first layer of the discriminator."""
+    image_width: int = 256
+    """Width of the input image."""
+
+
+class CNNDiscriminator(nn.Module):
+    """Base class for RESGAN discriminators."""
+
+    def __init__(
+        self,
+        config: CNNDiscriminatorConfig,
+    ) -> None:
+        super().__init__()
+
+        self.config = config
+        W = self.config.image_width
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(3, self.config.channels, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(self.config.channels),
+            nn.LeakyReLU(0.2)
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(self.config.channels, self.config.channels * 2, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(self.config.channels * 2),
+            nn.LeakyReLU(0.2)
+        )
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(self.config.channels * 2, self.config.channels * 4, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(self.config.channels * 4),
+            nn.LeakyReLU(0.2)
+        )
+        self.fc = nn.Linear(self.config.channels * 4 * W//16 * W//8, 1)
+
+    def get_outputs(self, image):
+        """Returns the prediction of the discriminator."""
+        x = self.conv1(image)
+        x = self.conv2(x)
+        x = self.conv3(x)
+
+        # Flatten
+        x = x.view(x.shape[0], -1)
+
+        # Fully connected layer
+        x = self.fc(x)
+
+        # Use sigmoid to get a probability
+        x = torch.sigmoid(x)
+        
+        return x
+
+
+    def forward(self, image):
         """Evaluates discriminator for a given image batch.
 
         Args:

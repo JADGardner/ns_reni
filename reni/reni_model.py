@@ -48,10 +48,12 @@ from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import colormaps, colors, misc
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
 
+from reni.illumination_fields.base_spherical_field import SphericalFieldConfig
 from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
 from reni.field_components.field_heads import RENIFieldHeadNames
-from reni.model_components.losses import WeightedMSE, KLD, WeightedCosineSimilarity, ScaleInvariantLogLoss
+from reni.model_components.losses import WeightedMSE, KLD, WeightedCosineSimilarity, ScaleInvariantLogLoss, ScaleInvariantGradientMatchingLoss
 from reni.utils.colourspace import linear_to_sRGB
+from reni.model_components.discriminators import BaseDiscriminatorConfig
 
 CONSOLE = Console(width=120)
 
@@ -60,7 +62,7 @@ class RENIModelConfig(ModelConfig):
     """Vanilla Model Config"""
 
     _target: Type = field(default_factory=lambda: RENIModel)
-    field: RENIFieldConfig = RENIFieldConfig()
+    field: SphericalFieldConfig = SphericalFieldConfig()
     """Field configuration"""
     scale_invariant_loss: bool = False
     """Whether to use scale invariant loss"""
@@ -68,6 +70,16 @@ class RENIModelConfig(ModelConfig):
     """Whether to include sine weighting in the loss"""
     training_regime: Literal["autodecoder", "gan"] = "autodecoder"
     """Type of training, either as an autodecoder or generative adversarial network"""
+    loss_inclusions: Dict[str, bool] = to_immutable_dict({
+        'mse_loss': True,
+        'kld_loss': True,
+        'cosine_similarity_loss': False,
+        'scale_inv_loss': False,
+        'scale_inv_grad_loss': False
+    })
+    """Which losses to include in the training"""
+    discriminator: BaseDiscriminatorConfig = BaseDiscriminatorConfig()
+    """Discriminator configuration"""
 
 
 class RENIModel(Model):
@@ -101,16 +113,36 @@ class RENIModel(Model):
         
         self.field = self.config.field.setup(num_train_data=self.num_train_data, num_eval_data=self.num_eval_data, normalisations=normalisations)
 
+        if self.config.training_regime == 'gan':
+            self.discriminator = self.config.discriminator.setup()
+
         # losses
-        self.rgb_loss = WeightedMSE()
-        self.kld_loss = KLD(Z_dims=self.field.latent_dim)
-        self.cosine_similarity = WeightedCosineSimilarity()
-        self.scale_invariant_loss = ScaleInvariantLogLoss()
+        if self.config.loss_inclusions['mse_loss']:
+            self.mse_loss = WeightedMSE()
+        if self.config.loss_inclusions['kld_loss']:
+            self.kld_loss = KLD(Z_dims=self.field.latent_dim)
+        if self.config.loss_inclusions['cosine_similarity_loss']:
+            self.cosine_similarity = WeightedCosineSimilarity()
+        if self.config.loss_inclusions['scale_inv_loss']:
+            self.scale_invariant_loss = ScaleInvariantLogLoss()
+        if self.config.loss_inclusions['scale_inv_grad_loss']:
+            self.scale_invariant_grad_loss = ScaleInvariantGradientMatchingLoss()
 
         # metrics
         self.psnr = PeakSignalNoiseRatio()
         self.ssim = structural_similarity_index_measure
         self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
+
+    def create_ray_samples(self, ray_bundle: RayBundle) -> RaySamples:
+        # we need ray_samples for the field
+        ray_samples = RaySamples(frustums=Frustums(origins=ray_bundle.origins,
+                                                   directions=ray_bundle.directions,
+                                                   starts=torch.zeros_like(ray_bundle.origins[:, 0]),
+                                                   ends=torch.ones_like(ray_bundle.origins[:, 0]),
+                                                   pixel_area=torch.ones_like(ray_bundle.origins[:, 0])),
+                                 camera_indices=ray_bundle.camera_indices)
+        
+        return ray_samples
 
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
         param_groups = {}
@@ -121,26 +153,27 @@ class RENIModel(Model):
         if self.field is None:
             raise ValueError("populate_fields() must be called before get_outputs")
         
-        # we need ray_samples for the field
-        ray_samples = RaySamples(frustums=Frustums(origins=ray_bundle.origins,
-                                                   directions=ray_bundle.directions,
-                                                   starts=torch.zeros_like(ray_bundle.origins[:, 0]),
-                                                   ends=torch.ones_like(ray_bundle.origins[:, 0]),
-                                                   pixel_area=torch.ones_like(ray_bundle.origins[:, 0])),
-                                 camera_indices=ray_bundle.camera_indices)
+        if self.config.loss_inclusions['scale_inv_grad_loss']:
+            ray_bundle.directions.requires_grad = True
+        
+        ray_samples = self.create_ray_samples(ray_bundle)
 
-        field_outputs = self.field.forward(ray_samples, None)
+        rotation=None
+        latent_codes=None # if auto-decoder training regime latents are trainable params of the field
+        if self.config.training_regime == 'gan':
+            # sample from a uniform distribution
+            latent_codes = torch.randn(1, self.field.latent_dim, 3).type_as(ray_bundle.origins)
+        
+        field_outputs = self.field.forward(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes)
 
         outputs = {
             "rgb": field_outputs[RENIFieldHeadNames.RGB],
-            "mu": field_outputs[RENIFieldHeadNames.MU],
-            "log_var": field_outputs[RENIFieldHeadNames.LOG_VAR],
         }
 
-        if hasattr(self.field, "split_head") and self.field.split_head:
-            outputs["hdr"] = field_outputs[RENIFieldHeadNames.HDR]
-            outputs["ldr"] = field_outputs[RENIFieldHeadNames.LDR]
-            outputs["mixing"] = field_outputs[RENIFieldHeadNames.MIXING]
+        if RENIFieldHeadNames.MU in field_outputs:
+            outputs["mu"] = field_outputs[RENIFieldHeadNames.MU]
+        if RENIFieldHeadNames.LOG_VAR in field_outputs:
+            outputs["log_var"] = field_outputs[RENIFieldHeadNames.LOG_VAR]
 
         return outputs
     
@@ -154,6 +187,17 @@ class RENIModel(Model):
             # estimate scale using least squares
             scale = (image * rgb).sum() / (rgb * rgb).sum()
             rgb = scale * rgb
+
+        if self.metadata["min_max_normalize"]:
+            min_val, max_val = self.metadata["min_max"]
+            # need to unnormalize the image from between -1 and 1
+            image = 0.5 * (image + 1) * (max_val - min_val) + min_val
+            rgb = 0.5 * (rgb + 1) * (max_val - min_val) + min_val
+        
+        if self.metadata['convert_to_log_domain']:
+            # undo log domain conversion
+            image = torch.exp(image)
+            rgb = torch.exp(rgb)
                 
         psnr = self.psnr(image, rgb)
 
@@ -174,25 +218,26 @@ class RENIModel(Model):
 
         loss_dict = {}
 
-        if not self.config.scale_invariant_loss:
-            if hasattr(self.field, "split_head") and self.field.split_head:
-                ldr_image = linear_to_sRGB(image)
-                rgb_hdr_loss = self.rgb_loss(outputs["hdr"], image, sineweight)
-                rgb_ldr_loss = self.rgb_loss(outputs["ldr"], ldr_image, sineweight)
-                loss_dict['rgb_hdr_loss'] = rgb_hdr_loss
-                loss_dict['rgb_ldr_loss'] = rgb_ldr_loss
-            else:
-                rgb_hdr_loss = self.rgb_loss(outputs["rgb"], image, sineweight)
-                loss_dict['rgb_hdr_loss'] = rgb_hdr_loss
-        else:
-            scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], image)
-            loss_dict["scale_inv_loss"] = scale_inv_loss
+        if self.config.training_regime == 'autodecoder':
+            if self.config.loss_inclusions['mse_loss']:
+                mse_loss = self.mse_loss(outputs["rgb"], image, sineweight)
+                loss_dict['mse_loss'] = mse_loss
 
-        cosine_similarity_loss = self.cosine_similarity(outputs["rgb"], image, sineweight)
-        loss_dict["cosine_similarity_loss"] = cosine_similarity_loss
+            if self.config.loss_inclusions['kld_loss']:
+                kld_loss = self.kld_loss(outputs["mu"], outputs["log_var"])
+                loss_dict['kld_loss'] = kld_loss
 
-        kld_loss = self.kld_loss(outputs["mu"], outputs["log_var"])
-        loss_dict["kld_loss"] = kld_loss
+            if self.config.loss_inclusions['cosine_similarity_loss']:
+                cosine_similarity_loss = self.cosine_similarity(outputs["rgb"], image, sineweight)
+                loss_dict['cosine_similarity_loss'] = cosine_similarity_loss
+
+            if self.config.loss_inclusions['scale_inv_loss']:
+                scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], image, sineweight)
+                loss_dict['scale_inv_loss'] = scale_inv_loss
+
+            if self.config.loss_inclusions['scale_inv_grad_loss']:
+                scale_inv_grad_loss = self.scale_invariant_grad_loss(outputs["rgb"], image, batch['HW'])
+                loss_dict['scale_inv_grad_loss'] = scale_inv_grad_loss
 
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
         return loss_dict
@@ -213,7 +258,7 @@ class RENIModel(Model):
             # need to unnormalize the image from between -1 and 1
             image = 0.5 * (image + 1) * (max_val - min_val) + min_val
             rgb = 0.5 * (rgb + 1) * (max_val - min_val) + min_val
-        
+
         if self.metadata['convert_to_log_domain']:
             # undo log domain conversion
             image = torch.exp(image)
@@ -242,25 +287,10 @@ class RENIModel(Model):
         # i.e. we are not already in LDR space
         if not self.metadata['convert_to_ldr']:
             # convert from linear HDR to sRGB for viewing
-            image = linear_to_sRGB(image)
-            rgb = linear_to_sRGB(rgb)
+            image_ldr = linear_to_sRGB(image)
+            rgb_ldr = linear_to_sRGB(rgb)
 
-        combined_rgb = torch.cat([image, rgb], dim=1)
-
-        # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
-        image = torch.moveaxis(image, -1, 0)[None, ...]
-        rgb = torch.moveaxis(rgb, -1, 0)[None, ...]
-
-        psnr = self.psnr(image, rgb)
-        ssim = self.ssim(image, rgb)
-        # lpips = self.lpips(image, rgb) # TODO Needs -1 to 1 range
-        assert isinstance(ssim, torch.Tensor)
-
-        metrics_dict = {
-            "psnr": float(psnr),
-            "ssim": float(ssim),
-            # "lpips": float(lpips),
-        }
+        combined_rgb = torch.cat([image_ldr, rgb_ldr], dim=1)
 
         images_dict = {}
 
@@ -270,6 +300,26 @@ class RENIModel(Model):
 
         images_dict["img"] = combined_rgb
         images_dict["heatmap"] = combined_log_heatmap
+
+        # COMPUTE METRICS
+
+        # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
+        image = torch.moveaxis(image, -1, 0)[None, ...]
+        rgb = torch.moveaxis(rgb, -1, 0)[None, ...]
+
+        psnr = self.psnr(image, rgb)
+        ssim = self.ssim(image, rgb)
+        # for lpips we need to convert to 0 to 1 using image.min() and image.max()
+        image = (image - image.min()) / (image.max() - image.min())
+        rgb = (rgb - rgb.min()) / (rgb.max() - rgb.min())
+        lpips = self.lpips(image, rgb)
+        assert isinstance(ssim, torch.Tensor)
+
+        metrics_dict = {
+            "psnr": float(psnr),
+            "ssim": float(ssim),
+            "lpips": float(lpips),
+        }
 
         return metrics_dict, images_dict
 

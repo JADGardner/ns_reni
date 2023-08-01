@@ -104,7 +104,9 @@ class RENIDataParser(DataParser):
             metadata={'convert_to_ldr': self.config.convert_to_ldr,
                       'convert_to_log_domain': self.config.convert_to_log_domain,
                       'augment_with_mirror': self.config.augment_with_mirror,
-                      'min_max_normalize': self.config.min_max_normalize}
+                      'min_max_normalize': self.config.min_max_normalize,
+                      'image_height': image_height,
+                      'image_width': image_width}
         )
 
         return dataparser_outputs

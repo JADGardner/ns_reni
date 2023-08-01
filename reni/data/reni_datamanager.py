@@ -74,6 +74,8 @@ class RENIDataManagerConfig(VanillaDataManagerConfig):
 
     _target: Type = field(default_factory=lambda: RENIDataManager)
     """Target class to instantiate."""
+    full_image_per_batch: bool = False
+    """Whether to use full images per batch."""
 
 
 class RENIDataManager(VanillaDataManager):
@@ -144,6 +146,50 @@ class RENIDataManager(VanillaDataManager):
             (cls,),
             {"__module__": cls.__module__, "__init__": functools.partialmethod(cls.__init__, _dataset_type=item)},
         )
+    
+    def next_train(self, step: int) -> Tuple[RayBundle, Dict]:
+        """Returns the next batch of data from the train dataloader."""
+        if self.config.full_image_per_batch:
+            for camera_ray_bundle, batch in self.eval_dataloader:
+                assert camera_ray_bundle.camera_indices is not None
+                camera_ray_bundle = camera_ray_bundle.reshape(-1)
+                batch['HW'] = batch['image'].shape[:2]
+                for key in batch:
+                    if isinstance(batch[key], torch.Tensor):
+                        if batch[key].ndim == 3:
+                            batch[key] = batch[key].reshape(-1, batch[key].shape[-1])
+                        elif batch[key].ndim == 2:
+                            batch[key] = batch[key].reshape(-1, 1)
+                return camera_ray_bundle, batch
+            raise ValueError("No more eval images")
+        else:
+            self.train_count += 1
+            image_batch = next(self.iter_train_image_dataloader)
+            assert self.train_pixel_sampler is not None
+            assert isinstance(image_batch, dict)
+            batch = self.train_pixel_sampler.sample(image_batch)
+            ray_indices = batch["indices"]
+            ray_bundle = self.train_ray_generator(ray_indices)
+            return ray_bundle, batch
+
+    def next_eval(self, step: int) -> Tuple[RayBundle, Dict]:
+        """Returns the next batch of data from the eval dataloader."""
+        self.eval_count += 1
+        image_batch = next(self.iter_eval_image_dataloader)
+        assert self.eval_pixel_sampler is not None
+        assert isinstance(image_batch, dict)
+        batch = self.eval_pixel_sampler.sample(image_batch)
+        ray_indices = batch["indices"]
+        ray_bundle = self.eval_ray_generator(ray_indices)
+        return ray_bundle, batch
+    
+    def next_eval_image(self, step: int) -> Tuple[int, RayBundle, Dict]:
+        for camera_ray_bundle, batch in self.eval_dataloader:
+            assert camera_ray_bundle.camera_indices is not None
+            image_idx = int(camera_ray_bundle.camera_indices[0, 0, 0])
+            return image_idx, camera_ray_bundle, batch
+        raise ValueError("No more eval images")
+
 
     def create_train_dataset(self) -> RENIDataset:
         """Sets up the data loaders for training"""

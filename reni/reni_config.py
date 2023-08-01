@@ -29,6 +29,8 @@ from reni.data.reni_datamanager import RENIDataManagerConfig
 from reni.reni_model import RENIModelConfig
 from reni.reni_pipeline import RENIPipelineConfig
 from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
+from reni.illumination_fields.sg_illumination_field import SphericalGaussianFieldConfig
+from reni.illumination_fields.sh_illumination_field import SphericalHarmonicIlluminationFieldConfig
 
 
 RENIField = MethodSpecification(
@@ -51,6 +53,7 @@ RENIField = MethodSpecification(
                     min_max_normalize=None, # in e^min = 0.0111, e^max = 8103.08
                 ),
                 train_num_rays_per_batch=8192,
+                full_image_per_batch=False,
             ),
             model=RENIModelConfig(
                 field=RENIFieldConfig(
@@ -58,8 +61,8 @@ RENIField = MethodSpecification(
                     equivariance="SO2",
                     axis_of_invariance="z", # Nerfstudio world space is z-up
                     positional_encoding="NeRF",
-                    encoded_input="Directions",
-                    latent_dim=36,
+                    encoded_input="Directions", # "InvarDirection", "Directions", "Conditioning", "Both"
+                    latent_dim=100,
                     hidden_features=256,
                     hidden_layers=9,
                     mapping_layers=5,
@@ -67,14 +70,27 @@ RENIField = MethodSpecification(
                     output_activation="None",
                     last_layer_linear=True,
                 ),
+                # field=SphericalGaussianFieldConfig(
+                #     row_col_gaussian_dims=(2, 1),
+                #     channel_dim=3
+                # ),
+                # field=SphericalHarmonicIlluminationFieldConfig(
+                #     spherical_harmonic_order=2,
+                # ),
                 loss_coefficients={
-                    "rgb_hdr_loss": 10.0,
-                    "rgb_ldr_loss": 10.0,
+                    "mse_loss": 10.0,
                     "cosine_similarity_loss": 1.0,
                     "kld_loss": 0.00001,
                     "scale_inv_loss": 1.0,
+                    "scale_inv_grad_loss": 1.0,
                 },
-                scale_invariant_loss=True,
+                loss_inclusions={
+                    "mse_loss": False,
+                    "cosine_similarity_loss": True,
+                    "kld_loss": True,
+                    "scale_inv_loss": True,
+                    "scale_inv_grad_loss": False,
+                },
                 include_sine_weighting=False,
                 training_regime="autodecoder",
             ),

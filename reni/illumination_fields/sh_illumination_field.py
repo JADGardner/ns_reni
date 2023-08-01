@@ -14,7 +14,7 @@
 
 """RENI field"""
 
-from typing import Literal, Type, Union, Optional, Dict, Union, Tuple
+from typing import Literal, Type, Union, Optional, Dict, Union, Tuple, Any
 from dataclasses import dataclass, field
 import wget
 import zipfile
@@ -383,22 +383,42 @@ class SphericalHarmonicIlluminationField(SphericalField):
         config: SphericalHarmonicIlluminationFieldConfig,
         num_train_data: int,
         num_eval_data: int,
-        min_max: Union[Tuple[float, float], None] = None,
+        normalisations: Dict[str, Any],
     ) -> None:
         super().__init__()
         self.config = config
         self.num_train_data = num_train_data
         self.num_eval_data = num_eval_data
-        self.min_max = min_max
         self.spherical_harmonic_order = config.spherical_harmonic_order
         self.num_sh_coeffs = calc_num_sh_coeffs(self.spherical_harmonic_order)
+        self.fixed_decoder = False
+
+        self.min_max = normalisations["min_max"] if "min_max" in normalisations else None
+        self.log_domain = normalisations["log_domain"] if "log_domain" in normalisations else False
 
         train_latent_codes = self.init_latent_codes(self.num_train_data)
         eval_latent_codes = self.init_latent_codes(self.num_eval_data)
 
-        self.register_buffer("train_latent_codes", train_latent_codes)
-        self.register_buffer("eval_latent_codes", eval_latent_codes)
+        self.register_parameter("train_latent_codes", train_latent_codes)
+        self.register_parameter("eval_latent_codes", eval_latent_codes)
 
+
+    @contextlib.contextmanager
+    def hold_decoder_fixed(self):
+        """Context manager to fix the decoder weights
+
+        Example usage:
+        ```
+        with instance_of_RENIField.hold_decoder_fixed():
+            # do stuff
+        ```
+        """
+        prev_decoder_state = self.fixed_decoder
+        self.fixed_decoder = True
+        try:
+            yield
+        finally:
+            self.fixed_decoder = prev_decoder_state
 
     def sample_latent(self, idx):
         """Sample the latent code at a given index
@@ -410,7 +430,7 @@ class SphericalHarmonicIlluminationField(SphericalField):
         tuple (torch.Tensor, torch.Tensor, torch.Tensor): A tuple containing the sampled spherical harmonics coefficients
         """
 
-        if self.training:
+        if self.training and not self.fixed_decoder:
             return self.train_latent_codes[idx, :, :]
         else:
             return self.eval_latent_codes[idx, :, :]
@@ -425,9 +445,8 @@ class SphericalHarmonicIlluminationField(SphericalField):
     
     def reset_eval_latents(self):
         """Resets the eval latents"""
-        eval_latent_codes = self.init_latent_codes(self.num_eval_data)
+        eval_latent_codes = self.init_latent_codes(self.num_eval_data).type_as(self.eval_latent_codes)
         self.eval_latent_codes.data = eval_latent_codes.data
-
 
     def get_outputs(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None], latent_codes: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
         """Returns the outputs of the field.
@@ -462,7 +481,6 @@ class SphericalHarmonicIlluminationField(SphericalField):
         sh_basis_matrix = shEvaluate(theta, phi, self.spherical_harmonic_order, device=camera_indices.device) # [num_rays, num_sh_coeffs]
 
         # get radiance
-        print(f'sh_basis_matrix shape = {sh_basis_matrix.shape}, sh_coeffs shape = {sh_coeffs.shape}')
         radiance = torch.einsum("ij,ijk->ik", sh_basis_matrix, sh_coeffs) # [num_rays, 3]
 
         outputs = {

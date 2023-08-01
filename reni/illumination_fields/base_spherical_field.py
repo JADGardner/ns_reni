@@ -24,10 +24,10 @@ import torch
 from torch import nn
 from torchtyping import TensorType
 
-from nerfstudio.configs.base_config import InstantiateConfig
-from nerfstudio.cameras.rays import RayBundle, RaySamples
-
 from reni.field_components.field_heads import RENIFieldHeadNames
+
+from nerfstudio.configs.base_config import InstantiateConfig
+from nerfstudio.cameras.rays import RaySamples
 
 # Field related configs
 @dataclass
@@ -63,4 +63,4 @@ class SphericalField(nn.Module):
             ray_bundle: [num_rays]
             rotation: [3, 3]
         """
-        return self.get_outputs(ray_bundle=ray_bundle, rotation=rotation)
+        return self.get_outputs(ray_samples=ray_samples, rotation=rotation)

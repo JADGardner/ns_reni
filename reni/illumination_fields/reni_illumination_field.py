@@ -140,6 +140,8 @@ class RENIFieldConfig(SphericalFieldConfig):
     """Omega_0 for hidden layers"""
     fixed_decoder: bool = False
     """Whether to fix the decoder weights"""
+    trainable_scale: bool = False
+    """Whether to train the scale parameter"""
 
 class RENIField(SphericalField):
     """Base class for illumination fields."""
@@ -177,11 +179,17 @@ class RENIField(SphericalField):
             train_mu, train_logvar = self.init_latent_codes(self.num_train_data, 'train')
             self.register_parameter("train_mu", train_mu)
             self.register_parameter("train_logvar", train_logvar)
+            
+            if self.config.trainable_scale:
+                self.train_scale = nn.Parameter(torch.ones(self.num_train_data))
         
         if self.num_eval_data is not None:
             eval_mu, eval_logvar = self.init_latent_codes(self.num_eval_data, 'eval')
             self.register_parameter("eval_mu", eval_mu)
             self.register_parameter("eval_logvar", eval_logvar)
+            
+            if self.config.trainable_scale:
+                self.eval_scale = nn.Parameter(torch.ones(self.num_eval_data))
 
         self.invariant_function = invariant_grammatrix_representation if self.config.invariant_function == "GramMatrix" else invariant_vn_representation
 
@@ -316,6 +324,14 @@ class RENIField(SphericalField):
             log_var = self.eval_logvar[idx, :, :]
 
         return sample, mu, log_var
+    
+    def select_scale(self):
+        """Selects the scale to use for the network"""
+        
+        if self.training and not self.fixed_decoder:
+            return self.train_scale
+        
+        return self.eval_scale
 
     def init_latent_codes(self, num_latents: int, mode: Literal["train", "eval"]):
         """Initializes the latent codes
@@ -394,6 +410,11 @@ class RENIField(SphericalField):
             model_outputs = self.network["siren"](torch.cat((directional_input, conditioning_input), dim=1)) # [num_rays, 3]
         elif self.conditioning == "FiLM":
             model_outputs = self.network["siren"](directional_input, conditioning_input) # [num_rays, 3]
+
+        if self.config.trainable_scale:
+            scale = self.select_scale()
+            scales = scale[camera_indices] # [num_rays]
+            model_outputs = model_outputs * scales.unsqueeze(1) # [num_rays, 3]
 
         outputs[RENIFieldHeadNames.RGB] = model_outputs
         outputs[RENIFieldHeadNames.MU] = mu
