@@ -65,7 +65,6 @@ class RENIDataParser(DataParser):
         self.data: Path = config.data
 
     def _generate_dataparser_outputs(self, split="train"):
-        # split = 'train' # TODO don't hardcode this, just for testing
         path = self.data / split
 
         # if it doesn't exist, download the data
@@ -92,7 +91,7 @@ class RENIDataParser(DataParser):
         fy = torch.tensor(image_height, dtype=torch.float32).repeat(num_images)
 
         # c2w = torch.eye(4)[None, :3, :].repeat(num_images, 1, 1)
-        c2w = torch.tensor([[[-1, 0, 0, 0],
+        c2w = torch.tensor([[[1, 0, 0, 0],
                              [0, 0, 1, 0],
                              [0, 1, 0, 0]]], dtype=torch.float32).repeat(num_images, 1, 1) # convert from nerfstudio camera to nerfstudio world
 
