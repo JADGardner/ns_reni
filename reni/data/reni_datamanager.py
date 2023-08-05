@@ -76,6 +76,8 @@ class RENIDataManagerConfig(VanillaDataManagerConfig):
     """Target class to instantiate."""
     full_image_per_batch: bool = False
     """Whether to use full images per batch."""
+    number_of_images_per_batch: int = 1
+    """Number of images per batch."""
 
 
 class RENIDataManager(VanillaDataManager):

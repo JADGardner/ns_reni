@@ -71,12 +71,12 @@ class VN_DGCNN(nn.Module):
         self.actvn_3 = VNLeakyReLU(2*hidden_dim, negative_slope=0.0, share_nonlinearity=False)
         self.actvn_c = VNLeakyReLU(hidden_dim, negative_slope=0.0, share_nonlinearity=False)
         
-        self.pool = meanpool
+        self.meanpool = meanpool
         
         if meta_output == 'invariant_latent':
-            self.std_feature = VNStdFeature(c_dim, dim=4, normalize_frame=True, use_batchnorm=False)
+            self.std_feature = VNStdFeature(c_dim, dim=3, normalize_frame=True, use_batchnorm=False)
         elif meta_output == 'invariant_latent_linear':
-            self.std_feature = VNStdFeature(c_dim, dim=4, normalize_frame=True, use_batchnorm=False)
+            self.std_feature = VNStdFeature(c_dim, dim=3, normalize_frame=True, use_batchnorm=False)
             self.vn_inv = VNLinear(c_dim, 3)
         
     def forward(self, p):
@@ -99,33 +99,33 @@ class VN_DGCNN(nn.Module):
         #mean = p_trans.mean(dim=-1, keepdim=True).expand(p_trans.size())
         feat = get_graph_feature_cross(p, k=self.k, dims=3) # [B, 1, 3, N] -> [B, 3, 3, N, K]
         net = self.conv_pos(feat) # [B, 3, 3, N, K] -> [B, Z, 3, N, K]
-        net = self.pool(net, dim=-1) # [B, Z, 3, N, K] -> [B, Z, 3, N]
+        net = self.meanpool(net, dim=-1) # [B, Z, 3, N, K] -> [B, Z, 3, N]
 
         net = self.fc_pos(net) # [B, Z, 3, N] -> [B, Z↑, 3, N] Where Z↑ is the output dimension of the layer
 
         net = self.fc_0(self.actvn_0(net)) # [B, Z, 3, N] -> [B, Z↑, 3, N]
-        pooled = self.pool(net, dim=-1, keepdim=True).expand(net.size()) # [B, Z, 3, N]
+        pooled = self.meanpool(net, dim=-1, keepdim=True).expand(net.size()) # [B, Z, 3, N]
         net = torch.cat([net, pooled], dim=1) # [B, 2Z, 3, N]
 
         net = self.fc_1(self.actvn_1(net)) # [B, Z, 3, N] -> [B, Z↑, 3, N]
-        pooled = self.pool(net, dim=-1, keepdim=True).expand(net.size()) # [B, Z, 3, N]
+        pooled = self.meanpool(net, dim=-1, keepdim=True).expand(net.size()) # [B, Z, 3, N]
         net = torch.cat([net, pooled], dim=1) # [B, 2Z, 3, N]
 
         net = self.fc_2(self.actvn_2(net)) # [B, Z, 3, N] -> [B, Z↑, 3, N]
-        pooled = self.pool(net, dim=-1, keepdim=True).expand(net.size()) # [B, Z, 3, N]
+        pooled = self.meanpool(net, dim=-1, keepdim=True).expand(net.size()) # [B, Z, 3, N]
         net = torch.cat([net, pooled], dim=1) # [B, 2Z, 3, N]
 
         net = self.fc_3(self.actvn_3(net)) # [B, Z, 3, N] -> [B, Z↑, 3, N]
 
         # I commented this as was pooling over the 'number of points' N dimension
-        # net = model.pool(net, dim=-1) # [B, Z↑, 3, N] -> [B, Z↑, 3]
+        net = self.meanpool(net, dim=-1) # [B, Z↑, 3, N] -> [B, Z↑, 3]
 
-        c = self.fc_c(self.actvn_c(net))
+        c = self.fc_c(self.actvn_c(net)) # [B, Z, 3] -> [B, Z↑, 3]
         
         if self.meta_output == 'invariant_latent':
-            c_std, z0 = self.std_feature(c)
-            c = c.permute(0, 1, 3, 2)
-            c_std = c_std.permute(0, 1, 3, 2)
+            c_std, z0 = self.std_feature(c) # [B, Z, 3] -> [B, Z, 3], [B, 3, 3]
+            # c = c.permute(0, 1, 3, 2)
+            # c_std = c_std.permute(0, 1, 3, 2)
             return c, c_std
         elif self.meta_output == 'invariant_latent_linear':
             c_std, z0 = self.std_feature(c)

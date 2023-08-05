@@ -23,22 +23,17 @@ import contextlib
 
 import numpy as np
 import torch
-from torch import nn
 from torchtyping import TensorType
 
 from reni.illumination_fields.base_spherical_field import SphericalField, SphericalFieldConfig
 from reni.field_components.field_heads import RENIFieldHeadNames
 
-from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.cameras.rays import RaySamples
-
-
-""" https://github.com/lzqsd/SphericalGaussianOptimization"""
     
 # Field related configs
 @dataclass
 class SphericalGaussianFieldConfig(SphericalFieldConfig):
-    """Configuration for model instantiation"""
+    """Configuration for Spherical Gaussian instantiation"""
 
     _target: Type = field(default_factory=lambda: SphericalGaussianField)
     """target class to instantiate"""
@@ -49,7 +44,9 @@ class SphericalGaussianFieldConfig(SphericalFieldConfig):
 
 
 class SphericalGaussianField(SphericalField):
-    """Base class for illumination fields."""
+    """Spherical Gaussian Illumination Field.
+       https://github.com/lzqsd/SphericalGaussianOptimization
+    """
 
     def __init__(
         self,

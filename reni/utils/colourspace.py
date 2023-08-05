@@ -1,8 +1,8 @@
 import torch
 
 def linear_to_sRGB(color):
-    q = torch.quantile(color.flatten(), 0.98)
-    color = color / q.expand_as(color)
+    # q = torch.quantile(color.flatten(), 0.98)
+    # color = color / q.expand_as(color)
     color = torch.where(
         color <= 0.0031308,
         12.92 * color,

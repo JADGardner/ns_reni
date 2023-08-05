@@ -53,7 +53,7 @@ from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
 from reni.field_components.field_heads import RENIFieldHeadNames
 from reni.model_components.losses import WeightedMSE, KLD, WeightedCosineSimilarity, ScaleInvariantLogLoss, ScaleInvariantGradientMatchingLoss
 from reni.utils.colourspace import linear_to_sRGB
-from reni.model_components.discriminators import BaseDiscriminatorConfig
+from reni.discriminators.discriminators import BaseDiscriminatorConfig
 
 CONSOLE = Console(width=120)
 
@@ -64,8 +64,6 @@ class RENIModelConfig(ModelConfig):
     _target: Type = field(default_factory=lambda: RENIModel)
     field: SphericalFieldConfig = SphericalFieldConfig()
     """Field configuration"""
-    scale_invariant_loss: bool = False
-    """Whether to use scale invariant loss"""
     include_sine_weighting: bool = True
     """Whether to include sine weighting in the loss"""
     training_regime: Literal["autodecoder", "gan"] = "autodecoder"
@@ -80,6 +78,11 @@ class RENIModelConfig(ModelConfig):
     """Which losses to include in the training"""
     discriminator: BaseDiscriminatorConfig = BaseDiscriminatorConfig()
     """Discriminator configuration"""
+    eval_optimisation_params: Dict[str, Any] = to_immutable_dict({
+        "num_steps": 5000,
+        "lr_start": 0.1,
+        "lr_end": 0.0001,
+    })
 
 
 class RENIModel(Model):
@@ -134,7 +137,8 @@ class RENIModel(Model):
         self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
 
     def create_ray_samples(self, ray_bundle: RayBundle) -> RaySamples:
-        # we need ray_samples for the field
+        """Create ray samples from a ray bundle"""
+
         ray_samples = RaySamples(frustums=Frustums(origins=ray_bundle.origins,
                                                    directions=ray_bundle.directions,
                                                    starts=torch.zeros_like(ray_bundle.origins[:, 0]),
@@ -183,7 +187,7 @@ class RENIModel(Model):
         image = batch["image"].to(device)
         rgb = outputs["rgb"]
 
-        if self.config.scale_invariant_loss:
+        if self.scale_invariant_loss:
             # estimate scale using least squares
             scale = (image * rgb).sum() / (rgb * rgb).sum()
             rgb = scale * rgb
@@ -248,7 +252,7 @@ class RENIModel(Model):
         image = batch["image"].to(outputs["rgb"].device)
         rgb = outputs["rgb"]
 
-        if self.config.scale_invariant_loss:
+        if self.scale_invariant_loss:
             # estimate scale using least squares
             scale = (image * rgb).sum() / (rgb * rgb).sum()
             rgb = scale * rgb
@@ -344,9 +348,9 @@ class RENIModel(Model):
 
     def fit_eval_latents(self, datamanager: VanillaDataManager):
         """Fit eval latents"""
-        steps = 5000
-        lr_start = 0.1
-        lr_end = 0.0001
+        steps = self.config.eval_optimisation_params["num_steps"]
+        lr_start = self.config.eval_optimisation_params["lr_start"]
+        lr_end = self.config.eval_optimisation_params["lr_end"]
 
         opt = torch.optim.Adam(self.field.parameters(), lr=lr_start)
         

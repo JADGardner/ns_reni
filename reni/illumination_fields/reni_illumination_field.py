@@ -25,80 +25,18 @@ import numpy as np
 import torch
 from torch import nn
 from torchtyping import TensorType
-
-from nerfstudio.cameras.rays import RayBundle, RaySamples, Frustums
-from nerfstudio.field_components.encodings import NeRFEncoding, SHEncoding, Encoding
+from einops.layers.torch import Rearrange
 
 from reni.illumination_fields.base_spherical_field import SphericalField, SphericalFieldConfig
 from reni.field_components.siren import Siren
 from reni.field_components.film_siren import FiLMSiren
 from reni.field_components.activations import ExpLayer
 from reni.field_components.field_heads import RENIFieldHeadNames
+from reni.model_components.vn_layers import VNInvariant, VNLinear
 
-def invariant_grammatrix_representation(
-    Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2", 
-    axis_of_invariance: int = 1,
-):
-    """Generates an invariant representation from latent code Z and direction coordinates D.
+from nerfstudio.cameras.rays import RayBundle, RaySamples, Frustums
+from nerfstudio.field_components.encodings import NeRFEncoding, SHEncoding, Encoding
 
-    Args:
-        Z (torch.Tensor): Latent code (num_rays x latent_dim x 3)
-        D (torch.Tensor): Direction coordinates (num_rays x 3)
-        equivariance (str): Type of equivariance to use. Options are 'none', 'SO2', and 'SO3'
-        axis_of_invariance (int): The axis of rotation invariance. Should be 0 (x-axis), 1 (y-axis), or 2 (z-axis).
-            Default is 1 (y-axis).
-    Returns:
-        torch.Tensor: Invariant representation 
-    """
-    assert 0 <= axis_of_invariance < 3, 'axis_of_invariance should be 0, 1, or 2.'
-    other_axes = [i for i in range(3) if i != axis_of_invariance]
-
-
-    if equivariance == "None":
-        innerprod = torch.bmm(D, torch.transpose(Z, 1, 2))
-        z_input = Z.flatten(start_dim=1).unsqueeze(1).repeat(1, D.shape[1], 1)
-        return innerprod, z_input
-
-    if equivariance == "SO2":
-        # Select components along axes orthogonal to the axis of invariance
-        z_other = torch.stack((Z[:, :, other_axes[0]], Z[:, :, other_axes[1]]), -1) # [num_rays, latent_dim, 2]
-        d_other = torch.stack((D[:, other_axes[0]], D[:, other_axes[1]]), -1).unsqueeze(1) # [num_rays, 2]
-        d_other = d_other.expand_as(z_other) # size becomes [10, 5, 2]
-
-        # Invariant representation of Z, gram matrix G=Z*Z' is size num_rays x latent_dim x latent_dim
-        G = torch.bmm(z_other, torch.transpose(z_other, 1, 2))
-
-        # Flatten G to be size num_rays x latent_dim^2
-        z_other_invar = G.flatten(start_dim=1)
-
-        # Get invariant component of Z along the axis of invariance 
-        z_invar = Z[:, :, axis_of_invariance] # [num_rays, latent_dim]
-
-        # Innerprod is size num_rays x latent_dim
-        innerprod = (z_other * d_other).sum(dim=-1) # [num_rays, latent_dim]
-
-        # Compute norm along the axes orthogonal to the axis of invariance
-        d_other_norm = torch.sqrt(D[::, other_axes[0]] ** 2 + D[:, other_axes[1]] ** 2).unsqueeze(-1) # [num_rays, 1]
-
-        # Get invariant component of D along the axis of invariance
-        d_invar = D[:, axis_of_invariance].unsqueeze(-1) # [num_rays, 1]
-
-        directional_input = torch.cat((innerprod, d_invar, d_other_norm), 1)  # [num_rays, latent_dim + 2]
-        conditioning_input = torch.cat((z_other_invar, z_invar), 1)  # [num_rays, latent_dim^2 + latent_dim]
-
-        return directional_input, conditioning_input
-
-    if equivariance == "SO3":
-        G = Z @ torch.transpose(Z, 1, 2)
-        innerprod = torch.bmm(D, torch.transpose(Z, 1, 2))
-        z_invar = G.flatten(start_dim=1).unsqueeze(1).repeat(1, D.shape[1], 1)
-        return innerprod, z_invar
-
-def invariant_vn_representation(
-    Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2",
-    axis_of_invariance: int = 1
-):
-    raise NotImplementedError
 
 @dataclass
 class RENIFieldConfig(SphericalFieldConfig):
@@ -191,13 +129,28 @@ class RENIField(SphericalField):
             if self.config.trainable_scale:
                 self.eval_scale = nn.Parameter(torch.ones(self.num_eval_data))
 
-        self.invariant_function = invariant_grammatrix_representation if self.config.invariant_function == "GramMatrix" else invariant_vn_representation
+        if self.config.invariant_function == "GramMatrix":
+            self.invariant_function = self.invariant_grammatrix_representation
+        else:
+            self.vn_proj_in = nn.Sequential(
+              Rearrange('... c -> ... 1 c'),
+              VNLinear(dim_in=1, dim_out=1, bias_epsilon=0)
+            )
+            self.vn_invar = VNInvariant(dim=1, dim_coor=2)
+            self.invariant_function = self.invariant_vn_representation
+            
 
         self.network = self.setup_network() # ModuleDict {'siren': siren [mlp], 'hdr_head': Union[mlp, None], 'ldr_head': Union[mlp, None], 'mixing_head': Union[mlp, None]}
         
         if self.fixed_decoder:
             for _, value in self.network.items():
                 for param in value.parameters():
+                    param.requires_grad = False
+            
+            if self.config.invariant_function == "VN":
+                for param in self.vn_proj_in.parameters():
+                    param.requires_grad = False
+                for param in self.vn_invar.parameters():
                     param.requires_grad = False
 
     @contextlib.contextmanager
@@ -210,18 +163,31 @@ class RENIField(SphericalField):
             # do stuff
         ```
         """
-        prev_state = {k: p.requires_grad for k, p in self.named_parameters() if 'siren' in k}
-        prev_decoder_state = self.fixed_decoder
+        prev_state_siren = {k: p.requires_grad for k, p in self.named_parameters() if 'siren' in k}
         for name, param in self.named_parameters():
             if 'siren' in name:
                 param.requires_grad_(False)
+        if self.config.invariant_function == "VN":
+            prev_state_proj_in = {k: p.requires_grad for k, p in self.vn_proj_in.named_parameters()}
+            prev_state_invar = {k: p.requires_grad for k, p in self.vn_invar.named_parameters()}
+            for param in self.vn_proj_in.parameters():
+                param.requires_grad = False
+            for param in self.vn_invar.parameters():
+                param.requires_grad = False
+
+        prev_decoder_state = self.fixed_decoder
         self.fixed_decoder = True
         try:
             yield
         finally:
             for name, param in self.named_parameters():
                 if 'siren' in name:
-                    param.requires_grad_(prev_state[name])
+                    param.requires_grad_(prev_state_siren[name])
+            if self.config.invariant_function == "VN":
+                for name, param in self.vn_proj_in.named_parameters():
+                    param.requires_grad_(prev_state_proj_in[name])
+                for name, param in self.vn_invar.named_parameters():
+                    param.requires_grad_(prev_state_invar[name])
             self.fixed_decoder = prev_decoder_state
 
     def unnormalise(self, x):
@@ -236,6 +202,101 @@ class RENIField(SphericalField):
             x = torch.exp(x)
         
         return x
+    
+    def invariant_vn_representation(self, Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2",  axis_of_invariance: int = 1):
+        """Generates an invariant representation from latent code Z and direction coordinates D.
+
+        Args:
+            Z (torch.Tensor): Latent code (num_rays x latent_dim x 3)
+            D (torch.Tensor): Direction coordinates (num_rays x 3)
+            equivariance (str): Type of equivariance to use. Options are 'none', 'SO2', and 'SO3'
+            axis_of_invariance (int): The axis of rotation invariance. Should be 0 (x-axis), 1 (y-axis), or 2 (z-axis).
+                Default is 1 (y-axis).
+        Returns:
+            torch.Tensor: Invariant representation 
+        """
+        assert 0 <= axis_of_invariance < 3, 'axis_of_invariance should be 0, 1, or 2.'
+        other_axes = [i for i in range(3) if i != axis_of_invariance]
+        z_other = torch.stack((Z[:, :, other_axes[0]], Z[:, :, other_axes[1]]), -1) # [num_rays, latent_dim, 2]
+        d_other = torch.stack((D[:, other_axes[0]], D[:, other_axes[1]]), -1).unsqueeze(1) # [num_rays, 2]
+        d_other = d_other.expand_as(z_other) # size becomes [num_rays, latent_dim, 2]
+
+        z_other_emb = self.vn_proj_in(z_other) # [num_rays, latent_dim, 64, 2]
+        z_other_invar = self.vn_invar(z_other_emb) # [num_rays, latent_dim, 2]
+
+        # Get invariant component of Z along the axis of invariance 
+        z_invar = Z[:, :, axis_of_invariance].unsqueeze(-1) # [num_rays, latent_dim, 1]
+
+        # Innerprod is size num_rays x latent_dim
+        innerprod = (z_other * d_other).sum(dim=-1) # [num_rays, latent_dim]
+
+        # Compute norm along the axes orthogonal to the axis of invariance
+        d_other_norm = torch.sqrt(D[::, other_axes[0]] ** 2 + D[:, other_axes[1]] ** 2).unsqueeze(-1) # [num_rays, 1]
+
+        # Get invariant component of D along the axis of invariance
+        d_invar = D[:, axis_of_invariance].unsqueeze(-1) # [num_rays, 1]
+
+        directional_input = torch.cat((innerprod, d_invar, d_other_norm), 1)  # [num_rays, latent_dim + 2]
+        conditioning_input = torch.cat((z_other_invar, z_invar), dim=-1).flatten(1) # [num_rays, latent_dim * 3]
+
+        return directional_input, conditioning_input
+
+    
+    def invariant_grammatrix_representation(self, Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2",  axis_of_invariance: int = 1):
+        """Generates an invariant representation from latent code Z and direction coordinates D.
+
+        Args:
+            Z (torch.Tensor): Latent code (num_rays x latent_dim x 3)
+            D (torch.Tensor): Direction coordinates (num_rays x 3)
+            equivariance (str): Type of equivariance to use. Options are 'none', 'SO2', and 'SO3'
+            axis_of_invariance (int): The axis of rotation invariance. Should be 0 (x-axis), 1 (y-axis), or 2 (z-axis).
+                Default is 1 (y-axis).
+        Returns:
+            torch.Tensor: Invariant representation 
+        """
+        assert 0 <= axis_of_invariance < 3, 'axis_of_invariance should be 0, 1, or 2.'
+        other_axes = [i for i in range(3) if i != axis_of_invariance]
+
+
+        if equivariance == "None":
+            innerprod = torch.bmm(D, torch.transpose(Z, 1, 2))
+            z_input = Z.flatten(start_dim=1).unsqueeze(1).repeat(1, D.shape[1], 1)
+            return innerprod, z_input
+
+        if equivariance == "SO2":
+            # Select components along axes orthogonal to the axis of invariance
+            z_other = torch.stack((Z[:, :, other_axes[0]], Z[:, :, other_axes[1]]), -1) # [num_rays, latent_dim, 2]
+            d_other = torch.stack((D[:, other_axes[0]], D[:, other_axes[1]]), -1).unsqueeze(1) # [num_rays, 2]
+            d_other = d_other.expand_as(z_other) # size becomes [num_rays, latent_dim, 2]
+
+            # Invariant representation of Z, gram matrix G=Z*Z' is size num_rays x latent_dim x latent_dim
+            G = torch.bmm(z_other, torch.transpose(z_other, 1, 2))
+
+            # Flatten G to be size num_rays x latent_dim^2
+            z_other_invar = G.flatten(start_dim=1)
+
+            # Get invariant component of Z along the axis of invariance 
+            z_invar = Z[:, :, axis_of_invariance] # [num_rays, latent_dim]
+
+            # Innerprod is size num_rays x latent_dim
+            innerprod = (z_other * d_other).sum(dim=-1) # [num_rays, latent_dim]
+
+            # Compute norm along the axes orthogonal to the axis of invariance
+            d_other_norm = torch.sqrt(D[::, other_axes[0]] ** 2 + D[:, other_axes[1]] ** 2).unsqueeze(-1) # [num_rays, 1]
+
+            # Get invariant component of D along the axis of invariance
+            d_invar = D[:, axis_of_invariance].unsqueeze(-1) # [num_rays, 1]
+
+            directional_input = torch.cat((innerprod, d_invar, d_other_norm), 1)  # [num_rays, latent_dim + 2]
+            conditioning_input = torch.cat((z_other_invar, z_invar), 1)  # [num_rays, latent_dim^2 + latent_dim]
+
+            return directional_input, conditioning_input
+
+        if equivariance == "SO3":
+            G = Z @ torch.transpose(Z, 1, 2)
+            innerprod = torch.bmm(D, torch.transpose(Z, 1, 2))
+            z_invar = G.flatten(start_dim=1).unsqueeze(1).repeat(1, D.shape[1], 1)
+            return innerprod, z_invar
 
     def setup_network(self):
         """Sets up the network architecture"""
@@ -257,7 +318,10 @@ class RENIField(SphericalField):
                 # pos encoding on directional input
                 self.positional_encoding = NeRFEncoding(in_dim=self.latent_dim + 2, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
                 directional_input_dim = self.positional_encoding.get_out_dim()
-                conditioning_input_dim = self.latent_dim * self.latent_dim + self.latent_dim
+                if self.config.invariant_function == "GramMatrix":
+                    conditioning_input_dim = self.latent_dim * self.latent_dim + self.latent_dim
+                else:
+                    conditioning_input_dim = self.latent_dim * 3
             elif self.config.encoded_input == "Both":
                 self.dirctional_encoding = NeRFEncoding(in_dim=self.latent_dim + 2, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
                 self.conditioning_encoding = NeRFEncoding(in_dim=self.latent_dim * self.latent_dim + self.latent_dim, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)

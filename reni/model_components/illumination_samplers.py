@@ -27,6 +27,7 @@ from torch import nn
 
 from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.cameras.rays import Frustums, RayBundle, RaySamples
+from nerfstudio.cameras.cameras import Cameras, CameraType
 
 
 # Field related configs
@@ -349,6 +350,83 @@ class IcosahedronSampler(IlluminationSampler):
                                                    starts=torch.zeros_like(directions[:, 0]),
                                                    ends=torch.ones_like(directions[:, 0]),
                                                    pixel_area=torch.ones_like(directions[:, 0]))
+        )
+
+        return ray_samples
+
+
+# Field related configs
+@dataclass
+class EquirectangularSamplerConfig(IlluminationSamplerConfig):
+    """Configuration for model instantiation"""
+
+    _target: Type = field(default_factory=lambda: EquirectangularSampler)
+    """target class to instantiate"""
+    width: int = 256
+    """width of the equirectangular image"""
+    apply_random_rotation: bool = False
+    """apply random rotation to the directions"""
+    remove_lower_hemisphere: bool = False
+    """remove lower hemisphere"""
+
+
+class EquirectangularSampler(IlluminationSampler):
+    """For sampling directions from an icosahedron."""
+
+    def __init__(
+        self,
+        config: EquirectangularSamplerConfig,
+    ):
+        super().__init__(config)
+        self._width = config.width
+        self.height = self._width // 2
+        self.apply_random_rotation = config.apply_random_rotation
+        self.remove_lower_hemisphere = config.remove_lower_hemisphere
+
+        cx = torch.tensor(self.width // 2, dtype=torch.float32).repeat(1)
+        cy = torch.tensor(self.height // 2, dtype=torch.float32).repeat(1)
+        fx = torch.tensor(self.height, dtype=torch.float32).repeat(1)
+        fy = torch.tensor(self.height, dtype=torch.float32).repeat(1)
+
+        c2w = torch.tensor([[[1, 0, 0, 0],
+                             [0, 0, 1, 0],
+                             [0, 1, 0, 0]]], dtype=torch.float32).repeat(1, 1, 1) # From nerfstudio world to camera
+                            
+        self.camera = Cameras(fx=fx, fy=fy, cx=cx, cy=cy, camera_to_worlds=c2w, camera_type=CameraType.EQUIRECTANGULAR)
+
+    @property
+    def width(self):
+        """Getter for the width"""
+        return self._width
+
+    @width.setter
+    def width(self, width: int):
+        """Sets the number of directions and updates the directions."""
+        self._width = width
+        # update cx, cy, fx, fy
+        cx = torch.tensor(self.width // 2, dtype=torch.float32).repeat(1)
+        cy = torch.tensor(self.height // 2, dtype=torch.float32).repeat(1)
+        fx = torch.tensor(self.height, dtype=torch.float32).repeat(1)
+        fy = torch.tensor(self.height, dtype=torch.float32).repeat(1)
+
+        self.camera.cx = cx
+        self.camera.cy = cy
+        self.camera.fx = fx
+        self.camera.fy = fy
+
+    def generate_direction_samples(self, apply_random_rotation=None) -> RaySamples:
+        # generate N random rotations
+        ray_bundle = self.camera.generate_rays(camera_indices=0, keep_shape=False)
+
+        directions = ray_bundle.directions
+        camera_indices = ray_bundle.camera_indices
+
+        ray_samples = RaySamples(frustums=Frustums(origins=torch.zeros_like(directions),
+                                                   directions=directions,
+                                                   starts=torch.zeros_like(directions[:, 0]),
+                                                   ends=torch.ones_like(directions[:, 0]),
+                                                   pixel_area=torch.ones_like(directions[:, 0])),
+                                 camera_indices=camera_indices
         )
 
         return ray_samples
