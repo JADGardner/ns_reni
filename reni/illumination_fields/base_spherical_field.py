@@ -79,7 +79,7 @@ class BaseRENIFieldConfig(SphericalFieldConfig):
 
 
 class BaseRENIField(SphericalField):
-    """Base class for RENI-Like Fields."""
+    """Base class for RENI-Like Fields, abstract classes to match RENI training and evaluation."""
 
     def __init__(
         self,
@@ -96,6 +96,9 @@ class BaseRENIField(SphericalField):
 
         assert "min_max" in self.normalisations
         assert "log_domain" in self.normalisations
+        
+        self.min_max = normalisations["min_max"]
+        self.log_domain = normalisations["log_domain"]
 
         self.fixed_decoder = config.fixed_decoder
 

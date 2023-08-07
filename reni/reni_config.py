@@ -5,8 +5,8 @@ from pathlib import Path
 
 from reni.data.reni_dataparser import RENIDataParserConfig
 from reni.data.reni_datamanager import RENIDataManagerConfig
-from reni.reni_model import RENIModelConfig
-from reni.reni_pipeline import RENIPipelineConfig
+from reni.models.reni_model import RENIModelConfig
+from reni.pipelines.reni_pipeline import RENIPipelineConfig
 from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
 from reni.illumination_fields.sg_illumination_field import SphericalGaussianFieldConfig
 from reni.illumination_fields.sh_illumination_field import SphericalHarmonicIlluminationFieldConfig
@@ -45,17 +45,19 @@ RENIField = MethodSpecification(
             ),
             model=RENIModelConfig(
                 field=RENIFieldConfig(
-                    conditioning='Concat',
+                    conditioning='Attention',
                     invariant_function="VN",
                     equivariance="SO2",
                     axis_of_invariance="z", # Nerfstudio world space is z-up
                     positional_encoding="NeRF",
                     encoded_input="Directions", # "InvarDirection", "Directions", "Conditioning", "Both"
                     latent_dim=100,
-                    hidden_features=256,
+                    hidden_features=128,
                     hidden_layers=9,
                     mapping_layers=5,
                     mapping_features=128,
+                    num_attention_heads=8,
+                    num_attention_layers=6,
                     output_activation="None",
                     last_layer_linear=True,
                 ),

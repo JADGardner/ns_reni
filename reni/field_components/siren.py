@@ -14,7 +14,7 @@
 
 """Siren MLP"""
 
-from typing import Callable, Optional
+from typing import Optional
 
 import numpy as np
 import torch

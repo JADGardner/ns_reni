@@ -1,467 +1,359 @@
-# Copyright 2022 The Nerfstudio Team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""Code from https://github.com/FlyingGiraffe/vnn/blob/master/models/vn_layers.py"""
-
-import os
-import sys
-import copy
-import math
-import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn, einsum, Tensor
 
-EPS = 1e-6
+from einops import rearrange, repeat, reduce
+from einops.layers.torch import Rearrange, Reduce
 
-def knn(x, k):
-    inner = -2*torch.matmul(x.transpose(2, 1), x)
-    xx = torch.sum(x**2, dim=1, keepdim=True)
-    pairwise_distance = -xx - inner - xx.transpose(2, 1)
- 
-    idx = pairwise_distance.topk(k=k, dim=-1)[1]   # (batch_size, num_points, k)
-    return idx
+from VN_transformer.attend import Attend
 
+# helper
 
-def get_graph_feature(x, k=20, idx=None, x_coord=None):
-    batch_size = x.size(0)
-    num_points = x.size(3)
-    x = x.view(batch_size, -1, num_points)
-    if idx is None:
-        if x_coord is not None: # dynamic knn graph
-            idx = knn(x_coord, k=k)   # (batch_size, num_points, k)
-        else:             # fixed knn graph with input point coordinates
-            idx = knn(x, k=k)
-    device = torch.device('cuda')
+def exists(val):
+    return val is not None
 
-    idx_base = torch.arange(0, batch_size, device=device).view(-1, 1, 1)*num_points
+def default(val, d):
+    return val if exists(val) else d
 
-    idx = idx + idx_base
+def inner_dot_product(x, y, *, dim = -1, keepdim = True):
+    return (x * y).sum(dim = dim, keepdim = keepdim)
 
-    idx = idx.view(-1)
- 
-    _, num_dims, _ = x.size()
-    num_dims = num_dims // 3
+# layernorm
 
-    x = x.transpose(2, 1).contiguous()   # (batch_size, num_points, num_dims)  -> (batch_size*num_points, num_dims) #   batch_size * num_points * k + range(0, batch_size*num_points)
-    feature = x.view(batch_size*num_points, -1)[idx, :]
-    feature = feature.view(batch_size, num_points, k, num_dims, 3) 
-    x = x.view(batch_size, num_points, 1, num_dims, 3).repeat(1, 1, k, 1, 1)
-    
-    feature = torch.cat((feature-x, x), dim=3).permute(0, 3, 4, 1, 2).contiguous()
-  
-    return feature
+class LayerNorm(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.ones(dim))
+        self.register_buffer('beta', torch.zeros(dim))
 
+    def forward(self, x):
+        return F.layer_norm(x, x.shape[-1:], self.gamma, self.beta)
 
-def get_graph_feature_cross(x, k=20, idx=None):
-    batch_size = x.size(0)
-    num_points = x.size(3)
-    x = x.view(batch_size, -1, num_points)
-    if idx is None:
-        idx = knn(x, k=k)   # (batch_size, num_points, k)
-    device = torch.device('cuda')
-
-    idx_base = torch.arange(0, batch_size, device=device).view(-1, 1, 1)*num_points
-
-    idx = idx + idx_base
-
-    idx = idx.view(-1)
- 
-    _, num_dims, _ = x.size()
-    num_dims = num_dims // 3
-
-    x = x.transpose(2, 1).contiguous()   # (batch_size, num_points, num_dims)  -> (batch_size*num_points, num_dims) #   batch_size * num_points * k + range(0, batch_size*num_points)
-    feature = x.view(batch_size*num_points, -1)[idx, :]
-    feature = feature.view(batch_size, num_points, k, num_dims, 3) 
-    x = x.view(batch_size, num_points, 1, num_dims, 3).repeat(1, 1, k, 1, 1)
-    cross = torch.cross(feature, x, dim=-1)
-    
-    feature = torch.cat((feature-x, x, cross), dim=3).permute(0, 3, 4, 1, 2).contiguous()
-  
-    return feature
-
-
-def get_graph_mean(x, k=20, idx=None):
-    batch_size = x.size(0)
-    num_points = x.size(3)
-    x = x.reshape(batch_size, -1, num_points).contiguous()
-    if idx is None:
-        idx = knn(x, k=k)   # (batch_size, num_points, k)
-    device = torch.device('cuda')
-
-    idx_base = torch.arange(0, batch_size, device=device).view(-1, 1, 1)*num_points
-
-    idx = idx + idx_base
-
-    idx = idx.view(-1)
- 
-    _, num_dims, _ = x.size()
-    num_dims = num_dims // 3
-
-    x = x.transpose(2, 1).contiguous()   # (batch_size, num_points, num_dims)  -> (batch_size*num_points, num_dims) #   batch_size * num_points * k + range(0, batch_size*num_points)
-    feature = x.view(batch_size*num_points, -1)[idx, :]
-    feature = feature.view(batch_size, num_points, k, num_dims, 3).mean(2, keepdim=False)
-    x = x.view(batch_size, num_points, num_dims, 3)
-    
-    feature = (feature-x).permute(0, 2, 3, 1).contiguous()
-  
-    return feature
-
-
-def get_shell_mean_cross(x, k=10, nk=4, idx_all=None):
-    batch_size = x.size(0)
-    num_points = x.size(3)
-    x = x.reshape(batch_size, -1, num_points).contiguous()
-    if idx_all is None:
-        idx_all = knn(x, k=nk*k)   # (batch_size, num_points, k)
-    device = torch.device('cuda')
-    
-    idx_base = torch.arange(0, batch_size, device=device).view(-1, 1, 1)*num_points
-    
-    idx = []
-    for i in range(nk):
-        idx.append(idx_all[:, :, i*k:(i+1)*k])
-        idx[i] = idx[i] + idx_base
-        idx[i] = idx[i].view(-1)
- 
-    _, num_dims, _ = x.size()
-    num_dims = num_dims // 3
-
-    x = x.transpose(2, 1).contiguous()   # (batch_size, num_points, num_dims)  -> (batch_size*num_points, num_dims) #   batch_size * num_points * k + range(0, batch_size*num_points)
-    x = x.view(batch_size, num_points, num_dims, 3)
-    feature = []
-    for i in range(nk):
-        feature.append(x.view(batch_size*num_points, -1)[idx[i], :])
-        feature[i] = feature[i].view(batch_size, num_points, k, num_dims, 3).mean(2, keepdim=False)
-        feature[i] = feature[i] - x
-        cross = torch.cross(feature[i], x, dim=3)
-        feature[i] = torch.cat((feature[i], cross), dim=2)
-    
-    feature = torch.cat(feature, dim=2).permute(0, 2, 3, 1).contiguous()
-  
-    return feature
-
+# equivariant modules
 
 class VNLinear(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(VNLinear, self).__init__()
-        self.map_to_feat = nn.Linear(in_channels, out_channels, bias=False)
-    
-    def forward(self, x):
-        '''
-        x: point features of shape [B, N_feat, 3, N_samples, ...]
-        '''
-        x_out = self.map_to_feat(x.transpose(1,-1)).transpose(1,-1)
-        return x_out
-
-
-class VNLeakyReLU(nn.Module):
-    def __init__(self, in_channels, share_nonlinearity=False, negative_slope=0.2):
-        super(VNLeakyReLU, self).__init__()
-        if share_nonlinearity == True:
-            self.map_to_dir = nn.Linear(in_channels, 1, bias=False)
-        else:
-            self.map_to_dir = nn.Linear(in_channels, in_channels, bias=False)
-        self.negative_slope = negative_slope
-    
-    def forward(self, x):
-        '''
-        x: point features of shape [B, N_feat, 3, N_samples, ...]
-        '''
-        d = self.map_to_dir(x.transpose(1,-1)).transpose(1,-1)
-        dotprod = (x*d).sum(2, keepdim=True)
-        mask = (dotprod >= 0).float()
-        d_norm_sq = (d*d).sum(2, keepdim=True)
-        x_out = self.negative_slope * x + (1-self.negative_slope) * (mask*x + (1-mask)*(x-(dotprod/(d_norm_sq+EPS))*d))
-        return x_out
-
-
-class VNLinearLeakyReLU(nn.Module):
-    def __init__(self, in_channels, out_channels, dim=5, share_nonlinearity=False, use_batchnorm=True, negative_slope=0.2):
-        super(VNLinearLeakyReLU, self).__init__()
-        self.dim = dim
-        self.share_nonlinearity = share_nonlinearity
-        self.use_batchnorm = use_batchnorm
-        self.negative_slope = negative_slope
-        
-        # Conv
-        self.map_to_feat = nn.Linear(in_channels, out_channels, bias=False)
-        
-        # BatchNorm
-        self.use_batchnorm = use_batchnorm
-        if use_batchnorm == True:
-            self.batchnorm = VNBatchNorm(out_channels, dim=dim)
-        
-        # LeakyReLU
-        if share_nonlinearity == True:
-            self.map_to_dir = nn.Linear(in_channels, 1, bias=False)
-        else:
-            self.map_to_dir = nn.Linear(in_channels, out_channels, bias=False)
-        self.negative_slope = negative_slope
-    
-    def forward(self, x):
-        '''
-        x: point features of shape [B, N_feat, 3, N_samples, ...]
-        '''
-        # Conv
-        p = self.map_to_feat(x.transpose(1,-1)).transpose(1,-1)
-        # InstanceNorm
-        if self.use_batchnorm == True:
-            p = self.batchnorm(p)
-        # LeakyReLU
-        d = self.map_to_dir(x.transpose(1,-1)).transpose(1,-1)
-        dotprod = (p*d).sum(2, keepdim=True)
-        mask = (dotprod >= 0).float()
-        d_norm_sq = (d*d).sum(2, keepdim=True)
-        x_out = self.negative_slope * p + (1-self.negative_slope) * (mask*p + (1-mask)*(p-(dotprod/(d_norm_sq+EPS))*d))
-        return x_out
-
-
-class VNBatchNorm(nn.Module):
-    def __init__(self, num_features, dim):
-        super(VNBatchNorm, self).__init__()
-        self.dim = dim
-        if dim == 3 or dim == 4:
-            self.bn = nn.BatchNorm1d(num_features)
-        elif dim == 5:
-            self.bn = nn.BatchNorm2d(num_features)
-    
-    def forward(self, x):
-        '''
-        x: point features of shape [B, N_feat, 3, N_samples, ...]
-        '''
-        norm = torch.sqrt((x*x).sum(2))
-        norm_bn = self.bn(norm)
-        norm = norm.unsqueeze(2)
-        norm_bn = norm_bn.unsqueeze(2)
-        x = x / norm * norm_bn
-        
-        return x
-
-
-class VNMaxPool(nn.Module):
-    def __init__(self, in_channels, share_nonlinearity=False):
-        super(VNMaxPool, self).__init__()
-        if share_nonlinearity:
-            self.map_to_dir = nn.Linear(in_channels, 1, bias=False)
-        else:
-            self.map_to_dir = nn.Linear(in_channels, in_channels, bias=False)
-    
-    def forward(self, x):
-        '''
-        x: point features of shape [B, N_feat, 3, N_samples, ...]
-        '''
-        d = self.map_to_dir(x.transpose(1,-1)).transpose(1,-1)
-        dotprod = (x*d).sum(2, keepdim=True)
-        idx = dotprod.max(dim=-1, keepdim=False)[1]
-        index_tuple = torch.meshgrid([torch.arange(j) for j in x.size()[:-1]]) + (idx,)
-        x_max = x[index_tuple]
-        return x_max
-
-
-class VNStdFeature(nn.Module):
-    def __init__(self, in_channels, dim=4, normalize_frame=False, share_nonlinearity=False, use_batchnorm=True):
-        super(VNStdFeature, self).__init__()
-        self.dim = dim
-        self.normalize_frame = normalize_frame
-        self.share_nonlinearity = share_nonlinearity
-        self.use_batchnorm = use_batchnorm
-        
-        self.vn1 = VNLinearLeakyReLU(in_channels, in_channels//2, dim=dim, share_nonlinearity=share_nonlinearity, use_batchnorm=use_batchnorm)
-        self.vn2 = VNLinearLeakyReLU(in_channels//2, in_channels//4, dim=dim, share_nonlinearity=share_nonlinearity, use_batchnorm=use_batchnorm)
-        if normalize_frame:
-            self.vn_lin = nn.Linear(in_channels//4, 2, bias=False)
-        else:
-            self.vn_lin = nn.Linear(in_channels//4, 3, bias=False)
-    
-    def forward(self, x):
-        '''
-        x: point features of shape [B, N_feat, 3, N_samples, ...]
-        '''
-        z0 = self.vn1(x)
-        z0 = self.vn2(z0)
-        z0 = self.vn_lin(z0.transpose(1, -1)).transpose(1, -1)
-        
-        if self.normalize_frame:
-            # make z0 orthogonal. u2 = v2 - proj_u1(v2)
-            v1 = z0[:,0,:]
-            #u1 = F.normalize(v1, dim=1)
-            v1_norm = torch.sqrt((v1*v1).sum(1, keepdim=True))
-            u1 = v1 / (v1_norm+EPS)
-            v2 = z0[:,1,:]
-            v2 = v2 - (v2*u1).sum(1, keepdim=True)*u1
-            #u2 = F.normalize(u2, dim=1)
-            v2_norm = torch.sqrt((v2*v2).sum(1, keepdim=True))
-            u2 = v2 / (v2_norm+EPS)
-
-            # compute the cross product of the two output vectors       
-            u3 = torch.cross(u1, u2)
-            z0 = torch.stack([u1, u2, u3], dim=1).transpose(1, 2)
-        else:
-            z0 = z0.transpose(1, 2)
-        
-        if self.dim == 4:
-            x_std = torch.einsum('bijm,bjkm->bikm', x, z0)
-        elif self.dim == 3:
-            x_std = torch.einsum('bij,bjk->bik', x, z0)
-        elif self.dim == 5:
-            x_std = torch.einsum('bijmn,bjkmn->bikmn', x, z0)
-        
-        return x_std, z0
-
-
-# Resnet Blocks
-class VNResnetBlockFC(nn.Module):
-    ''' Fully connected ResNet Block class.
-
-    Args:
-        size_in (int): input dimension
-        size_out (int): output dimension
-        size_h (int): hidden dimension
-    '''
-
-    def __init__(self, size_in, size_out=None, size_h=None):
+    def __init__(
+        self,
+        dim_in,
+        dim_out,
+        bias_epsilon = 0.
+    ):
         super().__init__()
-        # Attributes
-        if size_out is None:
-            size_out = size_in
+        self.weight = nn.Parameter(torch.randn(dim_out, dim_in))
 
-        if size_h is None:
-            size_h = min(size_in, size_out)
+        self.bias = None
+        self.bias_epsilon = bias_epsilon
 
-        self.size_in = size_in
-        self.size_h = size_h
-        self.size_out = size_out
-        # Submodules
-        self.fc_0 = VNLinear(size_in, size_h)
-        self.fc_1 = VNLinear(size_h, size_out)
-        self.actvn_0 = VNLeakyReLU(size_in, negative_slope=0.0, share_nonlinearity=False)
-        self.actvn_1 = VNLeakyReLU(size_h, negative_slope=0.0, share_nonlinearity=False)
+        # in this paper, they propose going for quasi-equivariance with a small bias, controllable with epsilon, which they claim lead to better stability and results
 
-        if size_in == size_out:
-            self.shortcut = None
-        else:
-            self.shortcut = VNLinear(size_in, size_out)
-        # Initialization
-        nn.init.zeros_(self.fc_1.map_to_feat.weight)
+        if bias_epsilon > 0.:
+            self.bias = nn.Parameter(torch.randn(dim_out))
 
     def forward(self, x):
-        net = self.fc_0(self.actvn_0(x))
-        dx = self.fc_1(self.actvn_1(net))
+        out = einsum('... i c, o i -> ... o c', x, self.weight)
 
-        if self.shortcut is not None:
-            x_s = self.shortcut(x)
-        else:
-            x_s = x
+        if exists(self.bias):
+            bias = F.normalize(self.bias, dim = -1) * self.bias_epsilon
+            out = out + rearrange(bias, '... -> ... 1')
 
-        return x_s + dx
+        return out
 
-def maxpool(x, dim=-1, keepdim=False):
-    out, _ = x.max(dim=dim, keepdim=keepdim)
-    return out
-
-
-def meanpool(x, dim=-1, keepdim=False):
-    out = x.mean(dim=dim, keepdim=keepdim)
-    return out
-
-
-class VNN_SimplePointnet(nn.Module):
-    ''' DGCNN-based VNN encoder network.
-
-    Args:
-        c_dim (int): dimension of latent code c
-        dim (int): input points dimension
-        hidden_dim (int): hidden dimension of the network
-    '''
-
-    def __init__(self, c_dim=128, dim=3, hidden_dim=128, k=20, meta_output=None):
+class VNReLU(nn.Module):
+    def __init__(self, dim, eps = 1e-6):
         super().__init__()
-        self.c_dim = c_dim
-        self.k = k
-        self.meta_output = meta_output
-        
-        self.conv_pos = VNLinearLeakyReLU(3, 64, negative_slope=0.0, use_batchnorm=False)
-        self.fc_pos = VNLinear(64, 2*hidden_dim)
-        self.fc_0 = VNLinear(2*hidden_dim, hidden_dim)
-        self.fc_1 = VNLinear(2*hidden_dim, hidden_dim)
-        self.fc_2 = VNLinear(2*hidden_dim, hidden_dim)
-        self.fc_3 = VNLinear(2*hidden_dim, hidden_dim)
-        self.fc_c = VNLinear(hidden_dim, c_dim)
-        
-        
-        self.actvn_0 = VNLeakyReLU(2*hidden_dim, negative_slope=0.0)
-        self.actvn_1 = VNLeakyReLU(2*hidden_dim, negative_slope=0.0)
-        self.actvn_2 = VNLeakyReLU(2*hidden_dim, negative_slope=0.0)
-        self.actvn_3 = VNLeakyReLU(2*hidden_dim, negative_slope=0.0)
-        self.actvn_c = VNLeakyReLU(hidden_dim, negative_slope=0.0)
-        
-        self.pool = meanpool
-        
-        if meta_output == 'invariant_latent':
-            self.std_feature = VNStdFeature(c_dim, dim=3, normalize_frame=False, use_batchnorm=False)
-        elif meta_output == 'invariant_latent_linear':
-            self.std_feature = VNStdFeature(c_dim, dim=3, normalize_frame=False, use_batchnorm=False)
-            self.vn_inv = VNLinear(c_dim, 3)
-        
-    def forward(self, p):
-        batch_size = p.size(0)
-        '''
-        p_trans = p.unsqueeze(1).transpose(2, 3)
-        
-        #net = get_graph_feature(p_trans, k=self.k)
-        #net = self.conv_pos(net)
-        #net = net.mean(dim=-1, keepdim=False)
-        #net = torch.cat([net, p_trans], dim=1)
-        
-        net = p_trans
-        aggr = p_trans.mean(dim=-1, keepdim=True).expand(net.size())
-        net = torch.cat([net, aggr], dim=1)
-        '''
-        p = p.unsqueeze(1).transpose(2, 3)
-        #mean = get_graph_mean(p, k=self.k)
-        #mean = p_trans.mean(dim=-1, keepdim=True).expand(p_trans.size())
-        feat = get_graph_feature_cross(p, k=self.k)
-        net = self.conv_pos(feat)
-        net = self.pool(net, dim=-1)
-        
-        net = self.fc_pos(net)
-        
-        net = self.fc_0(self.actvn_0(net))
-        pooled = self.pool(net, dim=-1, keepdim=True).expand(net.size())
-        net = torch.cat([net, pooled], dim=1)
-        
-        net = self.fc_1(self.actvn_1(net))
-        pooled = self.pool(net, dim=-1, keepdim=True).expand(net.size())
-        net = torch.cat([net, pooled], dim=1)
+        self.eps = eps
+        self.W = nn.Parameter(torch.randn(dim, dim))
+        self.U = nn.Parameter(torch.randn(dim, dim))
 
-        net = self.fc_2(self.actvn_2(net))
-        pooled = self.pool(net, dim=-1, keepdim=True).expand(net.size())
-        net = torch.cat([net, pooled], dim=1)
-        
-        net = self.fc_3(self.actvn_3(net))
-        
-        net = self.pool(net, dim=-1)
+    def forward(self, x):
+        q = einsum('... i c, o i -> ... o c', x, self.W)
+        k = einsum('... i c, o i -> ... o c', x, self.U)
 
-        c = self.fc_c(self.actvn_c(net))
-        
-        if self.meta_output == 'invariant_latent':
-            c_std, z0 = self.std_feature(c)
-            return c, c_std
-        elif self.meta_output == 'invariant_latent_linear':
-            c_std, z0 = self.std_feature(c)
-            c_std = self.vn_inv(c_std)
-            return c, c_std
+        qk = inner_dot_product(q, k)
 
-        return c
+        k_norm = k.norm(dim = -1, keepdim = True).clamp(min = self.eps)
+        q_projected_on_k = q - inner_dot_product(q, k / k_norm) * k
+
+        out = torch.where(
+            qk >= 0.,
+            q,
+            q_projected_on_k
+        )
+
+        return out
+
+class VNAttention(nn.Module):
+    def __init__(
+        self,
+        dim,
+        dim_head = 64,
+        heads = 8,
+        dim_coor = 3,
+        bias_epsilon = 0.,
+        l2_dist_attn = False,
+        flash = False,
+        num_latents = None   # setting this would enable perceiver-like cross attention from latents to sequence, with the latents derived from VNWeightedPool
+    ):
+        super().__init__()
+        assert not (l2_dist_attn and flash), 'l2 distance attention is not compatible with flash attention'
+
+        self.scale = (dim_coor * dim_head) ** -0.5
+        dim_inner = dim_head * heads
+        self.heads = heads
+
+        self.to_q_input = None
+        if exists(num_latents):
+            self.to_q_input = VNWeightedPool(dim, num_pooled_tokens = num_latents, squeeze_out_pooled_dim = False)
+
+        self.to_q = VNLinear(dim, dim_inner, bias_epsilon = bias_epsilon)
+        self.to_k = VNLinear(dim, dim_inner, bias_epsilon = bias_epsilon)
+        self.to_v = VNLinear(dim, dim_inner, bias_epsilon = bias_epsilon)
+        self.to_out = VNLinear(dim_inner, dim, bias_epsilon = bias_epsilon)
+
+        if l2_dist_attn and not exists(num_latents):
+            # tied queries and keys for l2 distance attention, and not perceiver-like attention
+            self.to_k = self.to_q
+
+        self.attend = Attend(flash = flash, l2_dist = l2_dist_attn)
+
+    def forward(self, x, mask = None):
+        """
+        einstein notation
+        b - batch
+        n - sequence
+        h - heads
+        d - feature dimension (channels)
+        c - coordinate dimension (3 for 3d space)
+        i - source sequence dimension
+        j - target sequence dimension
+        """
+
+        c = x.shape[-1]
+
+        if exists(self.to_q_input):
+            q_input = self.to_q_input(x, mask = mask)
+        else:
+            q_input = x
+
+        q, k, v = self.to_q(q_input), self.to_k(x), self.to_v(x)
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) c -> b h n (d c)', h = self.heads), (q, k, v))
+
+        out = self.attend(q, k, v, mask = mask)
+
+        out = rearrange(out, 'b h n (d c) -> b n (h d) c', c = c)
+        return self.to_out(out)
+
+def VNFeedForward(dim, mult = 4, bias_epsilon = 0.):
+    dim_inner = int(dim * mult)
+    return nn.Sequential(
+        VNLinear(dim, dim_inner, bias_epsilon = bias_epsilon),
+        VNReLU(dim_inner),
+        VNLinear(dim_inner, dim, bias_epsilon = bias_epsilon)
+    )
+
+class VNLayerNorm(nn.Module):
+    def __init__(self, dim, eps = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.ln = LayerNorm(dim)
+
+    def forward(self, x):
+        norms = x.norm(dim = -1)
+        x = x / rearrange(norms.clamp(min = self.eps), '... -> ... 1')
+        ln_out = self.ln(norms)
+        return x * rearrange(ln_out, '... -> ... 1')
+
+class VNWeightedPool(nn.Module):
+    def __init__(
+        self,
+        dim,
+        dim_out = None,
+        num_pooled_tokens = 1,
+        squeeze_out_pooled_dim = True
+    ):
+        super().__init__()
+        dim_out = default(dim_out, dim)
+        self.weight = nn.Parameter(torch.randn(num_pooled_tokens, dim, dim_out))
+        self.squeeze_out_pooled_dim = num_pooled_tokens == 1 and squeeze_out_pooled_dim
+
+    def forward(self, x, mask = None):
+        if exists(mask):
+            mask = rearrange(mask, 'b n -> b n 1 1')
+            x = x.masked_fill(~mask, 0.)
+            numer = reduce(x, 'b n d c -> b d c', 'sum')
+            denom = mask.sum(dim = 1)
+            mean_pooled = numer / denom.clamp(min = 1e-6)
+        else:
+            mean_pooled = reduce(x, 'b n d c -> b d c', 'mean')
+
+        out = einsum('b d c, m d e -> b m e c', mean_pooled, self.weight)
+
+        if not self.squeeze_out_pooled_dim:
+            return out
+
+        out = rearrange(out, 'b 1 d c -> b d c')
+        return out
+
+# equivariant VN transformer encoder
+
+class VNTransformerEncoder(nn.Module):
+    def __init__(
+        self,
+        dim,
+        *,
+        depth,
+        dim_head = 64,
+        heads = 8,
+        dim_coor = 3,
+        ff_mult = 4,
+        final_norm = False,
+        bias_epsilon = 0.,
+        l2_dist_attn = False,
+        flash_attn = False
+    ):
+        super().__init__()
+        self.dim = dim
+        self.dim_coor = dim_coor
+
+        self.layers = nn.ModuleList([])
+
+        for _ in range(depth):
+            self.layers.append(nn.ModuleList([
+                VNAttention(dim = dim, dim_head = dim_head, heads = heads, bias_epsilon = bias_epsilon, l2_dist_attn = l2_dist_attn, flash = flash_attn),
+                VNLayerNorm(dim),
+                VNFeedForward(dim = dim, mult = ff_mult, bias_epsilon = bias_epsilon),
+                VNLayerNorm(dim)
+            ]))
+
+        self.norm = VNLayerNorm(dim) if final_norm else nn.Identity()
+
+    def forward(
+        self,
+        x,
+        mask = None
+    ):
+        *_, d, c = x.shape
+
+        assert x.ndim == 4 and d == self.dim and c == self.dim_coor, 'input needs to be in the shape of (batch, seq, dim ({self.dim}), coordinate dim ({self.dim_coor}))'
+
+        for attn, attn_post_ln, ff, ff_post_ln in self.layers:
+            x = attn_post_ln(attn(x, mask = mask)) + x
+            x = ff_post_ln(ff(x)) + x
+
+        return self.norm(x)
+
+# invariant layers
+
+class VNInvariant(nn.Module):
+    def __init__(
+        self,
+        dim,
+        dim_coor = 3,
+
+    ):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            VNLinear(dim, dim_coor),
+            VNReLU(dim_coor),
+            Rearrange('... d e -> ... e d')
+        )
+
+    def forward(self, x):
+        return einsum('b n d i, b n i o -> b n o', x, self.mlp(x))
+
+# main class
+
+class VNTransformer(nn.Module):
+    def __init__(
+        self,
+        *,
+        dim,
+        depth,
+        num_tokens = None,
+        dim_feat = None,
+        dim_head = 64,
+        heads = 8,
+        dim_coor = 3,
+        reduce_dim_out = True,
+        bias_epsilon = 0.,
+        l2_dist_attn = False,
+        flash_attn = False,
+        translation_equivariance = False,
+        translation_invariant = False
+    ):
+        super().__init__()
+        self.token_emb = nn.Embedding(num_tokens, dim) if exists(num_tokens) else None
+
+        dim_feat = default(dim_feat, 0)
+        self.dim_feat = dim_feat
+        self.dim_coor_total = dim_coor + dim_feat
+
+        assert (int(translation_equivariance) + int(translation_invariant)) <= 1
+        self.translation_equivariance = translation_equivariance
+        self.translation_invariant = translation_invariant
+
+        self.vn_proj_in = nn.Sequential(
+            Rearrange('... c -> ... 1 c'),
+            VNLinear(1, dim, bias_epsilon = bias_epsilon)
+        )
+
+        self.encoder = VNTransformerEncoder(
+            dim = dim,
+            depth = depth,
+            dim_head = dim_head,
+            heads = heads,
+            bias_epsilon = bias_epsilon,
+            dim_coor = self.dim_coor_total,
+            l2_dist_attn = l2_dist_attn,
+            flash_attn = flash_attn
+        )
+
+        if reduce_dim_out:
+            self.vn_proj_out = nn.Sequential(
+                VNLayerNorm(dim),
+                VNLinear(dim, 1, bias_epsilon = bias_epsilon),
+                Rearrange('... 1 c -> ... c')
+            )
+        else:
+            self.vn_proj_out = nn.Identity()
+
+    def forward(
+        self,
+        coors,
+        *,
+        feats = None,
+        mask = None,
+        return_concatted_coors_and_feats = False
+    ):
+        if self.translation_equivariance or self.translation_invariant:
+            coors_mean = reduce(coors, '... c -> c', 'mean')
+            coors = coors - coors_mean
+
+        x = coors # [batch, num_points, 3]
+
+        if exists(feats):
+            if feats.dtype == torch.long:
+                assert exists(self.token_emb), 'num_tokens must be given to the VNTransformer (to build the Embedding), if the features are to be given as indices'
+                feats = self.token_emb(feats)
+
+            assert feats.shape[-1] == self.dim_feat, f'dim_feat should be set to {feats.shape[-1]}'
+            x = torch.cat((x, feats), dim = -1) # [batch, num_points, 3 + dim_feat]
+
+        assert x.shape[-1] == self.dim_coor_total
+
+        x = self.vn_proj_in(x) # [batch, num_points, hidden_dim, 3 + dim_feat]
+        x = self.encoder(x, mask = mask) # [batch, num_points, hidden_dim, 3 + dim_feat]
+        x = self.vn_proj_out(x) # [batch, num_points, 3 + dim_feat]
+
+        coors_out, feats_out = x[..., :3], x[..., 3:] # [batch, num_points, 3], [batch, num_points, dim_feat]
+
+        if self.translation_equivariance:
+            coors_out = coors_out + coors_mean
+
+        if not exists(feats):
+            return coors_out
+
+        if return_concatted_coors_and_feats:
+            return torch.cat((coors_out, feats_out), dim = -1)
+
+        return coors_out, feats_out

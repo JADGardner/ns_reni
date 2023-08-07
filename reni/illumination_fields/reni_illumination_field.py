@@ -14,32 +14,29 @@
 
 """RENI field"""
 
-from typing import Literal, Type, Union, Optional, Dict, Union, Tuple, Any
+from typing import Literal, Type, Union, Dict, Any
 from dataclasses import dataclass, field
-import wget
-import zipfile
-import os
 import contextlib
 
-import numpy as np
 import torch
 from torch import nn
 from torchtyping import TensorType
 from einops.layers.torch import Rearrange
 
-from reni.illumination_fields.base_spherical_field import SphericalField, SphericalFieldConfig
+from reni.illumination_fields.base_spherical_field import BaseRENIField, BaseRENIFieldConfig
 from reni.field_components.siren import Siren
 from reni.field_components.film_siren import FiLMSiren
 from reni.field_components.activations import ExpLayer
+from reni.field_components.transformer_decoder import Decoder
 from reni.field_components.field_heads import RENIFieldHeadNames
-from reni.model_components.vn_layers import VNInvariant, VNLinear
+from reni.field_components.vn_layers import VNInvariant, VNLinear
 
-from nerfstudio.cameras.rays import RayBundle, RaySamples, Frustums
-from nerfstudio.field_components.encodings import NeRFEncoding, SHEncoding, Encoding
+from nerfstudio.cameras.rays import RaySamples
+from nerfstudio.field_components.encodings import NeRFEncoding
 
 
 @dataclass
-class RENIFieldConfig(SphericalFieldConfig):
+class RENIFieldConfig(BaseRENIFieldConfig):
     """Configuration for model instantiation"""
 
     _target: Type = field(default_factory=lambda: RENIField)
@@ -50,7 +47,7 @@ class RENIFieldConfig(SphericalFieldConfig):
     """Which axis should SO2 equivariance be invariant to"""
     invariant_function: Literal["GramMatrix", "VN"] = "GramMatrix"
     """Type of invariant function to use"""
-    conditioning: Literal["FiLM", "Concat"] = "Concat"
+    conditioning: Literal["FiLM", "Concat", "Attention"] = "Concat"
     """Type of conditioning to use"""
     positional_encoding: Literal["None", "NeRF"] = "None"
     """Type of positional encoding to use"""
@@ -66,6 +63,10 @@ class RENIFieldConfig(SphericalFieldConfig):
     """Number of mapping layers"""
     mapping_features: int = 128
     """Number of mapping features"""
+    num_attention_heads: int = 8
+    """Number of attention heads"""
+    num_attention_layers: int = 3
+    """Number of attention layers"""
     out_features: int = 3 # RGB
     """Number of output features"""
     last_layer_linear: bool = False
@@ -81,7 +82,7 @@ class RENIFieldConfig(SphericalFieldConfig):
     trainable_scale: bool = False
     """Whether to train the scale parameter"""
 
-class RENIField(SphericalField):
+class RENIField(BaseRENIField):
     """Base class for illumination fields."""
 
     def __init__(
@@ -91,7 +92,7 @@ class RENIField(SphericalField):
         num_eval_data: Union[int, None],
         normalisations: Dict[str, Any],
     ) -> None:
-        super().__init__()
+        super().__init__(config=config, num_train_data=num_train_data, num_eval_data=num_eval_data, normalisations=normalisations)
         self.config = config
         self.equivariance = self.config.equivariance
         self.conditioning = self.config.conditioning
@@ -105,13 +106,7 @@ class RENIField(SphericalField):
         self.output_activation = self.config.output_activation
         self.first_omega_0 = self.config.first_omega_0
         self.hidden_omega_0 = self.config.hidden_omega_0
-        self.fixed_decoder = self.config.fixed_decoder
         self.axis_of_invariance = ["x", "y", "z"].index(self.config.axis_of_invariance)
-        
-        self.num_train_data = num_train_data
-        self.num_eval_data = num_eval_data
-        self.min_max = normalisations["min_max"] if "min_max" in normalisations else None
-        self.log_domain = normalisations["log_domain"] if "log_domain" in normalisations else False
 
         if self.num_train_data is not None:
             train_mu, train_logvar = self.init_latent_codes(self.num_train_data, 'train')
@@ -125,19 +120,19 @@ class RENIField(SphericalField):
             eval_mu, eval_logvar = self.init_latent_codes(self.num_eval_data, 'eval')
             self.register_parameter("eval_mu", eval_mu)
             self.register_parameter("eval_logvar", eval_logvar)
-            
+
             if self.config.trainable_scale:
                 self.eval_scale = nn.Parameter(torch.ones(self.num_eval_data))
 
         if self.config.invariant_function == "GramMatrix":
-            self.invariant_function = self.invariant_grammatrix_representation
+            self.invariant_function = self.gram_matrix_invariance
         else:
             self.vn_proj_in = nn.Sequential(
               Rearrange('... c -> ... 1 c'),
               VNLinear(dim_in=1, dim_out=1, bias_epsilon=0)
             )
             self.vn_invar = VNInvariant(dim=1, dim_coor=2)
-            self.invariant_function = self.invariant_vn_representation
+            self.invariant_function = self.vn_invariance
             
 
         self.network = self.setup_network() # ModuleDict {'siren': siren [mlp], 'hdr_head': Union[mlp, None], 'ldr_head': Union[mlp, None], 'mixing_head': Union[mlp, None]}
@@ -163,10 +158,9 @@ class RENIField(SphericalField):
             # do stuff
         ```
         """
-        prev_state_siren = {k: p.requires_grad for k, p in self.named_parameters() if 'siren' in k}
-        for name, param in self.named_parameters():
-            if 'siren' in name:
-                param.requires_grad_(False)
+        prev_state_network = {name: p.requires_grad for name, p in self.network.named_parameters()}
+        for param in self.network.parameters():
+            param.requires_grad = False
         if self.config.invariant_function == "VN":
             prev_state_proj_in = {k: p.requires_grad for k, p in self.vn_proj_in.named_parameters()}
             prev_state_invar = {k: p.requires_grad for k, p in self.vn_invar.named_parameters()}
@@ -180,9 +174,9 @@ class RENIField(SphericalField):
         try:
             yield
         finally:
-            for name, param in self.named_parameters():
-                if 'siren' in name:
-                    param.requires_grad_(prev_state_siren[name])
+            # Restore the previous requires_grad state
+            for name, param in self.network.named_parameters():
+                param.requires_grad = prev_state_network[name]
             if self.config.invariant_function == "VN":
                 for name, param in self.vn_proj_in.named_parameters():
                     param.requires_grad_(prev_state_proj_in[name])
@@ -203,7 +197,7 @@ class RENIField(SphericalField):
         
         return x
     
-    def invariant_vn_representation(self, Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2",  axis_of_invariance: int = 1):
+    def vn_invariance(self, Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2",  axis_of_invariance: int = 1):
         """Generates an invariant representation from latent code Z and direction coordinates D.
 
         Args:
@@ -224,10 +218,12 @@ class RENIField(SphericalField):
         z_other_emb = self.vn_proj_in(z_other) # [num_rays, latent_dim, 64, 2]
         z_other_invar = self.vn_invar(z_other_emb) # [num_rays, latent_dim, 2]
 
-        # Get invariant component of Z along the axis of invariance 
+        # Get invariant component of Z along the axis of invariance
         z_invar = Z[:, :, axis_of_invariance].unsqueeze(-1) # [num_rays, latent_dim, 1]
 
-        # Innerprod is size num_rays x latent_dim
+        # Innerproduct between projection of Z and D on the plane orthogonal to the axis of invariance.
+        # This encodes the rotational information. This is rotation-equivariant to rotations of either Z
+        # or D and is invariant to rotations of both Z and D.
         innerprod = (z_other * d_other).sum(dim=-1) # [num_rays, latent_dim]
 
         # Compute norm along the axes orthogonal to the axis of invariance
@@ -242,7 +238,7 @@ class RENIField(SphericalField):
         return directional_input, conditioning_input
 
     
-    def invariant_grammatrix_representation(self, Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2",  axis_of_invariance: int = 1):
+    def gram_matrix_invariance(self, Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2",  axis_of_invariance: int = 1):
         """Generates an invariant representation from latent code Z and direction coordinates D.
 
         Args:
@@ -363,7 +359,13 @@ class RENIField(SphericalField):
                 out_activation=output_activation
             )
             network = nn.ModuleDict({'siren': siren})
-      
+        elif self.conditioning == "Attention":
+            # transformer where K, V is from conditioning input and Q is from directional input
+            network = Decoder(direction_input_dim=directional_input_dim,
+                              conditioning_input_dim=conditioning_input_dim,
+                              hidden_features=self.config.hidden_features,
+                              num_heads=self.config.num_attention_heads,
+                              num_layers=self.config.num_attention_layers)
         return network
 
     def sample_latent(self, idx):
@@ -474,11 +476,17 @@ class RENIField(SphericalField):
             model_outputs = self.network["siren"](torch.cat((directional_input, conditioning_input), dim=1)) # [num_rays, 3]
         elif self.conditioning == "FiLM":
             model_outputs = self.network["siren"](directional_input, conditioning_input) # [num_rays, 3]
+        elif self.conditioning == "Attention":
+            model_outputs = self.network(directional_input, conditioning_input)
 
         if self.config.trainable_scale:
             scale = self.select_scale()
             scales = scale[camera_indices] # [num_rays]
-            model_outputs = model_outputs * scales.unsqueeze(1) # [num_rays, 3]
+
+            if self.log_domain:
+                model_outputs = model_outputs + scales.unsqueeze(1) # [num_rays, 3]
+            else:
+                model_outputs = model_outputs * scales.unsqueeze(1) # [num_rays, 3]
 
         outputs[RENIFieldHeadNames.RGB] = model_outputs
         outputs[RENIFieldHeadNames.MU] = mu

@@ -25,14 +25,14 @@ import numpy as np
 import torch
 from torchtyping import TensorType
 
-from reni.illumination_fields.base_spherical_field import SphericalField, SphericalFieldConfig
+from reni.illumination_fields.base_spherical_field import BaseRENIField, BaseRENIFieldConfig
 from reni.field_components.field_heads import RENIFieldHeadNames
 
 from nerfstudio.cameras.rays import RaySamples
     
 # Field related configs
 @dataclass
-class SphericalGaussianFieldConfig(SphericalFieldConfig):
+class SphericalGaussianFieldConfig(BaseRENIFieldConfig):
     """Configuration for Spherical Gaussian instantiation"""
 
     _target: Type = field(default_factory=lambda: SphericalGaussianField)
@@ -43,7 +43,7 @@ class SphericalGaussianFieldConfig(SphericalFieldConfig):
     """number of channels in the field"""
 
 
-class SphericalGaussianField(SphericalField):
+class SphericalGaussianField(BaseRENIField):
     """Spherical Gaussian Illumination Field.
        https://github.com/lzqsd/SphericalGaussianOptimization
     """
@@ -55,14 +55,7 @@ class SphericalGaussianField(SphericalField):
         num_eval_data: Union[int, None],
         normalisations: Dict[str, Any],
     ) -> None:
-        super().__init__()
-        self.config = config
-        self.num_train_data = num_train_data
-        self.num_eval_data = num_eval_data
-        self.normalisations = normalisations
-        self.min_max = normalisations["min_max"] if "min_max" in normalisations else None
-        self.log_domain = normalisations["log_domain"] if "log_domain" in normalisations else False
-        self.fixed_decoder = False
+        super().__init__(config=config, num_train_data=num_train_data, num_eval_data=num_eval_data, normalisations=normalisations)
         
         self.sg_col, self.sg_row = self.config.row_col_gaussian_dims
         self.sg_num = int(self.sg_row * self.sg_col)
