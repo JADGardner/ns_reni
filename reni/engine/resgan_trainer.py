@@ -32,6 +32,8 @@ from rich.panel import Panel
 from rich.table import Table
 from torch.cuda.amp.grad_scaler import GradScaler
 
+from reni.pipelines.resgan_pipeline import RESGANPipeline
+
 from nerfstudio.configs.experiment_config import ExperimentConfig
 from nerfstudio.engine.callbacks import (
     TrainingCallback,
@@ -110,7 +112,7 @@ class RESGANTrainer(Trainer):
         training_state: Current model training state.
     """
 
-    pipeline: VanillaPipeline
+    pipeline: RESGANPipeline
     optimizers: Optimizers
     callbacks: List[TrainingCallback]
 
@@ -206,11 +208,26 @@ class RESGANTrainer(Trainer):
         self.optimizers.zero_grad_all()
         cpu_or_cuda_str: str = self.device.split(":")[0]
 
+        # with torch.autocast(device_type=cpu_or_cuda_str, enabled=self.mixed_precision):
+        #     _, loss_dict, metrics_dict = self.pipeline.get_train_loss_dict(step=step)
+        #     loss = functools.reduce(torch.add, loss_dict.values())
+        # self.grad_scaler.scale(loss).backward()  # type: ignore
+        # self.optimizers.optimizer_scaler_step_all(self.grad_scaler)
+
+        # TODO some form of ratio of steps
         with torch.autocast(device_type=cpu_or_cuda_str, enabled=self.mixed_precision):
-            _, loss_dict, metrics_dict = self.pipeline.get_train_loss_dict(step=step)
+            _, loss_dict, metrics_dict = self.pipeline.get_train_loss_discriminator(step=step)
             loss = functools.reduce(torch.add, loss_dict.values())
+
         self.grad_scaler.scale(loss).backward()  # type: ignore
-        self.optimizers.optimizer_scaler_step_all(self.grad_scaler)
+        self.optimizers.optimizer_step(param_group_name="discriminator") # TODO use grad_scaler
+
+        with torch.autocast(device_type=cpu_or_cuda_str, enabled=self.mixed_precision):
+            _, loss_dict, metrics_dict = self.pipeline.get_train_loss_generator(step=step)
+            loss = functools.reduce(torch.add, loss_dict.values())
+            
+        self.grad_scaler.scale(loss).backward()  # type: ignore
+        self.optimizers.optimizer_step(param_group_name="generator") # TODO use grad_scaler
 
         if self.config.log_gradients:
             total_grad = 0

@@ -35,14 +35,16 @@ from rich.progress import (
 from torch.nn.parallel import DistributedDataParallel as DDP
 from typing_extensions import Literal
 
+
+from reni.data.reni_datamanager import RENIDataManagerConfig, RENIDataManager
+from reni.discriminators.discriminators import BaseDiscriminatorConfig
+
 from nerfstudio.data.datamanagers.base_datamanager import (
     DataManagerConfig,
 )
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import profiler
 from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig, VanillaPipeline
-
-from reni.data.reni_datamanager import RENIDataManagerConfig, RENIDataManager
 
 
 @dataclass
@@ -61,6 +63,8 @@ class RESGANPipelineConfig(VanillaPipelineConfig):
     """Number of epochs to optimise latent during eval"""
     eval_latent_optimisation_lr: float = 0.1
     """Learning rate for latent optimisation during eval"""
+    discriminator: BaseDiscriminatorConfig = BaseDiscriminatorConfig()
+    """specifies the discriminator config"""
 
 
 class RESGANPipeline(VanillaPipeline):
@@ -112,7 +116,10 @@ class RESGANPipeline(VanillaPipeline):
         )
         self.model.to(device)
 
+        self.discriminator = config.discriminator.setup()
+
         self.world_size = world_size
+        
         if world_size > 1:
             self._model = typing.cast(Model, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
             dist.barrier(device_ids=[local_rank])
@@ -123,6 +130,17 @@ class RESGANPipeline(VanillaPipeline):
         This is an nn.Module, and so requires a forward() method normally, although in our case
         we do not need a forward() method"""
         raise NotImplementedError
+
+    @profiler.time_function
+    def get_train_loss_discriminator(self, step: int):
+        raise NotImplementedError
+
+        return model_outputs, loss_dict, metrics_dict
+    
+    @profiler.time_function
+    def get_train_loss_generator(self, step: int):
+        raise NotImplementedError
+        return model_outputs, loss_dict, metrics_dict
 
     @profiler.time_function
     def get_train_loss_dict(self, step: int):

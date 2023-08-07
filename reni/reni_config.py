@@ -11,6 +11,8 @@ from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
 from reni.illumination_fields.sg_illumination_field import SphericalGaussianFieldConfig
 from reni.illumination_fields.sh_illumination_field import SphericalHarmonicIlluminationFieldConfig
 from reni.illumination_fields.environment_map_field import EnvironmentMapFieldConfig
+from reni.engine.resgan_trainer import RESGANTrainerConfig
+from reni.pipelines.resgan_pipeline import RESGANPipelineConfig
 
 from nerfstudio.configs.base_config import ViewerConfig
 from nerfstudio.engine.trainer import TrainerConfig
@@ -31,6 +33,81 @@ RENIField = MethodSpecification(
         max_num_iterations=50001,
         mixed_precision=False,
         pipeline=RENIPipelineConfig(
+            datamanager=RENIDataManagerConfig(
+                dataparser=RENIDataParserConfig(
+                    data=Path("data/RENI_HDR_AUG"),
+                    download_data=False,
+                    train_subset_size=None,
+                    convert_to_ldr=False,
+                    convert_to_log_domain=True,
+                    min_max_normalize=None, # in e^min = 0.0111, e^max = 8103.08
+                ),
+                train_num_rays_per_batch=8192,
+                full_image_per_batch=False,
+            ),
+            model=RENIModelConfig(
+                field=RENIFieldConfig(
+                    conditioning='Attention',
+                    invariant_function="VN",
+                    equivariance="SO2",
+                    axis_of_invariance="z", # Nerfstudio world space is z-up
+                    positional_encoding="NeRF",
+                    encoded_input="Directions", # "InvarDirection", "Directions", "Conditioning", "Both"
+                    latent_dim=100,
+                    hidden_features=128,
+                    hidden_layers=9,
+                    mapping_layers=5,
+                    mapping_features=128,
+                    num_attention_heads=8,
+                    num_attention_layers=6,
+                    output_activation="None",
+                    last_layer_linear=True,
+                ),
+                eval_optimisation_params={
+                    "num_steps": 5000,
+                    "lr_start": 0.1,
+                    "lr_end": 0.0001,
+                },
+                loss_coefficients={
+                    "mse_loss": 10.0,
+                    "cosine_similarity_loss": 1.0,
+                    "kld_loss": 0.00001,
+                    "scale_inv_loss": 1.0,
+                    "scale_inv_grad_loss": 1.0,
+                },
+                loss_inclusions={
+                    "mse_loss": False,
+                    "cosine_similarity_loss": True,
+                    "kld_loss": True,
+                    "scale_inv_loss": True,
+                    "scale_inv_grad_loss": False,
+                },
+                include_sine_weighting=False,
+                training_regime="autodecoder",
+            ),
+        ),
+        optimizers={
+            "field": {
+                "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
+                "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
+            },
+        },
+        viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
+        vis="wandb",
+    ),
+    description="Base config for Directional Distance Field.",
+)
+
+RESGANField = MethodSpecification(
+    config=RESGANTrainerConfig(
+        method_name="resgan",
+        steps_per_eval_image=5000,
+        steps_per_eval_batch=100000,
+        steps_per_save=1000,
+        steps_per_eval_all_images=5000,  # set to a very large model so we don't eval with all images
+        max_num_iterations=50001,
+        mixed_precision=False,
+        pipeline=RESGANPipelineConfig(
             datamanager=RENIDataManagerConfig(
                 dataparser=RENIDataParserConfig(
                     data=Path("data/RENI_HDR_AUG"),
