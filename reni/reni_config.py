@@ -53,7 +53,7 @@ RENIField = MethodSpecification(
                     axis_of_invariance="z", # Nerfstudio world space is z-up
                     positional_encoding="NeRF",
                     encoded_input="Directions", # "InvarDirection", "Directions", "Conditioning", "Both"
-                    latent_dim=100,
+                    latent_dim=100, # N for a latent code size of (N x 3)
                     hidden_features=128,
                     hidden_layers=9,
                     mapping_layers=5,
@@ -64,9 +64,9 @@ RENIField = MethodSpecification(
                     last_layer_linear=True,
                 ),
                 eval_optimisation_params={
-                    "num_steps": 5000,
-                    "lr_start": 0.1,
-                    "lr_end": 0.0001,
+                    "num_steps": 2500,
+                    "lr_start": 1e-1,
+                    "lr_end": 1e-7, 
                 },
                 loss_coefficients={
                     "mse_loss": 10.0,
@@ -82,13 +82,13 @@ RENIField = MethodSpecification(
                     "scale_inv_loss": True,
                     "scale_inv_grad_loss": False,
                 },
-                include_sine_weighting=False,
+                include_sine_weighting=False, # This is already done by the equirectangular pixel sampler
                 training_regime="autodecoder",
             ),
         ),
         optimizers={
             "field": {
-                "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
+                "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15), # 1e-3 for Attention, 1e-5 for Other
                 "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
             },
         },

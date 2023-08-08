@@ -64,33 +64,6 @@ class RESGANTrainerConfig(TrainerConfig):
 
     _target: Type = field(default_factory=lambda: RESGANTrainer)
     """target class to instantiate"""
-    steps_per_save: int = 1000
-    """Number of steps between saves."""
-    steps_per_eval_batch: int = 500
-    """Number of steps between randomly sampled batches of rays."""
-    steps_per_eval_image: int = 500
-    """Number of steps between single eval images."""
-    steps_per_eval_all_images: int = 25000
-    """Number of steps between eval all images."""
-    max_num_iterations: int = 1000000
-    """Maximum number of iterations to run."""
-    mixed_precision: bool = False
-    """Whether or not to use mixed precision for training."""
-    use_grad_scaler: bool = False
-    """Use gradient scaler even if the automatic mixed precision is disabled."""
-    save_only_latest_checkpoint: bool = True
-    """Whether to only save the latest checkpoint or all checkpoints."""
-    # optional parameters if we want to resume training
-    load_dir: Optional[Path] = None
-    """Optionally specify a pre-trained model directory to load from."""
-    load_step: Optional[int] = None
-    """Optionally specify model step to load from; if none, will find most recent model in load_dir."""
-    load_config: Optional[Path] = None
-    """Path to config YAML file."""
-    load_checkpoint: Optional[Path] = None
-    """Path to checkpoint file."""
-    log_gradients: bool = False
-    """Optionally log gradients during training"""
 
 
 class RESGANTrainer(Trainer):

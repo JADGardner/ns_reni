@@ -247,7 +247,7 @@ class RENIModel(Model):
         return loss_dict
 
     def get_image_metrics_and_images(
-        self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
+        self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], ray_bundle: RayBundle
     ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
         image = batch["image"].to(outputs["rgb"].device)
         rgb = outputs["rgb"]
@@ -288,6 +288,9 @@ class RENIModel(Model):
         # concatenating images
         combined_log_heatmap = torch.cat([image_gray_log, rgb_gray_log], dim=1)
 
+        # create difference image
+        difference = torch.abs(image - rgb)
+
         # i.e. we are not already in LDR space
         if not self.metadata['convert_to_ldr']:
             # convert from linear HDR to sRGB for viewing
@@ -300,12 +303,22 @@ class RENIModel(Model):
 
         images_dict["img"] = combined_rgb
         images_dict["heatmap"] = combined_log_heatmap
+        images_dict['difference'] = difference
 
         # COMPUTE METRICS
-
         # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
         image = torch.moveaxis(image, -1, 0)[None, ...]
         rgb = torch.moveaxis(rgb, -1, 0)[None, ...]
+
+        # TODO: since we are now sampling every pixel in the image, should we use sinewighting when computing metrics?
+        # and is this valid?
+        ray_bundle.directions = ray_bundle.directions.reshape(-1, 3)
+        sineweight = self.get_sineweighting(ray_bundle.directions) # shape [H*W]
+        # reshape to [1, C, H, W]
+        H, W = image.shape[-2:]
+        sineweight = sineweight.reshape(1, 1, H, W).repeat(1, 3, 1, 1)
+        image = image * sineweight
+        rgb = rgb * sineweight
 
         psnr = self.psnr(image, rgb)
         ssim = self.ssim(image, rgb)
@@ -346,7 +359,7 @@ class RENIModel(Model):
         lr_start = self.config.eval_optimisation_params["lr_start"]
         lr_end = self.config.eval_optimisation_params["lr_end"]
 
-        opt = torch.optim.Adam(self.field.parameters(), lr=lr_start)
+        opt = torch.optim.Adam([self.field.eval_mu], lr=lr_start)
         
         # create exponential learning rate scheduler decaying 
         # from lr_start to lr_end over the course of steps
@@ -357,9 +370,10 @@ class RENIModel(Model):
             BarColumn(),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             TimeRemainingColumn(),
-            TextColumn("[blue]Loss: {task.fields[extra]}"),
+            TextColumn("[blue]Loss: {task.fields[loss]}"),
+            TextColumn("[green]LR: {task.fields[lr]}"),
         ) as progress:
-            task = progress.add_task("[green]Optimising eval latents... ", total=steps, extra="")
+            task = progress.add_task("[green]Optimising eval latents... ", total=steps, loss="", lr="")
 
             with self.field.hold_decoder_fixed():
                 self.field.reset_eval_latents()
@@ -375,4 +389,4 @@ class RENIModel(Model):
                     opt.step()
                     lr_scheduler.step()
 
-                    progress.update(task, advance=1, extra=f"{loss.item():.4f}")
+                    progress.update(task, advance=1, loss=f"{loss.item():.4f}", lr=f"{lr_scheduler.get_last_lr()[0]:.8f}")

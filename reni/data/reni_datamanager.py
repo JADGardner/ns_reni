@@ -35,6 +35,7 @@ from typing import (
     Union,
 )
 
+import numpy as np
 import torch
 from torch import nn
 from torch.nn import Parameter
@@ -63,10 +64,11 @@ from nerfstudio.data.utils.nerfstudio_collate import nerfstudio_collate
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes
 from nerfstudio.model_components.ray_generators import RayGenerator
 from nerfstudio.utils.misc import IterableWrapper
-from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager, VanillaDataManagerConfig, variable_res_collate
+from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager, VanillaDataManagerConfig, variable_res_collate, TDataset
 from nerfstudio.utils.rich_utils import CONSOLE
 
 from reni.data.reni_dataset import RENIDataset
+from reni.data.reni_pixel_sampler import RENIEquirectangularPixelSampler
 
 @dataclass
 class RENIDataManagerConfig(VanillaDataManagerConfig):
@@ -78,6 +80,8 @@ class RENIDataManagerConfig(VanillaDataManagerConfig):
     """Whether to use full images per batch."""
     number_of_images_per_batch: int = 1
     """Number of images per batch."""
+    compute_finite_difference_gradient: bool = False
+    """Whether to compute and return finite difference gradient for each batch."""
 
 
 class RENIDataManager(VanillaDataManager):
@@ -142,28 +146,60 @@ class RENIDataManager(VanillaDataManager):
 
         super(VanillaDataManager, self).__init__()  # Call grandparent class constructor ignoring parent class
 
-    def __class_getitem__(cls, item):
-        return type(
-            cls.__name__,
-            (cls,),
-            {"__module__": cls.__module__, "__init__": functools.partialmethod(cls.__init__, _dataset_type=item)},
+    def _get_pixel_sampler(self, dataset: TDataset, *args: Any, **kwargs: Any) -> PixelSampler:
+        """Infer pixel sampler to use."""
+        if self.config.patch_size > 1:
+            return PatchPixelSampler(*args, **kwargs, patch_size=self.config.patch_size)
+
+        # If all images are equirectangular, use equirectangular pixel sampler
+        is_equirectangular = dataset.cameras.camera_type == CameraType.EQUIRECTANGULAR.value
+        if is_equirectangular.all():
+            return RENIEquirectangularPixelSampler(*args, **kwargs) # NOTE: Updated to RENI sampler
+        # Otherwise, use the default pixel sampler
+        if is_equirectangular.any():
+            CONSOLE.print("[bold yellow]Warning: Some cameras are equirectangular, but using default pixel sampler.")
+        return PixelSampler(*args, **kwargs)
+
+    def setup_train(self):
+        """Sets up the data loaders for training"""
+        assert self.train_dataset is not None
+        CONSOLE.print("Setting up training dataset...")
+        self.train_image_dataloader = CacheDataloader(
+            self.train_dataset,
+            num_images_to_sample_from=self.config.train_num_images_to_sample_from,
+            num_times_to_repeat_images=self.config.train_num_times_to_repeat_images,
+            device=self.device,
+            num_workers=self.world_size * 4,
+            pin_memory=True,
+            collate_fn=self.config.collate_fn,
         )
-    
+        self.iter_train_image_dataloader = iter(self.train_image_dataloader)
+        self.train_pixel_sampler = self._get_pixel_sampler(self.train_dataset, self.config.train_num_rays_per_batch)
+        self.train_camera_optimizer = self.config.camera_optimizer.setup(
+            num_cameras=self.train_dataset.cameras.size, device=self.device
+        )
+        self.train_ray_generator = RayGenerator(
+            self.train_dataset.cameras.to(self.device),
+            self.train_camera_optimizer,
+        )
+
     def next_train(self, step: int) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data from the train dataloader."""
         if self.config.full_image_per_batch:
-            for camera_ray_bundle, batch in self.eval_dataloader:
-                assert camera_ray_bundle.camera_indices is not None
-                camera_ray_bundle = camera_ray_bundle.reshape(-1)
-                batch['HW'] = batch['image'].shape[:2]
-                for key in batch:
-                    if isinstance(batch[key], torch.Tensor):
-                        if batch[key].ndim == 3:
-                            batch[key] = batch[key].reshape(-1, batch[key].shape[-1])
-                        elif batch[key].ndim == 2:
-                            batch[key] = batch[key].reshape(-1, 1)
-                return camera_ray_bundle, batch
-            raise ValueError("No more eval images")
+            self.train_count += 1
+            image_batch = next(self.iter_train_image_dataloader)
+            assert self.train_pixel_sampler is not None
+            assert isinstance(image_batch, dict)
+            # choose random config.number_of_images_per_batch random idxs
+            idxs = np.random.choice(
+                np.arange(image_batch["image"].shape[0]),
+                size=self.config.number_of_images_per_batch,
+                replace=False,
+            )
+            batch = self.train_pixel_sampler.sample(image_batch, idxs=idxs, sample_full_image=True)
+            ray_indices = batch["indices"]
+            ray_bundle = self.train_ray_generator(ray_indices)
+            return ray_bundle, batch
         else:
             self.train_count += 1
             image_batch = next(self.iter_train_image_dataloader)

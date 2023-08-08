@@ -186,7 +186,7 @@ class RENIPipeline(VanillaPipeline):
             self.last_step_of_eval_optimisation = step
         image_idx, camera_ray_bundle, batch = self.datamanager.next_eval_image(step)
         outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
-        metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
+        metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch, camera_ray_bundle)
         assert "image_idx" not in metrics_dict
         metrics_dict["image_idx"] = image_idx
         assert "num_rays" not in metrics_dict
@@ -223,7 +223,7 @@ class RENIPipeline(VanillaPipeline):
                 height, width = camera_ray_bundle.shape
                 num_rays = height * width
                 outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
-                metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch)
+                metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch, camera_ray_bundle)
                 assert "num_rays_per_sec" not in metrics_dict
                 metrics_dict["num_rays_per_sec"] = num_rays / (time() - inner_start)
                 fps_str = "fps"
