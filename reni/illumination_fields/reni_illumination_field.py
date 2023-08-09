@@ -54,7 +54,7 @@ class RENIFieldConfig(BaseRENIFieldConfig):
     encoded_input: Literal["InvarDirection", "Directions", "Conditioning", "Both"] = "Directions"
     """Type of input to encode"""
     latent_dim: int = 36
-    """Dimensionality of latent code"""
+    """Dimensionality of latent code, N for a latent code size of (N x 3)"""
     hidden_layers: int = 3
     """Number of hidden layers"""
     hidden_features: int = 128
@@ -138,9 +138,8 @@ class RENIField(BaseRENIField):
         self.network = self.setup_network() # ModuleDict {'siren': siren [mlp], 'hdr_head': Union[mlp, None], 'ldr_head': Union[mlp, None], 'mixing_head': Union[mlp, None]}
         
         if self.fixed_decoder:
-            for _, value in self.network.items():
-                for param in value.parameters():
-                    param.requires_grad = False
+            for param in self.network.parameters():
+                param.requires_grad = False
             
             if self.config.invariant_function == "VN":
                 for param in self.vn_proj_in.parameters():

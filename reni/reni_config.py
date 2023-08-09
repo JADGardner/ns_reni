@@ -43,7 +43,8 @@ RENIField = MethodSpecification(
                     min_max_normalize=None, # in e^min = 0.0111, e^max = 8103.08
                 ),
                 train_num_rays_per_batch=8192,
-                full_image_per_batch=False,
+                full_image_per_batch=True,
+                number_of_images_per_batch=3,
             ),
             model=RENIModelConfig(
                 field=RENIFieldConfig(

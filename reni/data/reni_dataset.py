@@ -123,9 +123,9 @@ class RENIDataset(InputDataset):
             image_idx: The image index in the dataset.
         """
         # use top 1% of values as estimate of sun mask
-        sun_mask = torch.mean(data["image"], dim=-1)
-        sun_mask = sun_mask > torch.quantile(sun_mask, 0.99)
-        data["sun_mask"] = sun_mask
+        # sun_mask = torch.mean(data["image"], dim=-1)
+        # sun_mask = sun_mask > torch.quantile(sun_mask, 0.99)
+        # data["sun_mask"] = sun_mask
         return data
     
     def get_dataset_min_max(self) -> Tuple[float, float]:

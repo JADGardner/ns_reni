@@ -16,34 +16,28 @@
 Code for sampling pixels.
 """
 
-import random
 from typing import Dict, Optional, Union
 
 import torch
 from jaxtyping import Int
 from torch import Tensor
 
-from nerfstudio.data.pixel_samplers import PixelSampler
+from nerfstudio.data.pixel_samplers import EquirectangularPixelSampler
 
 
-class RENIPixelSampler(PixelSampler):
-    """Samples 'pixel_batch's from 'image_batch's.
+class RENIEquirectangularPixelSampler(EquirectangularPixelSampler):
+    """Samples 'pixel_batch's from 'image_batch's. Assumes images are
+    equirectangular and the sampling is done uniformly on the sphere.
 
     Args:
         num_rays_per_batch: number of rays to sample per batch
         keep_full_image: whether or not to include a reference to the full image in returned batch
     """
 
-    def __init__(self, num_rays_per_batch: int, keep_full_image: bool = False, **kwargs) -> None:
-        super().__init__(num_rays_per_batch=num_rays_per_batch, keep_full_image=keep_full_image, **kwargs)
-
-    def set_num_rays_per_batch(self, num_rays_per_batch: int):
-        """Set the number of rays to sample per batch.
-
-        Args:
-            num_rays_per_batch: number of rays to sample per batch
-        """
-        self.num_rays_per_batch = num_rays_per_batch
+    def __init__(self, num_rays_per_batch: int, keep_full_image: bool = False, sample_full_image: bool = False, images_per_batch: int = 1):
+        super().__init__(num_rays_per_batch, keep_full_image)
+        self.sample_full_image = sample_full_image
+        self.images_per_batch = images_per_batch
 
     def sample_method(
         self,
@@ -54,27 +48,34 @@ class RENIPixelSampler(PixelSampler):
         mask: Optional[Tensor] = None,
         device: Union[torch.device, str] = "cpu",
     ) -> Int[Tensor, "batch_size 3"]:
-        """
-        Naive pixel sampler, uniformly samples across all possible pixels of all possible images.
-
-        Args:
-            batch_size: number of samples in a batch
-            num_images: number of images to sample over
-            mask: mask of possible pixels in an image to sample from.
-        """
-        if isinstance(mask, torch.Tensor):
-            nonzero_indices = torch.nonzero(mask[..., 0], as_tuple=False)
-            chosen_indices = random.sample(range(len(nonzero_indices)), k=batch_size)
-            indices = nonzero_indices[chosen_indices]
+        if self.sample_full_image:
+            # Randomly select N images from the range [0, num_images)
+            random_image_indices = torch.randint(0, num_images, (self.images_per_batch,), device=device)
+            # Creating a grid for phi and theta
+            phi_values = torch.linspace(0, 1, image_height, device=device) # Uniformly distributed values for phi
+            theta_values = torch.linspace(0, 1, image_width, device=device) # Uniformly distributed values for theta
+            # Transforming phi values according to the PDF f(phi) = sin(phi) / 2
+            phi_values = torch.acos(1 - 2 * phi_values) / torch.pi
+            # Creating a meshgrid to combine phi and theta for all points in the image
+            phi_grid, theta_grid = torch.meshgrid(phi_values, theta_values)
+            # Repeating the grid for each image in the batch
+            phi_grid = phi_grid.repeat(self.images_per_batch, 1, 1)
+            theta_grid = theta_grid.repeat(self.images_per_batch, 1, 1)
+            # Creating a tensor for the selected random image indices
+            image_indices = random_image_indices.view(-1, 1, 1)
+            image_indices = image_indices.repeat(1, image_height, image_width)
+            # Stacking the random image indices, phi, and theta to create the final indices tensor
+            indices = torch.stack((image_indices, phi_grid, theta_grid), dim=-1)
+            # Scaling by the actual dimensions, note that for the image index, we don't need to scale
+            indices = indices * torch.tensor([1, image_height - 1, image_width - 1], device=device)
+            indices = indices.view(-1, 3)
+            indices = indices.long()
         else:
-            indices = torch.floor(
-                torch.rand((batch_size, 3), device=device)
-                * torch.tensor([num_images, image_height, image_width], device=device)
-            ).long()
+            indices = super().sample_method(batch_size, num_images, image_height, image_width, mask=mask, device=device)
 
         return indices
-
-    def collate_image_dataset_batch(self, batch: Dict, num_rays_per_batch: int, keep_full_image: bool = False, indices: Optional[Int[Tensor, "batch_size 3"]] = None, idxs: Optional[Int[Tensor, "batch_size"]] = None, sample_full_image: Optional[bool] = None):
+    
+    def collate_image_dataset_batch(self, batch: Dict, num_rays_per_batch: int, keep_full_image: bool = False, indices: Optional[Tensor] = None):
         """
         Operates on a batch of images and samples pixels to use for generating rays.
         Returns a collated batch which is input to the Graph.
@@ -90,13 +91,11 @@ class RENIPixelSampler(PixelSampler):
         num_images, image_height, image_width, _ = batch["image"].shape
 
         if "mask" in batch:
-            if indices is None:
-                indices = self.sample_method(
-                    num_rays_per_batch, num_images, image_height, image_width, mask=batch["mask"], device=device
-                )
+            indices = self.sample_method(
+                num_rays_per_batch, num_images, image_height, image_width, mask=batch["mask"], device=device
+            )
         else:
-            if indices is None:
-                indices = self.sample_method(num_rays_per_batch, num_images, image_height, image_width, device=device)
+            indices = self.sample_method(num_rays_per_batch, num_images, image_height, image_width, device=device)
 
         c, y, x = (i.flatten() for i in torch.split(indices, 1, dim=-1))
         c, y, x = c.cpu(), y.cpu(), x.cpu()
@@ -104,77 +103,10 @@ class RENIPixelSampler(PixelSampler):
             key: value[c, y, x] for key, value in batch.items() if key != "image_idx" and value is not None
         }
 
-        assert collated_batch["image"].shape[0] == num_rays_per_batch
-
-        # Needed to correct the random indices to their actual camera idx locations.
-        indices[:, 0] = batch["image_idx"][c]
-        collated_batch["indices"] = indices  # with the abs camera indices
-
-        if keep_full_image:
-            collated_batch["full_image"] = batch["image"]
-
-        return collated_batch
-
-    def collate_image_dataset_batch_list(self, batch: Dict, num_rays_per_batch: int, keep_full_image: bool = False, indices: Optional[Int[Tensor, "batch_size 3"]] = None):
-        """
-        Does the same as collate_image_dataset_batch, except it will operate over a list of images / masks inside
-        a list.
-
-        We will use this with the intent of DEPRECIATING it as soon as we find a viable alternative.
-        The intention will be to replace this with a more efficient implementation that doesn't require a for loop, but
-        since pytorch's ragged tensors are still in beta (this would allow for some vectorization), this will do.
-
-        Args:
-            batch: batch of images to sample from
-            num_rays_per_batch: number of rays to sample per batch
-            keep_full_image: whether or not to include a reference to the full image in returned batch
-        """
-
-        device = batch["image"][0].device
-        num_images = len(batch["image"])
-
-        # only sample within the mask, if the mask is in the batch
-        all_indices = []
-        all_images = []
-
-        if "mask" in batch:
-            num_rays_in_batch = num_rays_per_batch // num_images
-            for i in range(num_images):
-                image_height, image_width, _ = batch["image"][i].shape
-
-                if i == num_images - 1:
-                    num_rays_in_batch = num_rays_per_batch - (num_images - 1) * num_rays_in_batch
-
-                indices = self.sample_method(
-                    num_rays_in_batch, 1, image_height, image_width, mask=batch["mask"][i], device=device
-                )
-                indices[:, 0] = i
-                all_indices.append(indices)
-                all_images.append(batch["image"][i][indices[:, 1], indices[:, 2]])
-
+        if self.sample_full_image:
+            assert collated_batch["image"].shape[0] == image_height * image_width * self.images_per_batch
         else:
-            num_rays_in_batch = num_rays_per_batch // num_images
-            for i in range(num_images):
-                image_height, image_width, _ = batch["image"][i].shape
-                if i == num_images - 1:
-                    num_rays_in_batch = num_rays_per_batch - (num_images - 1) * num_rays_in_batch
-                indices = self.sample_method(num_rays_in_batch, 1, image_height, image_width, device=device)
-                indices[:, 0] = i
-                all_indices.append(indices)
-                all_images.append(batch["image"][i][indices[:, 1], indices[:, 2]])
-
-        indices = torch.cat(all_indices, dim=0)
-
-        c, y, x = (i.flatten() for i in torch.split(indices, 1, dim=-1))
-        collated_batch = {
-            key: value[c, y, x]
-            for key, value in batch.items()
-            if key != "image_idx" and key != "image" and key != "mask" and value is not None
-        }
-
-        collated_batch["image"] = torch.cat(all_images, dim=0)
-
-        assert collated_batch["image"].shape[0] == num_rays_per_batch
+            assert collated_batch["image"].shape[0] == num_rays_per_batch
 
         # Needed to correct the random indices to their actual camera idx locations.
         indices[:, 0] = batch["image_idx"][c]
@@ -184,63 +116,26 @@ class RENIPixelSampler(PixelSampler):
             collated_batch["full_image"] = batch["image"]
 
         return collated_batch
+    
 
-    def sample(self, image_batch: Dict, indices: Optional[Int[Tensor, "batch_size 3"]] = None, idxs: Optional[Int[Tensor, "batch_size"]] = None, sample_full_image: Optional[bool] = None):
+    def sample(self, image_batch: Dict, keep_full_image: Optional[bool] = None, indices: Optional[Tensor] = None):
         """Sample an image batch and return a pixel batch.
 
         Args:
             image_batch: batch of images to sample from
         """
+        if keep_full_image is None:
+            keep_full_image = self.keep_full_image
+
         if isinstance(image_batch["image"], list):
             image_batch = dict(image_batch.items())  # copy the dictionary so we don't modify the original
             pixel_batch = self.collate_image_dataset_batch_list(
-                image_batch, self.num_rays_per_batch, keep_full_image=self.keep_full_image, indices=indices, idxs=idxs, sample_full_image=sample_full_image
+                image_batch, self.num_rays_per_batch, keep_full_image=keep_full_image
             )
         elif isinstance(image_batch["image"], torch.Tensor):
             pixel_batch = self.collate_image_dataset_batch(
-                image_batch, self.num_rays_per_batch, keep_full_image=self.keep_full_image, indices=indices
+                image_batch, self.num_rays_per_batch, keep_full_image=keep_full_image, indices=indices
             )
         else:
             raise ValueError("image_batch['image'] must be a list or torch.Tensor")
         return pixel_batch
-
-
-class RENIEquirectangularPixelSampler(RENIPixelSampler):
-    """Samples 'pixel_batch's from 'image_batch's. Assumes images are
-    equirectangular and the sampling is done uniformly on the sphere.
-
-    Args:
-        num_rays_per_batch: number of rays to sample per batch
-        keep_full_image: whether or not to include a reference to the full image in returned batch
-    """
-
-    # overrides base method
-    def sample_method(
-        self,
-        batch_size: int,
-        num_images: int,
-        image_height: int,
-        image_width: int,
-        mask: Optional[Tensor] = None,
-        device: Union[torch.device, str] = "cpu",
-    ) -> Int[Tensor, "batch_size 3"]:
-        if isinstance(mask, torch.Tensor):
-            # Note: if there is a mask, sampling reduces back to uniform sampling, which gives more
-            # sampling weight to the poles of the image than the equators.
-            # TODO(kevinddchen): implement the correct mask-sampling method.
-
-            indices = super().sample_method(batch_size, num_images, image_height, image_width, mask=mask, device=device)
-        else:
-            # We sample theta uniformly in [0, 2*pi]
-            # We sample phi in [0, pi] according to the PDF f(phi) = sin(phi) / 2.
-            # This is done by inverse transform sampling.
-            # http://corysimon.github.io/articles/uniformdistn-on-sphere/
-            num_images_rand = torch.rand(batch_size, device=device)
-            phi_rand = torch.acos(1 - 2 * torch.rand(batch_size, device=device)) / torch.pi
-            theta_rand = torch.rand(batch_size, device=device)
-            indices = torch.floor(
-                torch.stack((num_images_rand, phi_rand, theta_rand), dim=-1)
-                * torch.tensor([num_images, image_height, image_width], device=device)
-            ).long()
-
-        return indices

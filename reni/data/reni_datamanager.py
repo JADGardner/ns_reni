@@ -174,7 +174,7 @@ class RENIDataManager(VanillaDataManager):
             collate_fn=self.config.collate_fn,
         )
         self.iter_train_image_dataloader = iter(self.train_image_dataloader)
-        self.train_pixel_sampler = self._get_pixel_sampler(self.train_dataset, self.config.train_num_rays_per_batch)
+        self.train_pixel_sampler = self._get_pixel_sampler(self.train_dataset, self.config.train_num_rays_per_batch, False, self.config.full_image_per_batch, self.config.number_of_images_per_batch)
         self.train_camera_optimizer = self.config.camera_optimizer.setup(
             num_cameras=self.train_dataset.cameras.size, device=self.device
         )
@@ -185,30 +185,14 @@ class RENIDataManager(VanillaDataManager):
 
     def next_train(self, step: int) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data from the train dataloader."""
-        if self.config.full_image_per_batch:
-            self.train_count += 1
-            image_batch = next(self.iter_train_image_dataloader)
-            assert self.train_pixel_sampler is not None
-            assert isinstance(image_batch, dict)
-            # choose random config.number_of_images_per_batch random idxs
-            idxs = np.random.choice(
-                np.arange(image_batch["image"].shape[0]),
-                size=self.config.number_of_images_per_batch,
-                replace=False,
-            )
-            batch = self.train_pixel_sampler.sample(image_batch, idxs=idxs, sample_full_image=True)
-            ray_indices = batch["indices"]
-            ray_bundle = self.train_ray_generator(ray_indices)
-            return ray_bundle, batch
-        else:
-            self.train_count += 1
-            image_batch = next(self.iter_train_image_dataloader)
-            assert self.train_pixel_sampler is not None
-            assert isinstance(image_batch, dict)
-            batch = self.train_pixel_sampler.sample(image_batch)
-            ray_indices = batch["indices"]
-            ray_bundle = self.train_ray_generator(ray_indices)
-            return ray_bundle, batch
+        self.train_count += 1
+        image_batch = next(self.iter_train_image_dataloader)
+        assert self.train_pixel_sampler is not None
+        assert isinstance(image_batch, dict)
+        batch = self.train_pixel_sampler.sample(image_batch)
+        ray_indices = batch["indices"]
+        ray_bundle = self.train_ray_generator(ray_indices)
+        return ray_bundle, batch
 
     def next_eval(self, step: int) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data from the eval dataloader."""
