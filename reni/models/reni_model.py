@@ -158,9 +158,12 @@ class RENIModel(Model):
             raise ValueError("populate_fields() must be called before get_outputs")
         
         if self.config.loss_inclusions['scale_inv_grad_loss']:
-            ray_bundle.directions.requires_grad = True
-        
-        ray_samples = self.create_ray_samples(ray_bundle)
+            # then half of the rays are just the directions rolled by 1
+            # so first we'll use first half for learning colours and then use second half for finite diff gradient matching
+            num_rays = ray_bundle.origins.shape[0]
+            ray_samples = self.create_ray_samples(ray_bundle[:num_rays//2])
+        else:
+            ray_samples = self.create_ray_samples(ray_bundle)
 
         rotation=None
         latent_codes=None # if auto-decoder training regime latents are trainable params of the field
@@ -179,9 +182,19 @@ class RENIModel(Model):
         if RENIFieldHeadNames.LOG_VAR in field_outputs:
             outputs["log_var"] = field_outputs[RENIFieldHeadNames.LOG_VAR]
 
+        # now generate rgb_rolled for finite diff gradient matching
+        if self.config.loss_inclusions['scale_inv_grad_loss']:
+            ray_samples = self.create_ray_samples(ray_bundle[num_rays//2:])
+            field_outputs = self.field.forward(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes)
+            outputs['rgb_rolled'] = field_outputs[RENIFieldHeadNames.RGB]
+
         return outputs
     
     def get_metrics_dict(self, outputs, batch) -> Dict[str, torch.Tensor]:
+        
+        if self.config.loss_inclusions['scale_inv_grad_loss']:
+            num_rays = batch['image'].shape[0]
+            batch = {key: value[:num_rays//2] for key, value in batch.items()}
         
         device = outputs["rgb"].device
         image = batch["image"].to(device)
@@ -212,7 +225,13 @@ class RENIModel(Model):
     def get_loss_dict(self, outputs, batch, ray_bundle, metrics_dict=None) -> Dict[str, torch.Tensor]:
         # Scaling metrics by coefficients to create the losses.
         device = outputs["rgb"].device
-        image = batch["image"].to(device)
+
+        if self.config.loss_inclusions['scale_inv_grad_loss']:
+            num_rays = batch['image'].shape[0]
+            batch_rolled = {key: value[num_rays//2:] for key, value in batch.items()}
+            batch = {key: value[:num_rays//2] for key, value in batch.items()}
+            batch['image'] = batch['image'].to(device)
+            batch_rolled['image'] = batch_rolled['image'].to(device)
 
         if self.config.include_sine_weighting:
             sineweight = self.get_sineweighting(ray_bundle.directions)
@@ -224,7 +243,7 @@ class RENIModel(Model):
 
         if self.config.training_regime == 'autodecoder':
             if self.config.loss_inclusions['mse_loss']:
-                mse_loss = self.mse_loss(outputs["rgb"], image, sineweight)
+                mse_loss = self.mse_loss(outputs["rgb"], batch["image"], sineweight)
                 loss_dict['mse_loss'] = mse_loss
 
             if self.config.loss_inclusions['kld_loss']:
@@ -232,15 +251,15 @@ class RENIModel(Model):
                 loss_dict['kld_loss'] = kld_loss
 
             if self.config.loss_inclusions['cosine_similarity_loss']:
-                cosine_similarity_loss = self.cosine_similarity(outputs["rgb"], image, sineweight)
+                cosine_similarity_loss = self.cosine_similarity(outputs["rgb"], batch["image"], sineweight)
                 loss_dict['cosine_similarity_loss'] = cosine_similarity_loss
 
             if self.config.loss_inclusions['scale_inv_loss']:
-                scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], image, sineweight)
+                scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], batch["image"], sineweight)
                 loss_dict['scale_inv_loss'] = scale_inv_loss
 
             if self.config.loss_inclusions['scale_inv_grad_loss']:
-                scale_inv_grad_loss = self.scale_invariant_grad_loss(outputs["rgb"], image, batch['HW'])
+                scale_inv_grad_loss = self.scale_invariant_grad_loss(outputs['rgb'], outputs["rgb_rolled"], batch['image'], batch_rolled["image"])
                 loss_dict['scale_inv_grad_loss'] = scale_inv_grad_loss
 
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)

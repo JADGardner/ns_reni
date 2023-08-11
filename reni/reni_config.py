@@ -26,7 +26,7 @@ from nerfstudio.engine.schedulers import (
 RENIField = MethodSpecification(
     config=TrainerConfig(
         method_name="reni",
-        steps_per_eval_image=5000,
+        steps_per_eval_image=10,
         steps_per_eval_batch=100000,
         steps_per_save=1000,
         steps_per_eval_all_images=5000,  # set to a very large model so we don't eval with all images
@@ -43,7 +43,7 @@ RENIField = MethodSpecification(
                     min_max_normalize=None, # in e^min = 0.0111, e^max = 8103.08
                 ),
                 train_num_rays_per_batch=8192,
-                full_image_per_batch=True,
+                full_image_per_batch=False,
                 number_of_images_per_batch=3,
             ),
             model=RENIModelConfig(
@@ -81,7 +81,7 @@ RENIField = MethodSpecification(
                     "cosine_similarity_loss": True,
                     "kld_loss": True,
                     "scale_inv_loss": True,
-                    "scale_inv_grad_loss": False,
+                    "scale_inv_grad_loss": True,
                 },
                 include_sine_weighting=False, # This is already done by the equirectangular pixel sampler
                 training_regime="autodecoder",
@@ -96,7 +96,7 @@ RENIField = MethodSpecification(
         viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
         vis="wandb",
     ),
-    description="Base config for Directional Distance Field.",
+    description="Base config for Rotation-Equivariant Natural Illumination Field.",
 )
 
 RESGANField = MethodSpecification(

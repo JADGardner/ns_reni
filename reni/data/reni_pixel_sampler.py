@@ -57,7 +57,7 @@ class RENIEquirectangularPixelSampler(EquirectangularPixelSampler):
             # Transforming phi values according to the PDF f(phi) = sin(phi) / 2
             phi_values = torch.acos(1 - 2 * phi_values) / torch.pi
             # Creating a meshgrid to combine phi and theta for all points in the image
-            phi_grid, theta_grid = torch.meshgrid(phi_values, theta_values)
+            phi_grid, theta_grid = torch.meshgrid(phi_values, theta_values, indexing='ij')
             # Repeating the grid for each image in the batch
             phi_grid = phi_grid.repeat(self.images_per_batch, 1, 1)
             theta_grid = theta_grid.repeat(self.images_per_batch, 1, 1)
@@ -90,12 +90,13 @@ class RENIEquirectangularPixelSampler(EquirectangularPixelSampler):
         device = batch["image"].device
         num_images, image_height, image_width, _ = batch["image"].shape
 
-        if "mask" in batch:
-            indices = self.sample_method(
-                num_rays_per_batch, num_images, image_height, image_width, mask=batch["mask"], device=device
-            )
-        else:
-            indices = self.sample_method(num_rays_per_batch, num_images, image_height, image_width, device=device)
+        if indices is None:
+            if "mask" in batch:
+                indices = self.sample_method(
+                    num_rays_per_batch, num_images, image_height, image_width, mask=batch["mask"], device=device
+                )
+            else:
+                indices = self.sample_method(num_rays_per_batch, num_images, image_height, image_width, device=device)
 
         c, y, x = (i.flatten() for i in torch.split(indices, 1, dim=-1))
         c, y, x = c.cpu(), y.cpu(), x.cpu()
@@ -108,9 +109,10 @@ class RENIEquirectangularPixelSampler(EquirectangularPixelSampler):
         else:
             assert collated_batch["image"].shape[0] == num_rays_per_batch
 
-        # Needed to correct the random indices to their actual camera idx locations.
+        # # Needed to correct the random indices to their actual camera idx locations.
+        collated_batch["sampled_idxs"] = indices[:, 0].clone() # for calling again with the same indices
         indices[:, 0] = batch["image_idx"][c]
-        collated_batch["indices"] = indices  # with the abs camera indices
+        collated_batch["indices"] = indices
 
         if keep_full_image:
             collated_batch["full_image"] = batch["image"]

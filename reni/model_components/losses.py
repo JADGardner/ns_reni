@@ -96,20 +96,18 @@ class ScaleInvariantGradientMatchingLoss(nn.Module):
     def __init__(self):
         super(ScaleInvariantGradientMatchingLoss, self).__init__()
 
-    def forward(self, log_predicted, log_gt, shape):
+    def forward(self, log_predicted, log_predicted_rolled, log_gt, log_gt_rolled):
         """"
-        log_predicted: log of the predicted density : (N, 3)
-        log_gt: log of the ground truth density : (N, 3)
-        shape: shape of the image : torch.Size([H, W])
+        log_predicted: predicted rgb in log domain : (N, 3)
+        log_predicted_rolled: predicted rgb in log domain sampled with directions rolled by 1 (N, 3)
+        log_gt: ground truth rgb in log domain : (N, 3)
+        log_gt_rolled: ground truth rgb in log domain sampled with directions rolled by 1 (N, 3)
         """
         #  l1 penalty on differences in log-depth gradients between the predicted and ground truth depth map
 
-        # change to shape H, W, 3
-        log_predicted = log_predicted.reshape(shape[0], shape[1], 3)
-        log_gt = log_gt.reshape(shape[0], shape[1], 3)
-
-        grad_log_predicted = log_predicted - torch.roll(log_predicted, 1, 0)
-        grad_log_gt = log_gt - torch.roll(log_gt, 1, 0)
+        # estimate gradients using finite differences
+        grad_log_gt = torch.abs(log_gt_rolled - log_gt)
+        grad_log_predicted = torch.abs(log_predicted_rolled - log_predicted)
 
         loss = torch.mean(torch.abs(grad_log_gt - grad_log_predicted))
 

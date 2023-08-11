@@ -80,8 +80,6 @@ class RENIDataManagerConfig(VanillaDataManagerConfig):
     """Whether to use full images per batch."""
     number_of_images_per_batch: int = 1
     """Number of images per batch."""
-    compute_finite_difference_gradient: bool = False
-    """Whether to compute and return finite difference gradient for each batch."""
 
 
 class RENIDataManager(VanillaDataManager):
@@ -120,6 +118,7 @@ class RENIDataManager(VanillaDataManager):
         self.sampler = None
         self.test_mode = test_mode
         self.test_split = "test" if test_mode in ["test", "inference"] else "val"
+        self.include_gradients = kwargs.get("include_gradients", False)
         self.dataparser_config = self.config.dataparser
         if self.config.data is not None:
             self.config.dataparser.data = Path(self.config.data)
@@ -134,6 +133,9 @@ class RENIDataManager(VanillaDataManager):
 
         self.num_train = len(self.train_dataset)
         self.num_eval = len(self.eval_dataset)
+
+        self.image_height = self.train_dataset.metadata['image_height']
+        self.image_width = self.train_dataset.metadata['image_width']
 
         if self.train_dataparser_outputs is not None:
             cameras = self.train_dataparser_outputs.cameras
@@ -174,6 +176,7 @@ class RENIDataManager(VanillaDataManager):
             collate_fn=self.config.collate_fn,
         )
         self.iter_train_image_dataloader = iter(self.train_image_dataloader)
+        # NOTE: Updated to RENI sampler where full image per batch is possible
         self.train_pixel_sampler = self._get_pixel_sampler(self.train_dataset, self.config.train_num_rays_per_batch, False, self.config.full_image_per_batch, self.config.number_of_images_per_batch)
         self.train_camera_optimizer = self.config.camera_optimizer.setup(
             num_cameras=self.train_dataset.cameras.size, device=self.device
@@ -183,6 +186,40 @@ class RENIDataManager(VanillaDataManager):
             self.train_camera_optimizer,
         )
 
+    def setup_eval(self):
+        """Sets up the data loader for evaluation"""
+        assert self.eval_dataset is not None
+        CONSOLE.print("Setting up evaluation dataset...")
+        self.eval_image_dataloader = CacheDataloader(
+            self.eval_dataset,
+            num_images_to_sample_from=self.config.eval_num_images_to_sample_from,
+            num_times_to_repeat_images=self.config.eval_num_times_to_repeat_images,
+            device=self.device,
+            num_workers=self.world_size * 4,
+            pin_memory=True,
+            collate_fn=self.config.collate_fn,
+        )
+        self.iter_eval_image_dataloader = iter(self.eval_image_dataloader)
+        self.eval_pixel_sampler = self._get_pixel_sampler(self.eval_dataset, self.config.eval_num_rays_per_batch, False, self.config.full_image_per_batch, 1)
+        self.eval_camera_optimizer = self.config.camera_optimizer.setup(
+            num_cameras=self.eval_dataset.cameras.size, device=self.device
+        )
+        self.eval_ray_generator = RayGenerator(
+            self.eval_dataset.cameras.to(self.device),
+            self.eval_camera_optimizer,
+        )
+        # for loading full images
+        self.fixed_indices_eval_dataloader = FixedIndicesEvalDataloader(
+            input_dataset=self.eval_dataset,
+            device=self.device,
+            num_workers=self.world_size * 4,
+        )
+        self.eval_dataloader = RandIndicesEvalDataloader(
+            input_dataset=self.eval_dataset,
+            device=self.device,
+            num_workers=self.world_size * 4,
+        )
+
     def next_train(self, step: int) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data from the train dataloader."""
         self.train_count += 1
@@ -190,6 +227,16 @@ class RENIDataManager(VanillaDataManager):
         assert self.train_pixel_sampler is not None
         assert isinstance(image_batch, dict)
         batch = self.train_pixel_sampler.sample(image_batch)
+        if self.include_gradients:
+            finite_diff_grad_indices = batch['indices'].clone()
+            # update the index to be samples_idxs
+            finite_diff_grad_indices[:, 0] = batch['sampled_idxs'].clone()
+            # # roll the x values by 1 using datamanger.image_width as mod
+            finite_diff_grad_indices[:, 2] = (finite_diff_grad_indices[:, 2] + 1) % self.image_width
+            finite_diff_batch = self.train_pixel_sampler.sample(image_batch, indices=finite_diff_grad_indices)
+            for key in batch:
+                batch[key] = torch.cat([batch[key], finite_diff_batch[key]], dim=0)
+            batch.pop('sampled_idxs')
         ray_indices = batch["indices"]
         ray_bundle = self.train_ray_generator(ray_indices)
         return ray_bundle, batch
@@ -201,6 +248,16 @@ class RENIDataManager(VanillaDataManager):
         assert self.eval_pixel_sampler is not None
         assert isinstance(image_batch, dict)
         batch = self.eval_pixel_sampler.sample(image_batch)
+        if self.include_gradients:
+            finite_diff_grad_indices = batch['indices'].clone()
+            # update the index to be samples_idxs
+            finite_diff_grad_indices[:, 0] = batch['sampled_idxs'].clone()
+            # # roll the x values by 1 using datamanger.image_width as mod
+            finite_diff_grad_indices[:, 2] = (finite_diff_grad_indices[:, 2] + 1) % self.image_width
+            finite_diff_batch = self.eval_pixel_sampler.sample(image_batch, indices=finite_diff_grad_indices)
+            for key in batch:
+                batch[key] = torch.cat([batch[key], finite_diff_batch[key]], dim=0)
+            batch.pop('sampled_idxs')
         ray_indices = batch["indices"]
         ray_bundle = self.eval_ray_generator(ray_indices)
         return ray_bundle, batch
@@ -211,7 +268,6 @@ class RENIDataManager(VanillaDataManager):
             image_idx = int(camera_ray_bundle.camera_indices[0, 0, 0])
             return image_idx, camera_ray_bundle, batch
         raise ValueError("No more eval images")
-
 
     def create_train_dataset(self) -> RENIDataset:
         """Sets up the data loaders for training"""
