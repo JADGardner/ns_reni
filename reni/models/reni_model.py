@@ -148,6 +148,9 @@ class RENIModel(Model):
             ray_bundle: containing all the information needed to render that ray latents included
         """
         return self.get_outputs(ray_bundle)
+    
+    def forward_discriminator(self, ray_bundle: RayBundle, image_batch: torch.Tensor) -> Dict[str, torch.Tensor]:
+        raise NotImplementedError
 
     def create_ray_samples(self, origins, directions, camera_indices) -> RaySamples:
         """Create ray samples from a ray bundle"""
@@ -213,26 +216,26 @@ class RENIModel(Model):
             batch = {key: value[0] for key, value in batch.items()} # [num_rays, ...]
         
         device = outputs["rgb"].device
-        image = batch["image"].to(device)
-        rgb = outputs["rgb"]
+        gt_image = batch["image"].to(device)
+        pred_image = outputs["rgb"]
 
-        if self.scale_invariant_loss:
+        if self.config.loss_inclusions['scale_inv_loss']:
             # estimate scale using least squares
-            scale = (image * rgb).sum() / (rgb * rgb).sum()
-            rgb = scale * rgb
+            scale = (gt_image * pred_image).sum() / (pred_image * pred_image).sum()
+            pred_image = scale * pred_image
 
         if self.metadata["min_max_normalize"]:
             min_val, max_val = self.metadata["min_max"]
             # need to unnormalize the image from between -1 and 1
-            image = 0.5 * (image + 1) * (max_val - min_val) + min_val
-            rgb = 0.5 * (rgb + 1) * (max_val - min_val) + min_val
+            gt_image = 0.5 * (gt_image + 1) * (max_val - min_val) + min_val
+            pred_image = 0.5 * (pred_image + 1) * (max_val - min_val) + min_val
         
         if self.metadata['convert_to_log_domain']:
             # undo log domain conversion
-            image = torch.exp(image)
-            rgb = torch.exp(rgb)
+            gt_image = torch.exp(gt_image)
+            pred_image = torch.exp(pred_image)
                 
-        psnr = self.psnr(image, rgb)
+        psnr = self.psnr(preds=pred_image, target=gt_image)
 
         metrics_dict = {"psnr": psnr}
         return metrics_dict
@@ -247,9 +250,10 @@ class RENIModel(Model):
             assert batch['image'].shape[0] == 2
             batch_rolled = {key: value[1] for key, value in batch.items()} # [num_rays, ...]
             batch = {key: value[0] for key, value in batch.items()} # [num_rays, ...]
-            batch['image'] = batch['image'].to(device)
             batch_rolled['image'] = batch_rolled['image'].to(device)
-
+        
+        batch['image'] = batch['image'].to(device)
+            
         loss_dict = {}
 
         # Unlike original RENI implementation, the sineweighting 
@@ -293,62 +297,61 @@ class RENIModel(Model):
             assert batch['image'].shape[0] == 2
             batch_rolled = {key: value[1] for key, value in batch.items()} # [num_rays, ...]
             batch = {key: value[0] for key, value in batch.items()} # [num_rays, ...]
-            batch['image'] = batch['image'].to(device)
             batch_rolled['image'] = batch_rolled['image'].to(device)
+        
+        batch['image'] = batch['image'].to(device)
 
-        image = batch["image"] # [num_rays, 3]
-        rgb = outputs["rgb"] # [num_rays, 3]
+        gt_image = batch["image"] # [num_rays, 3]
+        pred_image = outputs["rgb"] # [num_rays, 3]
 
-        # reshape to [H, W, 3] with 64, 128
-        image = image.reshape(self.metadata['image_height'], self.metadata['image_width'], 3)
-        rgb = rgb.reshape(self.metadata['image_height'], self.metadata['image_width'], 3)
+        # reshape to [H, W, 3]
+        gt_image = gt_image.reshape(self.metadata['image_height'], self.metadata['image_width'], 3)
+        pred_image = pred_image.reshape(self.metadata['image_height'], self.metadata['image_width'], 3)
 
-        if self.scale_invariant_loss:
+        if self.config.loss_inclusions['scale_inv_loss']:
             # estimate scale using least squares
-            scale = (image * rgb).sum() / (rgb * rgb).sum()
-            rgb = scale * rgb
+            scale = (gt_image * pred_image).sum() / (pred_image * pred_image).sum()
+            pred_image = scale * pred_image
 
-        if self.metadata["min_max_normalize"]:
+        if self.metadata["min_max_normalize"] is not None:
             min_val, max_val = self.metadata["min_max"]
             # need to unnormalize the image from between -1 and 1
-            image = 0.5 * (image + 1) * (max_val - min_val) + min_val
-            rgb = 0.5 * (rgb + 1) * (max_val - min_val) + min_val
+            gt_image = 0.5 * (gt_image + 1) * (max_val - min_val) + min_val
+            pred_image = 0.5 * (pred_image + 1) * (max_val - min_val) + min_val
 
         if self.metadata['convert_to_log_domain']:
             # undo log domain conversion
-            image = torch.exp(image)
-            rgb = torch.exp(rgb)
+            gt_image = torch.exp(gt_image)
+            pred_image = torch.exp(pred_image)
         
         # converting to grayscale by taking the mean across the color dimension
-        image_gray = torch.mean(image, dim=-1)
-        rgb_gray = torch.mean(rgb, dim=-1)
+        gt_image_gray = torch.mean(gt_image, dim=-1)
+        pred_image_gray = torch.mean(pred_image, dim=-1)
 
-        gt_min, gt_max = torch.min(image_gray), torch.max(image_gray)
+        # reshape to H, W
+        gt_image_gray = gt_image_gray.reshape(self.metadata['image_height'], self.metadata['image_width'], 1)
+        pred_image_gray = pred_image_gray.reshape(self.metadata['image_height'], self.metadata['image_width'], 1)
 
-        # Creating the LogNorm object
-        log_norm = matplotlib.colors.LogNorm(vmin=gt_min, vmax=gt_max)
+        gt_min, gt_max = torch.min(gt_image_gray), torch.max(gt_image_gray)
 
-        # Applying log normalization and creating tensors
-        image_gray_log = torch.Tensor(log_norm(image_gray.cpu().detach().numpy())).to(image.device)
-        rgb_gray_log = torch.Tensor(log_norm(rgb_gray.cpu().detach().numpy())).to(image.device)
+        combined_log_heatmap = torch.cat([gt_image_gray, pred_image_gray], dim=1)
 
-        # Adding a new dimension for channel to image_gray_log and rgb_gray_log tensors
-        image_gray_log = image_gray_log.unsqueeze(-1)
-        rgb_gray_log = rgb_gray_log.unsqueeze(-1)
-
-        # concatenating images
-        combined_log_heatmap = torch.cat([image_gray_log, rgb_gray_log], dim=1)
+        combined_log_heatmap = colormaps.apply_depth_colormap(
+            combined_log_heatmap,
+            near_plane=gt_min,
+            far_plane=gt_max,
+        )
 
         # create difference image
-        difference = torch.abs(image - rgb)
+        difference = torch.abs(gt_image - pred_image)
 
         # i.e. we are not already in LDR space
         if not self.metadata['convert_to_ldr']:
             # convert from linear HDR to sRGB for viewing
-            image_ldr = linear_to_sRGB(image, use_quantile=True)
-            rgb_ldr = linear_to_sRGB(rgb, use_quantile=True)
+            gt_image_ldr = linear_to_sRGB(gt_image, use_quantile=True)
+            pred_image_ldr = linear_to_sRGB(pred_image, use_quantile=True)
 
-        combined_rgb = torch.cat([image_ldr, rgb_ldr], dim=1)
+        combined_rgb = torch.cat([gt_image_ldr, pred_image_ldr], dim=1)
 
         images_dict = {}
 
@@ -357,12 +360,12 @@ class RENIModel(Model):
         images_dict['difference'] = difference
 
         if self.config.loss_inclusions['scale_inv_grad_loss']:
-            rgb_rolled = outputs['rgb_rolled']
-            rolled_image = batch_rolled['image']
-            rgb_rolled = rgb_rolled.reshape(self.metadata['image_height'], self.metadata['image_width'], 3)
-            rolled_image = rolled_image.reshape(self.metadata['image_height'], self.metadata['image_width'], 3)
-            finite_diff_gt = torch.abs(image - rolled_image)
-            finite_diff_pred = torch.abs(rgb - rgb_rolled)
+            pred_rolled = outputs['rgb_rolled']
+            rolled_gt_image = batch_rolled['image']
+            pred_rolled = pred_rolled.reshape(self.metadata['image_height'], self.metadata['image_width'], 3)
+            rolled_gt_image = rolled_gt_image.reshape(self.metadata['image_height'], self.metadata['image_width'], 3)
+            finite_diff_gt = torch.abs(gt_image - rolled_gt_image)
+            finite_diff_pred = torch.abs(pred_image - pred_rolled)
             finite_diff_gt = torch.exp(finite_diff_gt)
             finite_diff_pred = torch.exp(finite_diff_pred)
             finite_diff_gt = linear_to_sRGB(finite_diff_gt, use_quantile=True)
@@ -372,8 +375,8 @@ class RENIModel(Model):
 
         # COMPUTE METRICS
         # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
-        image = torch.unsqueeze(image, 0).permute(0, 3, 1, 2)
-        rgb = torch.unsqueeze(rgb, 0).permute(0, 3, 1, 2)
+        gt_image = gt_image.unsqueeze(0).permute(0, 3, 1, 2)
+        pred_image = pred_image.unsqueeze(0).permute(0, 3, 1, 2)
 
         # # TODO: since we are now sampling every pixel in the image, should we use sinewighting when computing metrics?
         # # and is this valid?
@@ -385,12 +388,12 @@ class RENIModel(Model):
         # image = image * sineweight
         # rgb = rgb * sineweight
 
-        psnr = self.psnr(image, rgb)
-        ssim = self.ssim(image, rgb)
+        psnr = self.psnr(preds=pred_image, target=gt_image)
+        ssim = self.ssim(preds=pred_image, target=gt_image)
         # for lpips we need to convert to 0 to 1 using image.min() and image.max()
-        image = (image - image.min()) / (image.max() - image.min())
-        rgb = (rgb - rgb.min()) / (rgb.max() - rgb.min())
-        lpips = self.lpips(image, rgb)
+        gt_image = (gt_image - gt_image.min()) / (gt_image.max() - gt_image.min())
+        pred_image = (pred_image - pred_image.min()) / (pred_image.max() - pred_image.min())
+        lpips = self.lpips(pred_image, gt_image)
         assert isinstance(ssim, torch.Tensor)
 
         metrics_dict = {
