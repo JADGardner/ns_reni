@@ -91,10 +91,10 @@ class RENIPipeline(VanillaPipeline):
         self.config = config
         self.test_mode = test_mode
 
-        include_gradients = self.config.model.loss_inclusions['scale_inv_grad_loss']
+        self.using_scale_inv_grad_loss = self.config.model.loss_inclusions['scale_inv_grad_loss']
 
         self.datamanager: RENIDataManager = config.datamanager.setup(
-            device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank, include_gradients=include_gradients
+            device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank, using_scale_inv_grad_loss=self.using_scale_inv_grad_loss
         )
         self.datamanager.to(device)
         assert self.datamanager.train_dataset is not None, "Missing input dataset"
@@ -140,19 +140,7 @@ class RENIPipeline(VanillaPipeline):
         ray_bundle, batch = self.datamanager.next_train(step)
         model_outputs = self._model(ray_bundle)  # train distributed data parallel model if world_size > 1
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
-
-        if self.config.datamanager.camera_optimizer is not None:
-            camera_opt_param_group = self.config.datamanager.camera_optimizer.param_group
-            if camera_opt_param_group in self.datamanager.get_param_groups():
-                # Report the camera optimization metrics
-                metrics_dict["camera_opt_translation"] = (
-                    self.datamanager.get_param_groups()[camera_opt_param_group][0].data[:, :3].norm()
-                )
-                metrics_dict["camera_opt_rotation"] = (
-                    self.datamanager.get_param_groups()[camera_opt_param_group][0].data[:, 3:].norm()
-                )
-
-        loss_dict = self.model.get_loss_dict(model_outputs, batch, ray_bundle, metrics_dict)
+        loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
 
         return model_outputs, loss_dict, metrics_dict
     
@@ -187,13 +175,13 @@ class RENIPipeline(VanillaPipeline):
         if self.last_step_of_eval_optimisation != step:
             self._model.fit_eval_latents(self.datamanager)
             self.last_step_of_eval_optimisation = step
-        image_idx, camera_ray_bundle, batch = self.datamanager.next_eval_image(step)
-        outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
-        metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch, camera_ray_bundle)
+        image_idx, ray_bundle, batch = self.datamanager.next_eval_image(step)
+        outputs = self.model(ray_bundle)  
+        metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
         assert "image_idx" not in metrics_dict
         metrics_dict["image_idx"] = image_idx
         assert "num_rays" not in metrics_dict
-        metrics_dict["num_rays"] = len(camera_ray_bundle)
+        metrics_dict["num_rays"] = ray_bundle.directions.shape[-2] # as directions is either [2, N, 3] or [N, 3]
         self.train()
         return metrics_dict, images_dict
 
@@ -220,18 +208,18 @@ class RENIPipeline(VanillaPipeline):
             transient=True,
         ) as progress:
             task = progress.add_task("[green]Evaluating all eval images...", total=num_images)
-            for camera_ray_bundle, batch in self.datamanager.fixed_indices_eval_dataloader:
+            for idx in range(num_images):
+                _, ray_bundle, batch = self.datamanager.next_eval_image(idx=idx)
+                num_rays = ray_bundle.directions.shape[-2]
                 # time this the following line
                 inner_start = time()
-                height, width = camera_ray_bundle.shape
-                num_rays = height * width
-                outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
-                metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch, camera_ray_bundle)
+                outputs = self.model(ray_bundle)    
+                metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch)
                 assert "num_rays_per_sec" not in metrics_dict
                 metrics_dict["num_rays_per_sec"] = num_rays / (time() - inner_start)
                 fps_str = "fps"
                 assert fps_str not in metrics_dict
-                metrics_dict[fps_str] = metrics_dict["num_rays_per_sec"] / (height * width)
+                metrics_dict[fps_str] = metrics_dict["num_rays_per_sec"] / (num_rays)
                 metrics_dict_list.append(metrics_dict)
                 progress.advance(task)
         # average the metrics list

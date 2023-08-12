@@ -81,9 +81,8 @@ class ScaleInvariantLogLoss(nn.Module):
     def __init__(self):
         super(ScaleInvariantLogLoss, self).__init__()
 
-    def forward(self, log_predicted, log_gt, sine_weight):
+    def forward(self, log_predicted, log_gt):
         R = log_predicted - log_gt
-        R = R * sine_weight
 
         term1 = torch.mean(R**2)
         term2 = torch.pow(torch.sum(R), 2) / (log_predicted.numel()**2)

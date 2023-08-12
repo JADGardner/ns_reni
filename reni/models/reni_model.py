@@ -25,6 +25,7 @@ import functools
 import matplotlib.colors
 
 import torch
+import torch.nn as nn
 from torch.nn import Parameter
 from torchmetrics import PeakSignalNoiseRatio
 from torchmetrics.functional import structural_similarity_index_measure
@@ -69,7 +70,8 @@ class RENIModelConfig(ModelConfig):
     training_regime: Literal["autodecoder", "gan"] = "autodecoder"
     """Type of training, either as an autodecoder or generative adversarial network"""
     loss_inclusions: Dict[str, bool] = to_immutable_dict({
-        'mse_loss': True,
+        'log_mse_loss': True,
+        'hdr_mse_loss': False,
         'kld_loss': True,
         'cosine_similarity_loss': False,
         'scale_inv_loss': False,
@@ -120,12 +122,14 @@ class RENIModel(Model):
             self.discriminator = self.config.discriminator.setup()
 
         # losses
-        if self.config.loss_inclusions['mse_loss']:
-            self.mse_loss = WeightedMSE()
+        if self.config.loss_inclusions['log_mse_loss']:
+            self.log_mse_loss = nn.MSELoss()
+        if self.config.loss_inclusions['hdr_mse_loss']:
+            self.hdr_mse_loss = nn.MSELoss()
         if self.config.loss_inclusions['kld_loss']:
             self.kld_loss = KLD(Z_dims=self.field.latent_dim)
         if self.config.loss_inclusions['cosine_similarity_loss']:
-            self.cosine_similarity = WeightedCosineSimilarity()
+            self.cosine_similarity = nn.CosineSimilarity(dim=1)
         if self.config.loss_inclusions['scale_inv_loss']:
             self.scale_invariant_loss = ScaleInvariantLogLoss()
         if self.config.loss_inclusions['scale_inv_grad_loss']:
@@ -135,16 +139,25 @@ class RENIModel(Model):
         self.psnr = PeakSignalNoiseRatio()
         self.ssim = structural_similarity_index_measure
         self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
+    
+    def forward(self, ray_bundle: RayBundle) -> Dict[str, torch.Tensor]:
+        """Run forward starting with a ray bundle. This outputs different things depending on the configuration
+        of the model and whether or not the batch is provided (whether or not we are training basically)
 
-    def create_ray_samples(self, ray_bundle: RayBundle) -> RaySamples:
+        Args:
+            ray_bundle: containing all the information needed to render that ray latents included
+        """
+        return self.get_outputs(ray_bundle)
+
+    def create_ray_samples(self, origins, directions, camera_indices) -> RaySamples:
         """Create ray samples from a ray bundle"""
 
-        ray_samples = RaySamples(frustums=Frustums(origins=ray_bundle.origins,
-                                                   directions=ray_bundle.directions,
-                                                   starts=torch.zeros_like(ray_bundle.origins[:, 0]),
-                                                   ends=torch.ones_like(ray_bundle.origins[:, 0]),
-                                                   pixel_area=torch.ones_like(ray_bundle.origins[:, 0])),
-                                 camera_indices=ray_bundle.camera_indices)
+        ray_samples = RaySamples(frustums=Frustums(origins=origins,
+                                                   directions=directions,
+                                                   starts=torch.zeros_like(origins[:, 0]),
+                                                   ends=torch.ones_like(origins[:, 0]),
+                                                   pixel_area=torch.ones_like(origins[:, 0])),
+                                 camera_indices=camera_indices)
         
         return ray_samples
 
@@ -156,15 +169,17 @@ class RENIModel(Model):
     def get_outputs(self, ray_bundle: RayBundle):
         if self.field is None:
             raise ValueError("populate_fields() must be called before get_outputs")
-        
-        if self.config.loss_inclusions['scale_inv_grad_loss']:
-            # then half of the rays are just the directions rolled by 1
-            # so first we'll use first half for learning colours and then use second half for finite diff gradient matching
-            num_rays = ray_bundle.origins.shape[0]
-            ray_samples = self.create_ray_samples(ray_bundle[:num_rays//2])
-        else:
-            ray_samples = self.create_ray_samples(ray_bundle)
 
+        if len(ray_bundle.directions.shape) == 3: # [2, num_rays, 3]
+            assert self.config.loss_inclusions['scale_inv_grad_loss']
+            assert ray_bundle.directions.shape[0] == 2
+            # then we are using the finite diff gradient matching loss
+            # and the ray_bundle is of shape [2, num_rays, 3]
+            # we the second half of the rays are just the directions rolled by 1
+            ray_samples = self.create_ray_samples(ray_bundle.origins[0], ray_bundle.directions[0], ray_bundle.camera_indices[0])
+        else:
+            ray_samples = self.create_ray_samples(ray_bundle.origins, ray_bundle.directions, ray_bundle.camera_indices)
+        
         rotation=None
         latent_codes=None # if auto-decoder training regime latents are trainable params of the field
         if self.config.training_regime == 'gan':
@@ -184,7 +199,7 @@ class RENIModel(Model):
 
         # now generate rgb_rolled for finite diff gradient matching
         if self.config.loss_inclusions['scale_inv_grad_loss']:
-            ray_samples = self.create_ray_samples(ray_bundle[num_rays//2:])
+            ray_samples = self.create_ray_samples(ray_bundle.origins[1], ray_bundle.directions[1], ray_bundle.camera_indices[1])
             field_outputs = self.field.forward(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes)
             outputs['rgb_rolled'] = field_outputs[RENIFieldHeadNames.RGB]
 
@@ -192,9 +207,10 @@ class RENIModel(Model):
     
     def get_metrics_dict(self, outputs, batch) -> Dict[str, torch.Tensor]:
         
-        if self.config.loss_inclusions['scale_inv_grad_loss']:
-            num_rays = batch['image'].shape[0]
-            batch = {key: value[:num_rays//2] for key, value in batch.items()}
+        if len(batch['image'].shape) == 3: # [2, num_rays, 3]
+            assert self.config.loss_inclusions['scale_inv_grad_loss']
+            assert batch['image'].shape[0] == 2
+            batch = {key: value[0] for key, value in batch.items()} # [num_rays, ...]
         
         device = outputs["rgb"].device
         image = batch["image"].to(device)
@@ -222,40 +238,42 @@ class RENIModel(Model):
         return metrics_dict
 
 
-    def get_loss_dict(self, outputs, batch, ray_bundle, metrics_dict=None) -> Dict[str, torch.Tensor]:
+    def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
         # Scaling metrics by coefficients to create the losses.
         device = outputs["rgb"].device
 
-        if self.config.loss_inclusions['scale_inv_grad_loss']:
-            num_rays = batch['image'].shape[0]
-            batch_rolled = {key: value[num_rays//2:] for key, value in batch.items()}
-            batch = {key: value[:num_rays//2] for key, value in batch.items()}
+        if len(batch['image'].shape) == 3: # [2, num_rays, 3]
+            assert self.config.loss_inclusions['scale_inv_grad_loss']
+            assert batch['image'].shape[0] == 2
+            batch_rolled = {key: value[1] for key, value in batch.items()} # [num_rays, ...]
+            batch = {key: value[0] for key, value in batch.items()} # [num_rays, ...]
             batch['image'] = batch['image'].to(device)
             batch_rolled['image'] = batch_rolled['image'].to(device)
 
-        if self.config.include_sine_weighting:
-            sineweight = self.get_sineweighting(ray_bundle.directions)
-            sineweight = sineweight.unsqueeze(-1).expand_as(outputs["rgb"])
-        else:
-            sineweight = torch.ones_like(outputs["rgb"])
-
         loss_dict = {}
 
+        # Unlike original RENI implementation, the sineweighting 
+        # is implemented by the ray sampling so no need to modify losses
         if self.config.training_regime == 'autodecoder':
-            if self.config.loss_inclusions['mse_loss']:
-                mse_loss = self.mse_loss(outputs["rgb"], batch["image"], sineweight)
-                loss_dict['mse_loss'] = mse_loss
+            if self.config.loss_inclusions['log_mse_loss']:
+                log_mse_loss = self.log_mse_loss(outputs["rgb"], batch["image"])
+                loss_dict['log_mse_loss'] = log_mse_loss
+
+            if self.config.loss_inclusions['hdr_mse_loss']:
+                hdr_mse_loss = self.hdr_mse_loss(torch.exp(outputs["rgb"]), torch.exp(batch["image"]))
+                loss_dict['hdr_mse_loss'] = hdr_mse_loss
 
             if self.config.loss_inclusions['kld_loss']:
                 kld_loss = self.kld_loss(outputs["mu"], outputs["log_var"])
                 loss_dict['kld_loss'] = kld_loss
 
             if self.config.loss_inclusions['cosine_similarity_loss']:
-                cosine_similarity_loss = self.cosine_similarity(outputs["rgb"], batch["image"], sineweight)
+                similarity = self.cosine_similarity(outputs["rgb"], batch["image"])
+                cosine_similarity_loss = 1.0 - similarity.mean()
                 loss_dict['cosine_similarity_loss'] = cosine_similarity_loss
 
             if self.config.loss_inclusions['scale_inv_loss']:
-                scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], batch["image"], sineweight)
+                scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], batch["image"])
                 loss_dict['scale_inv_loss'] = scale_inv_loss
 
             if self.config.loss_inclusions['scale_inv_grad_loss']:
@@ -266,10 +284,24 @@ class RENIModel(Model):
         return loss_dict
 
     def get_image_metrics_and_images(
-        self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], ray_bundle: RayBundle
+        self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
     ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
-        image = batch["image"].to(outputs["rgb"].device)
-        rgb = outputs["rgb"]
+        device = outputs["rgb"].device
+
+        if len(batch['image'].shape) == 3: # [2, num_rays, 3]
+            assert self.config.loss_inclusions['scale_inv_grad_loss']
+            assert batch['image'].shape[0] == 2
+            batch_rolled = {key: value[1] for key, value in batch.items()} # [num_rays, ...]
+            batch = {key: value[0] for key, value in batch.items()} # [num_rays, ...]
+            batch['image'] = batch['image'].to(device)
+            batch_rolled['image'] = batch_rolled['image'].to(device)
+
+        image = batch["image"] # [num_rays, 3]
+        rgb = outputs["rgb"] # [num_rays, 3]
+
+        # reshape to [H, W, 3] with 64, 128
+        image = image.reshape(self.metadata['image_height'], self.metadata['image_width'], 3)
+        rgb = rgb.reshape(self.metadata['image_height'], self.metadata['image_width'], 3)
 
         if self.scale_invariant_loss:
             # estimate scale using least squares
@@ -324,20 +356,34 @@ class RENIModel(Model):
         images_dict["heatmap"] = combined_log_heatmap
         images_dict['difference'] = difference
 
+        if self.config.loss_inclusions['scale_inv_grad_loss']:
+            rgb_rolled = outputs['rgb_rolled']
+            rolled_image = batch_rolled['image']
+            rgb_rolled = rgb_rolled.reshape(self.metadata['image_height'], self.metadata['image_width'], 3)
+            rolled_image = rolled_image.reshape(self.metadata['image_height'], self.metadata['image_width'], 3)
+            finite_diff_gt = torch.abs(image - rolled_image)
+            finite_diff_pred = torch.abs(rgb - rgb_rolled)
+            finite_diff_gt = torch.exp(finite_diff_gt)
+            finite_diff_pred = torch.exp(finite_diff_pred)
+            finite_diff_gt = linear_to_sRGB(finite_diff_gt, use_quantile=True)
+            finite_diff_pred = linear_to_sRGB(finite_diff_pred, use_quantile=True)
+            combined_finite_diff = torch.cat([finite_diff_gt, finite_diff_pred], dim=1)
+            images_dict['finite_diff'] = combined_finite_diff
+
         # COMPUTE METRICS
         # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
-        image = torch.moveaxis(image, -1, 0)[None, ...]
-        rgb = torch.moveaxis(rgb, -1, 0)[None, ...]
+        image = torch.unsqueeze(image, 0).permute(0, 3, 1, 2)
+        rgb = torch.unsqueeze(rgb, 0).permute(0, 3, 1, 2)
 
-        # TODO: since we are now sampling every pixel in the image, should we use sinewighting when computing metrics?
-        # and is this valid?
-        ray_bundle.directions = ray_bundle.directions.reshape(-1, 3)
-        sineweight = self.get_sineweighting(ray_bundle.directions) # shape [H*W]
-        # reshape to [1, C, H, W]
-        H, W = image.shape[-2:]
-        sineweight = sineweight.reshape(1, 1, H, W).repeat(1, 3, 1, 1)
-        image = image * sineweight
-        rgb = rgb * sineweight
+        # # TODO: since we are now sampling every pixel in the image, should we use sinewighting when computing metrics?
+        # # and is this valid?
+        # ray_bundle.directions = ray_bundle.directions.reshape(-1, 3)
+        # sineweight = self.get_sineweighting(ray_bundle.directions) # shape [H*W]
+        # # reshape to [1, C, H, W]
+        # H, W = image.shape[-2:]
+        # sineweight = sineweight.reshape(1, 1, H, W).repeat(1, 3, 1, 1)
+        # image = image * sineweight
+        # rgb = rgb * sineweight
 
         psnr = self.psnr(image, rgb)
         ssim = self.ssim(image, rgb)

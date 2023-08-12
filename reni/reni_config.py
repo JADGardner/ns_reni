@@ -26,7 +26,7 @@ from nerfstudio.engine.schedulers import (
 RENIField = MethodSpecification(
     config=TrainerConfig(
         method_name="reni",
-        steps_per_eval_image=10,
+        steps_per_eval_image=5000,
         steps_per_eval_batch=100000,
         steps_per_save=1000,
         steps_per_eval_all_images=5000,  # set to a very large model so we don't eval with all images
@@ -70,14 +70,16 @@ RENIField = MethodSpecification(
                     "lr_end": 1e-7, 
                 },
                 loss_coefficients={
-                    "mse_loss": 10.0,
+                    "log_mse_loss": 10.0,
+                    "hdr_mse_loss": 1.0,
                     "cosine_similarity_loss": 1.0,
                     "kld_loss": 0.00001,
                     "scale_inv_loss": 1.0,
                     "scale_inv_grad_loss": 1.0,
                 },
                 loss_inclusions={
-                    "mse_loss": False,
+                    "log_mse_loss": False,
+                    "hdr_mse_loss": False,
                     "cosine_similarity_loss": True,
                     "kld_loss": True,
                     "scale_inv_loss": True,
