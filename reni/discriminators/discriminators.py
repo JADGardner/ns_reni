@@ -85,6 +85,12 @@ class VNTransformerDiscriminatorConfig(BaseDiscriminatorConfig):
     """whether to use flash attention in the attention"""
     invariance: Literal["None", "SO2", "SO3"] = "None"
     """invariance of the discriminator"""
+    return_invariant_components: bool = False
+    """whether to return the invariant components of the discriminator (for testing)"""
+    output_dim: int = 1
+    """output dimension of the discriminator"""
+    output_activation: torch.nn.Module = nn.Sigmoid()
+    """output activation of the discriminator"""
 
 
 class VNTransformerDiscriminator(nn.Module):
@@ -111,7 +117,12 @@ class VNTransformerDiscriminator(nn.Module):
             flash_attn = self.config.flash_attn
         )
 
-        self.vn_invariant = VNInvariant(self.config.hidden_dim) # make either so(0,2,3)
+        if self.config.invariance == "None":
+          self.vn_invariant = nn.Identity()
+        elif self.config.invariance == "SO2":
+          self.vn_invariant = VNInvariant(self.config.hidden_dim, dim_coor=2)
+        elif self.config.invariance == "SO3":
+          self.vn_invariant = VNInvariant(self.config.hidden_dim, dim_coor=3)
 
         self.out = nn.Sequential(
             Reduce('b n d -> b d', 'mean'),
@@ -132,11 +143,13 @@ class VNTransformerDiscriminator(nn.Module):
         x = torch.cat([directions, rgb], dim=-1) # [batch_size, num_rays, 6]
         x = self.vn_proj_in(x) # [batch_size, num_rays, hidden_dim, 6]
         x = self.encoder(x) # [batch_size, num_rays, hidden_dim, 6]
-        x = self.vn_invariant(x) # [batch_size, num_rays, 3]
-        x_invar = x
-        x = self.out(x) # [batch_size, 1]
+        x_invar = self.vn_invariant(x) # [batch_size, num_rays, 3]
+        x = self.out(x_invar) # [batch_size, 1]
 
-        return x, x_invar
+        if self.config.return_invariant_components:
+            return x, x_invar
+        else:
+            return x
         
 
     def forward(self, ray_samples: RaySamples, rgb: TensorType["batch_size", "num_rays", 3]):
