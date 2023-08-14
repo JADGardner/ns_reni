@@ -33,41 +33,10 @@ from reni.field_components.field_heads import RENIFieldHeadNames
 from reni.field_components.vn_layers import VNLinear, VNInvariant, VNTransformerEncoder, VNLayerNorm
 
 
-# Field related configs
 @dataclass
-class BaseDiscriminatorConfig(InstantiateConfig):
-    """Configuration for model instantiation"""
-
-    _target: Type = field(default_factory=lambda: BaseDiscriminator)
-    """target class to instantiate"""
-
-
-class BaseDiscriminator(nn.Module):
-    """Base class for RESGAN discriminators."""
-
-    def __init__(
-        self,
-    ) -> None:
-        super().__init__()
-
-    @abstractmethod
-    def get_outputs(self, ray_samples: RaySamples, rgb: TensorType["batch_size", "num_rays", 3]):
-        """Returns the prediction of the discriminator."""
-        raise NotImplementedError
-
-    def forward(self, ray_samples: RaySamples, rgb: TensorType["batch_size", "num_rays", 3]):
-        """Evaluates discriminator for a given image batch.
-
-        Args:
-            ray_samples: [batch_size, num_rays]
-            rgb: [batch_size, num_rays, 3]
-        """
-        return self.get_outputs(ray_samples, rgb)
-
-
 @dataclass
-class VNTransformerDiscriminatorConfig(BaseDiscriminatorConfig):
-    _target: Type = field(default_factory=lambda: VNTransformerDiscriminator)
+class VNEncoderConfig(InstantiateConfig):
+    _target: Type = field(default_factory=lambda: VNEncoder)
     """target class to instantiate"""
     hidden_dim: int = 64
     """hidden dimension of the transformer"""
@@ -93,12 +62,14 @@ class VNTransformerDiscriminatorConfig(BaseDiscriminatorConfig):
     """output activation of the discriminator"""
     fusion_strategy: Literal["early", "late"] = "early"
     """early fusion concat at the input, late fusion concat at the output"""
+    num_input_rays: int = 8096
+    """number of input rays"""
 
 
-class VNTransformerDiscriminator(nn.Module):
+class VNEncoder(nn.Module):
     def __init__(
         self,
-        config: VNTransformerDiscriminatorConfig,
+        config: VNEncoderConfig,
     ) -> None:
         super().__init__()
         self.config = config
@@ -132,9 +103,9 @@ class VNTransformerDiscriminator(nn.Module):
           self.vn_invariant = VNInvariant(self.config.hidden_dim, dim_coor=self.dim_coor)
         
         self.out = nn.Sequential(
-            Reduce('b n d -> b d', 'mean'),
-            nn.Linear(6, 1),
-            nn.Sigmoid()
+            # flatten the output
+            Rearrange('b n c -> b (n c)'),
+            nn.Linear(self.config.num_input_rays * self.dim_coor, self.config.output_dim), 
         )
 
 
@@ -152,8 +123,7 @@ class VNTransformerDiscriminator(nn.Module):
         else:
             x1 = directions
         x2 = self.vn_proj_in(x1) # [batch_size, num_rays, hidden_dim, self.dim_coor]
-        x3 = self.encoder(x2) # [batch_size, num_rays, hidden_dim, self.dim_coor]
-        x3 = self.layer_norm(x3) # [batch_size, num_rays, hidden_dim, self.dim_coor]
+        x3 = self.layer_norm(self.encoder(x2)) # [batch_size, num_rays, hidden_dim, self.dim_coor]
 
         if self.config.invariance == "SO2":
             x3_z = x3[..., 2:3, :] # [batch_size, num_rays, hidden_dim, 1]
@@ -182,4 +152,3 @@ class VNTransformerDiscriminator(nn.Module):
             rgb: [batch_size, num_rays, 3]
         """
         return self.get_outputs(ray_samples, rgb)
-    
