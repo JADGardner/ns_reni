@@ -360,7 +360,7 @@ class RENIField(BaseRENIField):
             network = nn.ModuleDict({'siren': siren})
         elif self.conditioning == "Attention":
             # transformer where K, V is from conditioning input and Q is from directional input
-            network = Decoder(direction_input_dim=directional_input_dim,
+            network = Decoder(in_dim=directional_input_dim,
                               conditioning_input_dim=conditioning_input_dim,
                               hidden_features=self.config.hidden_features,
                               num_heads=self.config.num_attention_heads,
@@ -447,7 +447,7 @@ class RENIField(BaseRENIField):
         Args:
             ray_samples: [num_rays]
             rotation: [3, 3]
-            latent_codes: [1, latent_dim, 3]
+            latent_codes: [num_rays, latent_dim, 3]
         """
         # we want to batch over camera_indices as these correspond to unique latent codes
         camera_indices = ray_samples.camera_indices.squeeze() # [num_rays]
@@ -457,7 +457,6 @@ class RENIField(BaseRENIField):
         else:
             mu = None
             log_var = None
-            latent_codes = latent_codes.repeat(ray_samples.shape[0], 1, 1) # [num_rays, latent_dim, 3]
 
         if rotation is not None:
             latent_codes = torch.matmul(latent_codes, rotation)
@@ -499,7 +498,7 @@ class RENIField(BaseRENIField):
         Args:
             ray_samples: [num_rays]
             rotation: [3, 3]
-            latent_codes: [1, latent_dim, 3]
+            latent_codes: [num_rays, latent_dim, 3]
 
         Returns:
             Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.

@@ -18,7 +18,7 @@ Base class for the graphs.
 
 from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import Literal, Type, Union, Dict
+from typing import Literal, Type, Union, Dict, Optional, List, Tuple
 
 import torch
 from torch import nn
@@ -35,8 +35,8 @@ from reni.field_components.vn_layers import VNLinear, VNInvariant, VNTransformer
 
 @dataclass
 @dataclass
-class VNEncoderConfig(InstantiateConfig):
-    _target: Type = field(default_factory=lambda: VNEncoder)
+class VariationalVNEncoderConfig(InstantiateConfig):
+    _target: Type = field(default_factory=lambda: VariationalVNEncoder)
     """target class to instantiate"""
     hidden_dim: int = 64
     """hidden dimension of the transformer"""
@@ -66,13 +66,21 @@ class VNEncoderConfig(InstantiateConfig):
     """number of input rays"""
 
 
-class VNEncoder(nn.Module):
+class VariationalVNEncoder(nn.Module):
     def __init__(
         self,
-        config: VNEncoderConfig,
+        config: VariationalVNEncoderConfig,
+        num_input_rays: Optional[int] = None,
+        output_dim: Optional[int] = None,
     ) -> None:
         super().__init__()
         self.config = config
+        self.num_input_rays = num_input_rays
+        self.output_dim = output_dim
+        if num_input_rays is None:
+            self.num_input_rays = self.config.num_input_rays
+        if output_dim is None:
+            self.output_dim = self.config.output_dim
 
         if self.config.fusion_strategy == "early":
             self.dim_coor = 6
@@ -102,11 +110,10 @@ class VNEncoder(nn.Module):
         else:
           self.vn_invariant = VNInvariant(self.config.hidden_dim, dim_coor=self.dim_coor)
         
-        self.out = nn.Sequential(
-            # flatten the output
-            Rearrange('b n c -> b (n c)'),
-            nn.Linear(self.config.num_input_rays * self.dim_coor, self.config.output_dim), 
-        )
+        self.fc1 = nn.Linear(self.num_input_rays * 6, 512)
+        # Project the intermediate representation to mean and log variance
+        self.fc_mean = nn.Linear(512, self.output_dim)
+        self.fc_logvar = nn.Linear(512, self.output_dim)
 
 
     def get_outputs(self, ray_samples: RaySamples, rgb: TensorType["batch_size", "num_rays", 3]):
@@ -126,7 +133,7 @@ class VNEncoder(nn.Module):
         x3 = self.layer_norm(self.encoder(x2)) # [batch_size, num_rays, hidden_dim, self.dim_coor]
 
         if self.config.invariance == "SO2":
-            x3_z = x3[..., 2:3, :] # [batch_size, num_rays, hidden_dim, 1]
+            x3_z = x3[..., 2:3] # [batch_size, num_rays, hidden_dim, 1]
             x4_z = Reduce('b n f c -> b n c', 'mean')(x3_z) # [batch_size, num_rays, 1]
             x4 = self.vn_invariant(x3) # [batch_size, num_rays, self.dim_coor]
             # swap z component with x4_z
@@ -136,12 +143,17 @@ class VNEncoder(nn.Module):
 
         if self.config.fusion_strategy == "late":
             x4 = torch.cat([x4, rgb], dim=-1) # [batch_size, num_rays, 6]
-        x5 = self.out(x4) # [batch_size, 1]
+        
+        x5 = Rearrange('b n c -> b (n c)')(x4)
+
+        x6 = nn.ReLU()(self.fc1(x5)) # [batch_size, 512]
+        mean = self.fc_mean(x6) # [batch_size, output_dim]
+        logvar = self.fc_logvar(x6) # [batch_size, output_dim]
 
         if self.config.return_intermediate_components:
-            return x5, (x1, x2, x3, x4)
+            return (mean, logvar), (x1, x2, x3, x4)
         else:
-            return x5
+            return mean, logvar
         
 
     def forward(self, ray_samples: RaySamples, rgb: TensorType["batch_size", "num_rays", 3]):

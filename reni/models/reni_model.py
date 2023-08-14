@@ -19,7 +19,7 @@ Implementation of vanilla nerf.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple, Type, Literal
+from typing import Any, Dict, List, Tuple, Type, Literal, Optional
 from rich.progress import BarColumn, Console, Progress, TextColumn, TimeRemainingColumn
 import functools
 import matplotlib.colors
@@ -55,6 +55,7 @@ from reni.field_components.field_heads import RENIFieldHeadNames
 from reni.model_components.losses import WeightedMSE, KLD, WeightedCosineSimilarity, ScaleInvariantLogLoss, ScaleInvariantGradientMatchingLoss
 from reni.utils.colourspace import linear_to_sRGB
 from reni.discriminators.discriminators import BaseDiscriminatorConfig
+from reni.field_components.vn_encoder import VariationalVNEncoderConfig
 
 CONSOLE = Console(width=120)
 
@@ -67,7 +68,7 @@ class RENIModelConfig(ModelConfig):
     """Field configuration"""
     include_sine_weighting: bool = True
     """Whether to include sine weighting in the loss"""
-    training_regime: Literal["autodecoder", "gan"] = "autodecoder"
+    training_regime: Literal["vae", "autodecoder", "gan"] = "autodecoder"
     """Type of training, either as an autodecoder or generative adversarial network"""
     loss_inclusions: Dict[str, bool] = to_immutable_dict({
         'log_mse_loss': True,
@@ -80,6 +81,8 @@ class RENIModelConfig(ModelConfig):
     """Which losses to include in the training"""
     discriminator: BaseDiscriminatorConfig = BaseDiscriminatorConfig()
     """Discriminator configuration"""
+    vn_encoder: VariationalVNEncoderConfig = VariationalVNEncoderConfig()
+    """Rotation-Equivariant Encoder configuration"""
     eval_optimisation_params: Dict[str, Any] = to_immutable_dict({
         "num_steps": 5000,
         "lr_start": 0.1,
@@ -121,6 +124,11 @@ class RENIModel(Model):
         if self.config.training_regime == 'gan':
             self.discriminator = self.config.discriminator.setup()
 
+        if self.config.training_regime == "vae":
+            self.rays_per_image = self.metadata['image_height'] * self.metadata['image_width']
+            self.encoder = self.config.vn_encoder.setup(num_input_rays=self.rays_per_image,
+                                                        output_dim=self.field.latent_dim * 3)
+
         # losses
         if self.config.loss_inclusions['log_mse_loss']:
             self.log_mse_loss = nn.MSELoss()
@@ -140,14 +148,14 @@ class RENIModel(Model):
         self.ssim = structural_similarity_index_measure
         self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
     
-    def forward(self, ray_bundle: RayBundle) -> Dict[str, torch.Tensor]:
+    def forward(self, ray_bundle: RayBundle, batch: Optional[dict] = None) -> Dict[str, torch.Tensor]:
         """Run forward starting with a ray bundle. This outputs different things depending on the configuration
         of the model and whether or not the batch is provided (whether or not we are training basically)
 
         Args:
             ray_bundle: containing all the information needed to render that ray latents included
         """
-        return self.get_outputs(ray_bundle)
+        return self.get_outputs(ray_bundle, batch)
     
     def forward_discriminator(self, ray_bundle: RayBundle, image_batch: torch.Tensor) -> Dict[str, torch.Tensor]:
         raise NotImplementedError
@@ -167,9 +175,11 @@ class RENIModel(Model):
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
         param_groups = {}
         param_groups["field"] = list(self.field.parameters())
+        if self.config.training_regime == 'vae':
+            param_groups["encoder"] = list(self.encoder.parameters())
         return param_groups
 
-    def get_outputs(self, ray_bundle: RayBundle):
+    def get_outputs(self, ray_bundle: RayBundle, batch: Optional[dict] = None):
         if self.field is None:
             raise ValueError("populate_fields() must be called before get_outputs")
 
@@ -188,6 +198,33 @@ class RENIModel(Model):
         if self.config.training_regime == 'gan':
             # sample from a uniform distribution
             latent_codes = torch.randn(1, self.field.latent_dim, 3).type_as(ray_bundle.origins)
+        if self.config.training_regime == "vae":
+            # encoder will expect rays batched as images not just any random set of rays with related latent codes like the 
+            # decoder can handle, so we need to reshape the rays into batches correctly
+            # currently ray_samples.frustums.directions will be [num_rays, 3] where num_rays is [num_images * rays_per_image, 3]
+            num_images = ray_samples.frustums.directions.shape[0] // (self.rays_per_image)
+            ray_samples.frustums.directions = ray_samples.frustums.directions.view(num_images, self.rays_per_image, 3)
+            rgb = batch["image"].view(num_images, self.rays_per_image, 3).to(self.device)
+            mu, log_var = self.encoder.forward(ray_samples=ray_samples, rgb=rgb) # shapes [num_images, self.field.latent_dim * 3]
+            # set ray_samples shape back for RENI which expects [num_rays, 3]
+            ray_samples.frustums.directions = ray_samples.frustums.directions.view(-1, 3)
+
+            # reparameterisation trick
+            if self.training:
+                log_var = torch.clamp(log_var, min=-3, max=3)
+                std = torch.exp(0.5 * log_var)
+                eps = torch.randn_like(std)
+                latent_codes = mu + (eps * std) # [num_images, self.field.latent_dim * 3]
+            else:
+                latent_codes = mu # [num_images, self.field.latent_dim * 3]
+            
+            # now reshape to match RENI latent code [num_rays, latent_dim, 3]
+            latent_codes = latent_codes.view(num_images, self.field.latent_dim, 3).unsqueeze(1) # [num_images, 1, latent_dim, 3]
+            latent_codes = latent_codes.expand(-1, self.rays_per_image, -1, -1)
+            latent_codes = latent_codes.contiguous().view(num_images * self.rays_per_image, self.field.latent_dim, 3)
+
+            mu = mu.view(-1, self.field.latent_dim, 3)
+            log_var = log_var.view(-1, self.field.latent_dim, 3)
         
         field_outputs = self.field.forward(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes)
 
@@ -195,10 +232,14 @@ class RENIModel(Model):
             "rgb": field_outputs[RENIFieldHeadNames.RGB],
         }
 
-        if RENIFieldHeadNames.MU in field_outputs:
-            outputs["mu"] = field_outputs[RENIFieldHeadNames.MU]
-        if RENIFieldHeadNames.LOG_VAR in field_outputs:
-            outputs["log_var"] = field_outputs[RENIFieldHeadNames.LOG_VAR]
+        if self.config.training_regime == 'vae':
+            outputs["mu"] = mu
+            outputs["log_var"] = log_var
+        else:
+            if RENIFieldHeadNames.MU in field_outputs:
+                outputs["mu"] = field_outputs[RENIFieldHeadNames.MU]
+            if RENIFieldHeadNames.LOG_VAR in field_outputs:
+                outputs["log_var"] = field_outputs[RENIFieldHeadNames.LOG_VAR]
 
         # now generate rgb_rolled for finite diff gradient matching
         if self.config.loss_inclusions['scale_inv_grad_loss']:
@@ -258,7 +299,7 @@ class RENIModel(Model):
 
         # Unlike original RENI implementation, the sineweighting 
         # is implemented by the ray sampling so no need to modify losses
-        if self.config.training_regime == 'autodecoder':
+        if self.config.training_regime == 'autodecoder' or self.config.training_regime == 'vae':
             if self.config.loss_inclusions['log_mse_loss']:
                 log_mse_loss = self.log_mse_loss(outputs["rgb"], batch["image"])
                 loss_dict['log_mse_loss'] = log_mse_loss
@@ -391,15 +432,15 @@ class RENIModel(Model):
         psnr = self.psnr(preds=pred_image, target=gt_image)
         ssim = self.ssim(preds=pred_image, target=gt_image)
         # for lpips we need to convert to 0 to 1 using image.min() and image.max()
-        gt_image = (gt_image - gt_image.min()) / (gt_image.max() - gt_image.min())
-        pred_image = (pred_image - pred_image.min()) / (pred_image.max() - pred_image.min())
-        lpips = self.lpips(pred_image, gt_image)
+        # gt_image = (gt_image - gt_image.min()) / (gt_image.max() - gt_image.min())
+        # pred_image = (pred_image - pred_image.min()) / (pred_image.max() - pred_image.min())
+        # lpips = self.lpips(pred_image, gt_image)
         assert isinstance(ssim, torch.Tensor)
 
         metrics_dict = {
             "psnr": float(psnr),
             "ssim": float(ssim),
-            "lpips": float(lpips),
+            # "lpips": float(lpips),
         }
 
         return metrics_dict, images_dict

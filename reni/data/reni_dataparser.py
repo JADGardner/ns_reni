@@ -50,6 +50,10 @@ class RENIDataParserConfig(DataParserConfig):
     """Whether to augment with mirror images."""
     train_subset_size: Union[int, None] = None
     """Size of training subset."""
+    val_subset_size: Union[int, None] = None
+    """Size of validation subset."""
+    use_validation_as_train: bool = False
+    """Whether to use validation set as training set."""
     min_max_normalize: Union[Literal['min_max', 'quantile'], Tuple[float, float], None] = 'min_max'
     """Whether to min-max normalize the images."""
 
@@ -65,6 +69,11 @@ class RENIDataParser(DataParser):
         self.data: Path = config.data
 
     def _generate_dataparser_outputs(self, split="train"):
+        if self.config.use_validation_as_train:
+            split = "val"
+        else:
+            split = split
+
         path = self.data / split
 
         # if it doesn't exist, download the data
@@ -80,6 +89,9 @@ class RENIDataParser(DataParser):
 
         if self.config.train_subset_size and split == "train":
             image_filenames = image_filenames[: self.config.train_subset_size]
+        
+        if self.config.val_subset_size and split == "val":
+            image_filenames = image_filenames[: self.config.val_subset_size]
 
         img_0 = imageio.v2.imread(image_filenames[0])
         image_height, image_width = img_0.shape[:2]

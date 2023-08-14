@@ -13,8 +13,9 @@ from reni.illumination_fields.sh_illumination_field import SphericalHarmonicIllu
 from reni.illumination_fields.environment_map_field import EnvironmentMapFieldConfig
 from reni.engine.resgan_trainer import RESGANTrainerConfig
 from reni.pipelines.resgan_pipeline import RESGANPipelineConfig
+from reni.field_components.vn_encoder import VariationalVNEncoderConfig
 
-from nerfstudio.configs.base_config import ViewerConfig
+from nerfstudio.configs.base_config import ViewerConfig, MachineConfig
 from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.plugins.types import MethodSpecification
 
@@ -26,6 +27,8 @@ from nerfstudio.engine.schedulers import (
 RENIField = MethodSpecification(
     config=TrainerConfig(
         method_name="reni",
+        experiment_name="reni",
+        machine=MachineConfig(num_gpus=1),
         steps_per_eval_image=5000,
         steps_per_eval_batch=100000,
         steps_per_save=1000,
@@ -38,13 +41,15 @@ RENIField = MethodSpecification(
                     data=Path("data/RENI_HDR_AUG"),
                     download_data=False,
                     train_subset_size=None,
+                    val_subset_size=None,
                     convert_to_ldr=False,
                     convert_to_log_domain=True,
                     min_max_normalize=None, # in e^min = 0.0111, e^max = 8103.08
+                    use_validation_as_train=False,
                 ),
                 train_num_rays_per_batch=8192,
-                full_image_per_batch=False,
-                number_of_images_per_batch=3,
+                full_image_per_batch=True,
+                number_of_images_per_batch=1,
             ),
             model=RENIModelConfig(
                 field=RENIFieldConfig(
@@ -63,6 +68,11 @@ RENIField = MethodSpecification(
                     num_attention_layers=6,
                     output_activation="None",
                     last_layer_linear=True,
+                ),
+                vn_encoder=VariationalVNEncoderConfig(
+                    l2_dist_attn=True,
+                    invariance="SO2",
+                    fusion_strategy='late',
                 ),
                 eval_optimisation_params={
                     "num_steps": 2500,
@@ -83,7 +93,7 @@ RENIField = MethodSpecification(
                     "cosine_similarity_loss": True,
                     "kld_loss": True,
                     "scale_inv_loss": True,
-                    "scale_inv_grad_loss": True,
+                    "scale_inv_grad_loss": False,
                 },
                 include_sine_weighting=False, # This is already done by the equirectangular pixel sampler
                 training_regime="autodecoder",
@@ -92,6 +102,10 @@ RENIField = MethodSpecification(
         optimizers={
             "field": {
                 "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15), # 1e-3 for Attention, 1e-5 for Other
+                "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
+            },
+            "encoder": {
+                "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
                 "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
             },
         },

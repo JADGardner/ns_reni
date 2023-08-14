@@ -138,7 +138,7 @@ class RENIPipeline(VanillaPipeline):
             step: current iteration step to update sampler if using DDP (distributed)
         """
         ray_bundle, batch = self.datamanager.next_train(step)
-        model_outputs = self._model(ray_bundle)  # train distributed data parallel model if world_size > 1
+        model_outputs = self._model(ray_bundle, batch)  # train distributed data parallel model if world_size > 1
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
 
@@ -154,10 +154,11 @@ class RENIPipeline(VanillaPipeline):
         """
         self.eval()
         if self.last_step_of_eval_optimisation != step:
-            self._model.fit_eval_latents(self.datamanager)
+            if self.model.config.training_regime != "vae":
+                self.model.fit_eval_latents(self.datamanager)
             self.last_step_of_eval_optimisation = step
         ray_bundle, batch = self.datamanager.next_eval(step)
-        model_outputs = self.model(ray_bundle)
+        model_outputs = self.model(ray_bundle, batch)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
         self.train()
@@ -173,10 +174,11 @@ class RENIPipeline(VanillaPipeline):
         """
         self.eval()
         if self.last_step_of_eval_optimisation != step:
-            self._model.fit_eval_latents(self.datamanager)
+            if self.model.config.training_regime != "vae":
+                self.model.fit_eval_latents(self.datamanager)
             self.last_step_of_eval_optimisation = step
         image_idx, ray_bundle, batch = self.datamanager.next_eval_image(step)
-        outputs = self.model(ray_bundle)  
+        outputs = self.model(ray_bundle, batch)  
         metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
         assert "image_idx" not in metrics_dict
         metrics_dict["image_idx"] = image_idx
@@ -194,7 +196,8 @@ class RENIPipeline(VanillaPipeline):
         """
         self.eval()
         if self.last_step_of_eval_optimisation != step:
-            self._model.fit_eval_latents(self.datamanager)
+            if self.model.config.training_regime != "vae":
+                self.model.fit_eval_latents(self.datamanager)
             self.last_step_of_eval_optimisation = step
         metrics_dict_list = []
         num_images = len(self.datamanager.fixed_indices_eval_dataloader)
@@ -213,7 +216,7 @@ class RENIPipeline(VanillaPipeline):
                 num_rays = ray_bundle.directions.shape[-2]
                 # time this the following line
                 inner_start = time()
-                outputs = self.model(ray_bundle)    
+                outputs = self.model(ray_bundle, batch)    
                 metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch)
                 assert "num_rays_per_sec" not in metrics_dict
                 metrics_dict["num_rays_per_sec"] = num_rays / (time() - inner_start)

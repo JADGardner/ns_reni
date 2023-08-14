@@ -148,9 +148,9 @@ class FiLMSiren(nn.Module):
         output = self.out_activation(x) if self.out_activation is not None else x
         return output
 
-    def forward(self, sample_coords, conditioning_input):
+    def forward(self, x, conditioning_input):
         """Forward pass."""
         frequencies, phase_shifts = self.mapping_network(conditioning_input)
         return self.forward_with_frequencies_phase_shifts(
-            sample_coords, frequencies, phase_shifts
+            x, frequencies, phase_shifts
         )
