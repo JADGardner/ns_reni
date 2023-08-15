@@ -137,6 +137,9 @@ class RENIDataManager(VanillaDataManager):
         self.image_height = self.train_dataset.metadata['image_height']
         self.image_width = self.train_dataset.metadata['image_width']
 
+        # add batch_size to metadata
+        self.train_dataset.metadata['batch_size'] = self.config.number_of_images_per_batch
+
         if self.train_dataparser_outputs is not None:
             cameras = self.train_dataparser_outputs.cameras
             if len(cameras) > 1:

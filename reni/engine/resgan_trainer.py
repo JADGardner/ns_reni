@@ -40,7 +40,6 @@ from nerfstudio.engine.callbacks import (
     TrainingCallbackAttributes,
     TrainingCallbackLocation,
 )
-from nerfstudio.engine.optimizers import Optimizers
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline
 from nerfstudio.utils import profiler, writer
 from nerfstudio.utils.decorators import (
@@ -53,6 +52,8 @@ from nerfstudio.utils.rich_utils import CONSOLE
 from nerfstudio.utils.writer import EventName, TimeWriter
 from nerfstudio.viewer.server.viewer_state import ViewerState
 from nerfstudio.engine.trainer import TrainerConfig, Trainer
+
+from reni.engine.resgan_optimizer import RESGANOptimizers as Optimizers
 
 TRAIN_INTERATION_OUTPUT = Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]
 TORCH_DEVICE = str
@@ -181,27 +182,34 @@ class RESGANTrainer(Trainer):
         self.optimizers.zero_grad_all()
         cpu_or_cuda_str: str = self.device.split(":")[0]
 
-        # with torch.autocast(device_type=cpu_or_cuda_str, enabled=self.mixed_precision):
-        #     _, loss_dict, metrics_dict = self.pipeline.get_train_loss_dict(step=step)
-        #     loss = functools.reduce(torch.add, loss_dict.values())
-        # self.grad_scaler.scale(loss).backward()  # type: ignore
-        # self.optimizers.optimizer_scaler_step_all(self.grad_scaler)
-
         # TODO some form of ratio of steps
         with torch.autocast(device_type=cpu_or_cuda_str, enabled=self.mixed_precision):
-            _, loss_dict, metrics_dict = self.pipeline.get_train_loss_discriminator(step=step)
+            _, loss_dict = self.pipeline.get_train_loss_discriminator(step=step)
             loss = functools.reduce(torch.add, loss_dict.values())
 
         self.grad_scaler.scale(loss).backward()  # type: ignore
-        self.optimizers.optimizer_step(param_group_name="discriminator") # TODO use grad_scaler
+        self.optimizers.optimizer_step(param_group_name="discriminator", grad_scaler=self.grad_scaler) # TODO use grad_scaler
+
+        scale = self.grad_scaler.get_scale()
+        self.grad_scaler.update()
+        # If the gradient scaler is decreased, no optimization step is performed so we should not step the scheduler.
+        if scale <= self.grad_scaler.get_scale():
+            self.optimizers.scheduler_step(param_group_name="discriminator")
 
         with torch.autocast(device_type=cpu_or_cuda_str, enabled=self.mixed_precision):
-            _, loss_dict, metrics_dict = self.pipeline.get_train_loss_generator(step=step)
+            _, loss_dict = self.pipeline.get_train_loss_generator(step=step)
             loss = functools.reduce(torch.add, loss_dict.values())
             
         self.grad_scaler.scale(loss).backward()  # type: ignore
-        self.optimizers.optimizer_step(param_group_name="generator") # TODO use grad_scaler
+        self.optimizers.optimizer_step(param_group_name="field", grad_scaler=self.grad_scaler) # TODO use grad_scaler
 
+        scale = self.grad_scaler.get_scale()
+        self.grad_scaler.update()
+        # If the gradient scaler is decreased, no optimization step is performed so we should not step the scheduler.
+        if scale <= self.grad_scaler.get_scale():
+            self.optimizers.scheduler_step(param_group_name="field")
+
+        metrics_dict = {}
         if self.config.log_gradients:
             total_grad = 0
             for tag, value in self.pipeline.model.named_parameters():
@@ -212,12 +220,6 @@ class RESGANTrainer(Trainer):
                     total_grad += grad
 
             metrics_dict["Gradients/Total"] = cast(torch.Tensor, total_grad)
-
-        scale = self.grad_scaler.get_scale()
-        self.grad_scaler.update()
-        # If the gradient scaler is decreased, no optimization step is performed so we should not step the scheduler.
-        if scale <= self.grad_scaler.get_scale():
-            self.optimizers.scheduler_step_all(step)
 
         # Merging loss and metrics dict into a single output.
         return loss, loss_dict, metrics_dict

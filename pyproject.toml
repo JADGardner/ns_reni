@@ -12,6 +12,7 @@ include = ["reni*"]
 
 [project.entry-points.'nerfstudio.method_configs']
 reni = 'reni.reni_config:RENIField'
+resgan = 'reni.reni_config:RESGANField'
 sh-illumination-field = 'reni.reni_config:SHField'
 sg-illumination-field = 'reni.reni_config:SGField'
 envrionment-map-field = 'reni.reni_config:EnvMapField'

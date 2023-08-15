@@ -63,6 +63,73 @@ class BaseDiscriminator(nn.Module):
             rgb: [batch_size, num_rays, 3]
         """
         return self.get_outputs(ray_samples, rgb)
+    
+
+@dataclass
+class CNNDiscriminatorConfig(BaseDiscriminatorConfig):
+    """Configuration for CNNDiscriminator instantiation"""
+    
+    _target: Type = field(default_factory=lambda: CNNDiscriminator)
+    """target class to instantiate"""
+    num_layers: int = 5
+    """number of layers in the CNN"""
+    initial_filters: int = 64
+    """number of initial filters in the CNN"""
+
+class CNNDiscriminator(BaseDiscriminator):
+    """CNN based discriminator for RESGAN."""
+
+    def __init__(
+        self,
+        config: CNNDiscriminatorConfig,
+        height: int,
+        width: int,
+    ) -> None:
+        super().__init__()
+        self.config = config
+        self.height = height
+        self.width = width
+      
+        layers = []
+        in_channels = 3
+        out_channels = self.config.initial_filters
+        
+        # Dynamically build CNN based on num_layers
+        for _ in range(self.config.num_layers):
+            layers.extend([
+                nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1),
+                nn.BatchNorm2d(out_channels),
+                nn.LeakyReLU(0.2, inplace=True)
+            ])
+            in_channels = out_channels
+            out_channels *= 2  # double the channels for the next layer
+        
+        self.conv_layers = nn.Sequential(*layers)
+
+        # Pass a dummy input through the conv_layers to determine the output shape
+        dummy_input = torch.randn(1, 3, self.height, self.width)
+        linear_input_shape = self.conv_layers(dummy_input).numel() 
+        
+        # Now add Flatten and Linear layers to main model
+        self.main = nn.Sequential(
+            self.conv_layers,
+            nn.Flatten(),
+            nn.Linear(linear_input_shape, 1),
+            nn.Sigmoid()
+        )
+
+    def get_outputs(self, ray_samples: RaySamples, rgb: TensorType["batch_size", "num_rays", 3]):
+        """Returns the prediction of the CNNDiscriminator."""
+        
+        # Reshape the input to [batch_size, 3, height, width]
+        rgb = rgb.permute(0, 2, 1).reshape(-1, 3, self.height, self.width)
+               
+        return self.main(rgb).squeeze(1) # [batch_size]
+
+    def forward(self, ray_samples: RaySamples, rgb: TensorType["batch_size", "num_rays", 3]):
+        """Evaluates CNNDiscriminator for a given image batch."""
+        
+        return self.get_outputs(ray_samples, rgb)
 
 
 @dataclass

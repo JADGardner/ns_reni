@@ -77,7 +77,8 @@ class RENIModelConfig(ModelConfig):
         'kld_loss': True,
         'cosine_similarity_loss': False,
         'scale_inv_loss': False,
-        'scale_inv_grad_loss': False
+        'scale_inv_grad_loss': False,
+        'bce_loss': False,
     })
     """Which losses to include in the training"""
     discriminator: BaseDiscriminatorConfig = BaseDiscriminatorConfig()
@@ -123,9 +124,16 @@ class RENIModel(Model):
         self.field = self.config.field.setup(num_train_data=self.num_train_data, num_eval_data=self.num_eval_data, normalisations=normalisations)
 
         if self.config.training_regime == 'gan':
-            self.discriminator = self.config.discriminator.setup()
+            self.discriminator = self.config.discriminator.setup(height=self.metadata['image_height'],
+                                                                 width=self.metadata['image_width'])
+            self.batch_size = self.metadata['batch_size']
+            self.rays_per_image = self.metadata['image_height'] * self.metadata['image_width']
+            self.real_label = 1
+            self.fake_label = 0
+            self.fixed_noise = torch.randn((1, self.field.latent_dim, 3))
 
         if self.config.training_regime == "vae":
+            self.batch_size = self.metadata['batch_size']
             self.rays_per_image = self.metadata['image_height'] * self.metadata['image_width']
             self.encoder = self.config.encoder.setup(num_input_rays=self.rays_per_image,
                                                         output_dim=self.field.latent_dim * 3)
@@ -145,6 +153,9 @@ class RENIModel(Model):
             self.scale_invariant_loss = ScaleInvariantLogLoss()
         if self.config.loss_inclusions['scale_inv_grad_loss']:
             self.scale_invariant_grad_loss = ScaleInvariantGradientMatchingLoss()
+        if self.config.loss_inclusions['bce_loss']:
+            self.bce_loss = nn.BCELoss()
+            
 
         # metrics
         self.psnr = PeakSignalNoiseRatio()
@@ -161,7 +172,23 @@ class RENIModel(Model):
         return self.get_outputs(ray_bundle, batch)
     
     def forward_discriminator(self, ray_bundle: RayBundle, image_batch: torch.Tensor) -> Dict[str, torch.Tensor]:
-        raise NotImplementedError
+        """Foward on the discriminator"""
+        if len(ray_bundle.directions.shape) == 3: # [2, num_rays, 3]
+            assert self.config.loss_inclusions['scale_inv_grad_loss']
+            assert ray_bundle.directions.shape[0] == 2
+            # then we are using the finite diff gradient matching loss
+            # and the ray_bundle is of shape [2, num_rays, 3]
+            # we the second half of the rays are just the directions rolled by 1
+            ray_samples = self.create_ray_samples(ray_bundle.origins[0], ray_bundle.directions[0], ray_bundle.camera_indices[0])
+            images = image_batch[0].reshape(self.batch_size, -1, 3) # [batch_size, num_rays, 3]
+            images_rolled = image_batch[1].reshape(self.batch_size, -1, 3) # [batch_size, num_rays, 3]
+            image_batch = images_rolled - images # finite difference for scale invariant gan input
+        else:
+            ray_samples = self.create_ray_samples(ray_bundle.origins, ray_bundle.directions, ray_bundle.camera_indices)
+            image_batch = image_batch.reshape(self.batch_size, -1, 3) # [batch_size, num_rays, 3]
+
+        image_batch = image_batch.to(self.device)
+        return {'predictions': self.discriminator(ray_samples, image_batch)}
 
     def create_ray_samples(self, origins, directions, camera_indices) -> RaySamples:
         """Create ray samples from a ray bundle"""
@@ -180,6 +207,8 @@ class RENIModel(Model):
         param_groups["field"] = list(self.field.parameters())
         if self.config.training_regime == 'vae':
             param_groups["encoder"] = list(self.encoder.parameters())
+        if self.config.training_regime == 'gan':
+            param_groups["discriminator"] = list(self.discriminator.parameters())
         return param_groups
 
     def get_outputs(self, ray_bundle: RayBundle, batch: Optional[dict] = None):
@@ -200,21 +229,21 @@ class RENIModel(Model):
         latent_codes=None # if auto-decoder training regime latents are trainable params of the field
         if self.config.training_regime == 'gan':
             # sample from a uniform distribution
-            latent_codes = torch.randn(1, self.field.latent_dim, 3).type_as(ray_bundle.origins)
+            latent_codes = torch.randn(self.batch_size, self.field.latent_dim, 3).type_as(ray_bundle.origins)
+            latent_codes = latent_codes.unsqueeze(1).expand(-1, self.rays_per_image, -1, -1).reshape(-1, self.field.latent_dim, 3) # [num_rays, latent_dim, 3]
         if self.config.training_regime == "vae":
             # encoder will expect rays batched as images not just any random set of rays with related latent codes like the 
             # decoder can handle, so we need to reshape the rays into batches correctly
             # currently ray_samples.frustums.directions will be [num_rays, 3] where num_rays is [num_images * rays_per_image, 3]
-            num_images = ray_samples.frustums.directions.shape[0] // (self.rays_per_image)
-            ray_samples.frustums.directions = ray_samples.frustums.directions.view(num_images, self.rays_per_image, 3)
-            rgb = batch["image"].view(num_images, self.rays_per_image, 3).to(self.device)
+            ray_samples.frustums.directions = ray_samples.frustums.directions.view(self.batch_size, self.rays_per_image, 3)
+            rgb = batch["image"].view(self.batch_size, self.rays_per_image, 3).to(self.device)
             mu, log_var = self.encoder.forward(ray_samples=ray_samples, rgb=rgb) # shapes [num_images, self.field.latent_dim * 3]
             # set ray_samples shape back for RENI which expects [num_rays, 3]
             ray_samples.frustums.directions = ray_samples.frustums.directions.view(-1, 3)
 
             # reparameterisation trick
             if self.training:
-                log_var = torch.clamp(log_var, min=-3, max=3)
+                log_var = torch.clamp(log_var, min=-3, max=3) # TODO make this a config option anc check if this even makes sense
                 std = torch.exp(0.5 * log_var)
                 eps = torch.randn_like(std)
                 latent_codes = mu + (eps * std) # [num_images, self.field.latent_dim * 3]
@@ -222,9 +251,9 @@ class RENIModel(Model):
                 latent_codes = mu # [num_images, self.field.latent_dim * 3]
             
             # now reshape to match RENI latent code [num_rays, latent_dim, 3]
-            latent_codes = latent_codes.view(num_images, self.field.latent_dim, 3).unsqueeze(1) # [num_images, 1, latent_dim, 3]
+            latent_codes = latent_codes.view(self.batch_size, self.field.latent_dim, 3).unsqueeze(1) # [num_images, 1, latent_dim, 3]
             latent_codes = latent_codes.expand(-1, self.rays_per_image, -1, -1)
-            latent_codes = latent_codes.contiguous().view(num_images * self.rays_per_image, self.field.latent_dim, 3)
+            latent_codes = latent_codes.contiguous().view(self.batch_size * self.rays_per_image, self.field.latent_dim, 3)
 
             mu = mu.view(-1, self.field.latent_dim, 3)
             log_var = log_var.view(-1, self.field.latent_dim, 3)
@@ -284,6 +313,18 @@ class RENIModel(Model):
         metrics_dict = {"psnr": psnr}
         return metrics_dict
 
+    def get_gan_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
+        device = outputs["predictions"].device
+        batch['gt_labels'] = batch['gt_labels'].to(device)
+
+        loss_dict = {}
+
+        if self.config.loss_inclusions['bce_loss']:
+            bce_loss = self.bce_loss(outputs["predictions"], batch["gt_labels"])
+            loss_dict['bce_loss'] = bce_loss
+
+        loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
+        return loss_dict
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
         # Scaling metrics by coefficients to create the losses.
@@ -302,35 +343,34 @@ class RENIModel(Model):
 
         # Unlike original RENI implementation, the sineweighting 
         # is implemented by the ray sampling so no need to modify losses
-        if self.config.training_regime == 'autodecoder' or self.config.training_regime == 'vae':
-            if self.config.loss_inclusions['log_mse_loss']:
-                log_mse_loss = self.log_mse_loss(outputs["rgb"], batch["image"])
-                loss_dict['log_mse_loss'] = log_mse_loss
+        if self.config.loss_inclusions['log_mse_loss']:
+            log_mse_loss = self.log_mse_loss(outputs["rgb"], batch["image"])
+            loss_dict['log_mse_loss'] = log_mse_loss
 
-            if self.config.loss_inclusions['hdr_mse_loss']:
-                hdr_mse_loss = self.hdr_mse_loss(torch.exp(outputs["rgb"]), torch.exp(batch["image"]))
-                loss_dict['hdr_mse_loss'] = hdr_mse_loss
+        if self.config.loss_inclusions['hdr_mse_loss']:
+            hdr_mse_loss = self.hdr_mse_loss(torch.exp(outputs["rgb"]), torch.exp(batch["image"]))
+            loss_dict['hdr_mse_loss'] = hdr_mse_loss
 
-            if self.config.loss_inclusions['ldr_mse_loss']:
-                ldr_mse_loss = self.ldr_mse_loss(outputs["rgb"], batch["image"])
-                loss_dict['ldr_mse_loss'] = ldr_mse_loss
+        if self.config.loss_inclusions['ldr_mse_loss']:
+            ldr_mse_loss = self.ldr_mse_loss(outputs["rgb"], batch["image"])
+            loss_dict['ldr_mse_loss'] = ldr_mse_loss
 
-            if self.config.loss_inclusions['kld_loss']:
-                kld_loss = self.kld_loss(outputs["mu"], outputs["log_var"])
-                loss_dict['kld_loss'] = kld_loss
+        if self.config.loss_inclusions['kld_loss']:
+            kld_loss = self.kld_loss(outputs["mu"], outputs["log_var"])
+            loss_dict['kld_loss'] = kld_loss
 
-            if self.config.loss_inclusions['cosine_similarity_loss']:
-                similarity = self.cosine_similarity(outputs["rgb"], batch["image"])
-                cosine_similarity_loss = 1.0 - similarity.mean()
-                loss_dict['cosine_similarity_loss'] = cosine_similarity_loss
+        if self.config.loss_inclusions['cosine_similarity_loss']:
+            similarity = self.cosine_similarity(outputs["rgb"], batch["image"])
+            cosine_similarity_loss = 1.0 - similarity.mean()
+            loss_dict['cosine_similarity_loss'] = cosine_similarity_loss
 
-            if self.config.loss_inclusions['scale_inv_loss']:
-                scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], batch["image"])
-                loss_dict['scale_inv_loss'] = scale_inv_loss
+        if self.config.loss_inclusions['scale_inv_loss']:
+            scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], batch["image"])
+            loss_dict['scale_inv_loss'] = scale_inv_loss
 
-            if self.config.loss_inclusions['scale_inv_grad_loss']:
-                scale_inv_grad_loss = self.scale_invariant_grad_loss(outputs['rgb'], outputs["rgb_rolled"], batch['image'], batch_rolled["image"])
-                loss_dict['scale_inv_grad_loss'] = scale_inv_grad_loss
+        if self.config.loss_inclusions['scale_inv_grad_loss']:
+            scale_inv_grad_loss = self.scale_invariant_grad_loss(outputs['rgb'], outputs["rgb_rolled"], batch['image'], batch_rolled["image"])
+            loss_dict['scale_inv_grad_loss'] = scale_inv_grad_loss
 
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
         return loss_dict

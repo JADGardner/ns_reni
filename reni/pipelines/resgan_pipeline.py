@@ -63,8 +63,7 @@ class RESGANPipelineConfig(VanillaPipelineConfig):
     """Number of epochs to optimise latent during eval"""
     eval_latent_optimisation_lr: float = 0.1
     """Learning rate for latent optimisation during eval"""
-    discriminator: BaseDiscriminatorConfig = BaseDiscriminatorConfig()
-    """specifies the discriminator config"""
+
 
 
 class RESGANPipeline(VanillaPipeline):
@@ -107,6 +106,7 @@ class RESGANPipeline(VanillaPipeline):
 
         num_train_data = self.datamanager.num_train
         num_eval_data = self.datamanager.num_eval
+        self.batch_size = self.datamanager.config.number_of_images_per_batch
 
         self._model = config.model.setup(
             scene_box=None,
@@ -116,8 +116,6 @@ class RESGANPipeline(VanillaPipeline):
         )
         self.model.to(device)
 
-        self.discriminator = config.discriminator.setup()
-
         self.world_size = world_size
         
         if world_size > 1:
@@ -126,49 +124,35 @@ class RESGANPipeline(VanillaPipeline):
 
     def forward(self):
         """Blank forward method
-
         This is an nn.Module, and so requires a forward() method normally, although in our case
         we do not need a forward() method"""
         raise NotImplementedError
 
     @profiler.time_function
     def get_train_loss_discriminator(self, step: int):
-        raise NotImplementedError
-
-        return model_outputs, loss_dict, metrics_dict
+        # Train with all real batch
+        # if we are using the scale_inv_loss we are using finite diff so batch will be [2, B*N, 3] otherwise [B*N, 3] This is handled in the model
+        ray_bundle, batch = self.datamanager.next_train(step)
+        label = torch.full((self.batch_size,), self.model.real_label).type_as(batch['image'])
+        discriminator_outputs = self._model.forward_discriminator(ray_bundle, batch['image']) # use _model for data parallel
+        loss_dict_real = self.model.get_gan_loss_dict(discriminator_outputs, {'gt_labels': label})
+        # now train with all fake batch
+        model_outputs = self._model(ray_bundle, batch) # use _model for data parallel
+        label.fill_(self.model.fake_label)
+        discriminator_outputs = self._model.forward_discriminator(ray_bundle, model_outputs['rgb'])
+        loss_dict_fake = self.model.get_gan_loss_dict(discriminator_outputs, {'gt_labels': label})
+        loss_dict = {key: loss_dict_real[key] + loss_dict_fake[key] for key in loss_dict_real}
+        return model_outputs, loss_dict
     
     @profiler.time_function
     def get_train_loss_generator(self, step: int):
-        raise NotImplementedError
-        return model_outputs, loss_dict, metrics_dict
-
-    @profiler.time_function
-    def get_train_loss_dict(self, step: int):
-        """This function gets your training loss dict. This will be responsible for
-        getting the next batch of data from the DataManager and interfacing with the
-        Model class, feeding the data to the model's forward function.
-
-        Args:
-            step: current iteration step to update sampler if using DDP (distributed)
-        """
         ray_bundle, batch = self.datamanager.next_train(step)
-        model_outputs = self._model(ray_bundle)  # train distributed data parallel model if world_size > 1
-        metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
-
-        if self.config.datamanager.camera_optimizer is not None:
-            camera_opt_param_group = self.config.datamanager.camera_optimizer.param_group
-            if camera_opt_param_group in self.datamanager.get_param_groups():
-                # Report the camera optimization metrics
-                metrics_dict["camera_opt_translation"] = (
-                    self.datamanager.get_param_groups()[camera_opt_param_group][0].data[:, :3].norm()
-                )
-                metrics_dict["camera_opt_rotation"] = (
-                    self.datamanager.get_param_groups()[camera_opt_param_group][0].data[:, 3:].norm()
-                )
-
-        loss_dict = self.model.get_loss_dict(model_outputs, batch, ray_bundle, metrics_dict)
-
-        return model_outputs, loss_dict, metrics_dict
+        # real label as we want to fool the discriminator
+        label = torch.full((self.batch_size,), self.model.real_label).type_as(batch['image'])
+        model_outputs = self._model(ray_bundle, batch) # use _model for data parallel
+        discriminator_outputs = self._model.forward_discriminator(ray_bundle, model_outputs['rgb'])
+        loss_dict = self.model.get_gan_loss_dict(discriminator_outputs, {'gt_labels': label})
+        return model_outputs, loss_dict
     
     @profiler.time_function
     def get_eval_loss_dict(self, step: int):
@@ -179,9 +163,12 @@ class RESGANPipeline(VanillaPipeline):
             step: current iteration step
         """
         self.eval()
+        if self.last_step_of_eval_optimisation != step:
+            if self.model.config.training_regime != "vae":
+                self.model.fit_eval_latents(self.datamanager)
+            self.last_step_of_eval_optimisation = step
         ray_bundle, batch = self.datamanager.next_eval(step)
-        self._model.fit_eval_latents(ray_bundle, batch)
-        model_outputs = self.model(ray_bundle)
+        model_outputs = self.model(ray_bundle, batch)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
         self.train()
@@ -196,14 +183,17 @@ class RESGANPipeline(VanillaPipeline):
             step: current iteration step
         """
         self.eval()
-        image_idx, camera_ray_bundle, batch = self.datamanager.next_eval_image(step)
-        self.model.fit_eval_latents(camera_ray_bundle, batch)
-        outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
+        if self.last_step_of_eval_optimisation != step:
+            if self.model.config.training_regime != "vae":
+                self.model.fit_eval_latents(self.datamanager)
+            self.last_step_of_eval_optimisation = step
+        image_idx, ray_bundle, batch = self.datamanager.next_eval_image(step)
+        outputs = self.model(ray_bundle, batch)  
         metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
         assert "image_idx" not in metrics_dict
         metrics_dict["image_idx"] = image_idx
         assert "num_rays" not in metrics_dict
-        metrics_dict["num_rays"] = len(camera_ray_bundle)
+        metrics_dict["num_rays"] = ray_bundle.directions.shape[-2] # as directions is either [2, N, 3] or [N, 3]
         self.train()
         return metrics_dict, images_dict
 
@@ -215,6 +205,10 @@ class RESGANPipeline(VanillaPipeline):
             metrics_dict: dictionary of metrics
         """
         self.eval()
+        if self.last_step_of_eval_optimisation != step:
+            if self.model.config.training_regime != "vae":
+                self.model.fit_eval_latents(self.datamanager)
+            self.last_step_of_eval_optimisation = step
         metrics_dict_list = []
         num_images = len(self.datamanager.fixed_indices_eval_dataloader)
         # get all eval images
@@ -227,18 +221,18 @@ class RESGANPipeline(VanillaPipeline):
             transient=True,
         ) as progress:
             task = progress.add_task("[green]Evaluating all eval images...", total=num_images)
-            for camera_ray_bundle, batch in self.datamanager.fixed_indices_eval_dataloader:
+            for idx in range(num_images):
+                _, ray_bundle, batch = self.datamanager.next_eval_image(idx=idx)
+                num_rays = ray_bundle.directions.shape[-2]
                 # time this the following line
                 inner_start = time()
-                height, width = camera_ray_bundle.shape
-                num_rays = height * width
-                outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
+                outputs = self.model(ray_bundle, batch)    
                 metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch)
                 assert "num_rays_per_sec" not in metrics_dict
                 metrics_dict["num_rays_per_sec"] = num_rays / (time() - inner_start)
                 fps_str = "fps"
                 assert fps_str not in metrics_dict
-                metrics_dict[fps_str] = metrics_dict["num_rays_per_sec"] / (height * width)
+                metrics_dict[fps_str] = metrics_dict["num_rays_per_sec"] / (num_rays)
                 metrics_dict_list.append(metrics_dict)
                 progress.advance(task)
         # average the metrics list
