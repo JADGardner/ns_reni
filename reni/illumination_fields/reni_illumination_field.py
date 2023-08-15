@@ -51,7 +51,7 @@ class RENIFieldConfig(BaseRENIFieldConfig):
     """Type of conditioning to use"""
     positional_encoding: Literal["None", "NeRF"] = "None"
     """Type of positional encoding to use"""
-    encoded_input: Literal["InvarDirection", "Directions", "Conditioning", "Both"] = "Directions"
+    encoded_input: Literal["Directions", "Conditioning", "Both"] = "Directions"
     """Type of input to encode"""
     latent_dim: int = 36
     """Dimensionality of latent code, N for a latent code size of (N x 3)"""
@@ -131,11 +131,12 @@ class RENIField(BaseRENIField):
               Rearrange('... c -> ... 1 c'),
               VNLinear(dim_in=1, dim_out=1, bias_epsilon=0)
             )
-            self.vn_invar = VNInvariant(dim=1, dim_coor=2)
+            dim_coor = 2 if self.config.equivariance == "SO2" else 3
+            self.vn_invar = VNInvariant(dim=1, dim_coor=dim_coor)
             self.invariant_function = self.vn_invariance
             
 
-        self.network = self.setup_network() # ModuleDict {'siren': siren [mlp], 'hdr_head': Union[mlp, None], 'ldr_head': Union[mlp, None], 'mixing_head': Union[mlp, None]}
+        self.network = self.setup_network()
         
         if self.fixed_decoder:
             for param in self.network.parameters():
@@ -210,31 +211,44 @@ class RENIField(BaseRENIField):
         """
         assert 0 <= axis_of_invariance < 3, 'axis_of_invariance should be 0, 1, or 2.'
         other_axes = [i for i in range(3) if i != axis_of_invariance]
-        z_other = torch.stack((Z[:, :, other_axes[0]], Z[:, :, other_axes[1]]), -1) # [num_rays, latent_dim, 2]
-        d_other = torch.stack((D[:, other_axes[0]], D[:, other_axes[1]]), -1).unsqueeze(1) # [num_rays, 2]
-        d_other = d_other.expand_as(z_other) # size becomes [num_rays, latent_dim, 2]
 
-        z_other_emb = self.vn_proj_in(z_other) # [num_rays, latent_dim, 64, 2]
-        z_other_invar = self.vn_invar(z_other_emb) # [num_rays, latent_dim, 2]
+        if equivariance == "None":
+            innerprod = torch.bmm(D, torch.transpose(Z, 1, 2))
+            z_input = Z.flatten(start_dim=1).unsqueeze(1).repeat(1, D.shape[1], 1)
+            return innerprod, z_input
+        
+        if equivariance == "SO2":
+            z_other = torch.stack((Z[:, :, other_axes[0]], Z[:, :, other_axes[1]]), -1) # [num_rays, latent_dim, 2]
+            d_other = torch.stack((D[:, other_axes[0]], D[:, other_axes[1]]), -1).unsqueeze(1) # [num_rays, 2]
+            d_other = d_other.expand_as(z_other) # size becomes [num_rays, latent_dim, 2]
 
-        # Get invariant component of Z along the axis of invariance
-        z_invar = Z[:, :, axis_of_invariance].unsqueeze(-1) # [num_rays, latent_dim, 1]
+            z_other_emb = self.vn_proj_in(z_other) # [num_rays, latent_dim, 1, 2]
+            z_other_invar = self.vn_invar(z_other_emb) # [num_rays, latent_dim, 2]
 
-        # Innerproduct between projection of Z and D on the plane orthogonal to the axis of invariance.
-        # This encodes the rotational information. This is rotation-equivariant to rotations of either Z
-        # or D and is invariant to rotations of both Z and D.
-        innerprod = (z_other * d_other).sum(dim=-1) # [num_rays, latent_dim]
+            # Get invariant component of Z along the axis of invariance
+            z_invar = Z[:, :, axis_of_invariance].unsqueeze(-1) # [num_rays, latent_dim, 1]
 
-        # Compute norm along the axes orthogonal to the axis of invariance
-        d_other_norm = torch.sqrt(D[::, other_axes[0]] ** 2 + D[:, other_axes[1]] ** 2).unsqueeze(-1) # [num_rays, 1]
+            # Innerproduct between projection of Z and D on the plane orthogonal to the axis of invariance.
+            # This encodes the rotational information. This is rotation-equivariant to rotations of either Z
+            # or D and is invariant to rotations of both Z and D.
+            innerprod = (z_other * d_other).sum(dim=-1) # [num_rays, latent_dim]
 
-        # Get invariant component of D along the axis of invariance
-        d_invar = D[:, axis_of_invariance].unsqueeze(-1) # [num_rays, 1]
+            # Compute norm along the axes orthogonal to the axis of invariance
+            d_other_norm = torch.sqrt(D[::, other_axes[0]] ** 2 + D[:, other_axes[1]] ** 2).unsqueeze(-1) # [num_rays, 1]
 
-        directional_input = torch.cat((innerprod, d_invar, d_other_norm), 1)  # [num_rays, latent_dim + 2]
-        conditioning_input = torch.cat((z_other_invar, z_invar), dim=-1).flatten(1) # [num_rays, latent_dim * 3]
+            # Get invariant component of D along the axis of invariance
+            d_invar = D[:, axis_of_invariance].unsqueeze(-1) # [num_rays, 1]
 
-        return directional_input, conditioning_input
+            directional_input = torch.cat((innerprod, d_invar, d_other_norm), 1)  # [num_rays, latent_dim + 2]
+            conditioning_input = torch.cat((z_other_invar, z_invar), dim=-1).flatten(1) # [num_rays, latent_dim * 3]
+
+            return directional_input, conditioning_input
+        
+        if equivariance == "SO3":
+            z = self.vn_proj_in(Z) # [num_rays, latent_dim, 1, 3]
+            z_invar = self.vn_invar(z) # [num_rays, latent_dim, 3]
+            innerprod = torch.bmm(D, torch.transpose(Z, 1, 2)) # [num_rays, 3, 3]
+            return innerprod, z_invar
 
     
     def gram_matrix_invariance(self, Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2",  axis_of_invariance: int = 1):
@@ -295,33 +309,47 @@ class RENIField(BaseRENIField):
 
     def setup_network(self):
         """Sets up the network architecture"""
-        directional_input_dim = self.latent_dim + 2
-        conditioning_input_dim = self.latent_dim * self.latent_dim + self.latent_dim
-        
-        if self.config.positional_encoding == "NeRF":
-            if self.config.encoded_input == "InvarDirection":
-                # pos encoding on just invariant directional input
-                self.positional_encoding = NeRFEncoding(in_dim=1, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
-                directional_input_dim = self.latent_dim + 1 + self.positional_encoding.get_out_dim()
-                conditioning_input_dim = self.latent_dim * self.latent_dim + self.latent_dim
-            elif self.config.encoded_input == "Conditioning":
-                # pos encoding on conditioning input
-                self.positional_encoding = NeRFEncoding(in_dim=self.latent_dim * self.latent_dim + self.latent_dim, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
-                directional_input_dim = self.latent_dim + 2
-                conditioning_input_dim = self.positional_encoding.get_out_dim()
-            elif self.config.encoded_input == "Directions":
-                # pos encoding on directional input
-                self.positional_encoding = NeRFEncoding(in_dim=self.latent_dim + 2, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
-                directional_input_dim = self.positional_encoding.get_out_dim()
-                if self.config.invariant_function == "GramMatrix":
-                    conditioning_input_dim = self.latent_dim * self.latent_dim + self.latent_dim
-                else:
-                    conditioning_input_dim = self.latent_dim * 3
-            elif self.config.encoded_input == "Both":
-                self.dirctional_encoding = NeRFEncoding(in_dim=self.latent_dim + 2, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
-                self.conditioning_encoding = NeRFEncoding(in_dim=self.latent_dim * self.latent_dim + self.latent_dim, num_frequencies=2, min_freq_exp=0.0, max_freq_exp=2.0, include_input=True)
-                directional_input_dim = self.dirctional_encoding.get_out_dim()
-                conditioning_input_dim = self.conditioning_encoding.get_out_dim()
+        # TODO come back and fix the rest
+        base_input_dims = {
+            'VN': {
+                'None': {'direction': None, 'conditioning': None},
+                'SO2': {'direction': self.latent_dim + 2, 'conditioning': self.latent_dim * 3},
+                'SO3': {'direction': None, 'conditioning': None}
+            },
+            'GramMatrix': {
+                'None': {'direction': None, 'conditioning': None},
+                'SO2': {'direction': self.latent_dim + 2, 'conditioning': self.latent_dim**2 + self.latent_dim},
+                'SO3': {'direction': None, 'conditioning': None}
+            }
+        }
+
+        # Extract the necessary input dimensions
+        input_types = ['direction', 'conditioning']
+        input_dims = {key: base_input_dims[self.config.invariant_function][self.config.equivariance][key] for key in input_types}
+
+        # Helper function to create NeRF encoding
+        def create_nerf_encoding(in_dim):
+            return NeRFEncoding(
+                in_dim=in_dim,
+                num_frequencies=2,
+                min_freq_exp=0.0,
+                max_freq_exp=2.0,
+                include_input=True
+            )
+
+        # Dictionary-based encoding setup
+        encoding_setup = {
+            "Conditioning": ["conditioning"],
+            "Directions": ["direction"],
+            "Both": ["direction", "conditioning"]
+        }
+
+        # Setting up the required encodings
+        for input_type in encoding_setup.get(self.config.encoded_input, []):
+            # create self.{input_type}_encoding and update input_dims
+            setattr(self, f"{input_type}_encoding", create_nerf_encoding(input_dims[input_type]))
+            input_dims[input_type] = getattr(self, f"{input_type}_encoding").get_out_dim()
+
 
         output_activation = None
         if self.config.output_activation == "exp":
@@ -335,8 +363,7 @@ class RENIField(BaseRENIField):
         
         network = None
         if self.conditioning == "Concat":
-            input_dim = directional_input_dim + conditioning_input_dim
-            siren = Siren(in_dim=input_dim,
+            network = Siren(in_dim=input_dims['direction'] + input_dims['conditioning'],
                           hidden_layers=self.hidden_layers,
                           hidden_features=self.hidden_features,
                           out_dim=self.out_features,
@@ -344,24 +371,22 @@ class RENIField(BaseRENIField):
                           first_omega_0=self.first_omega_0,
                           hidden_omega_0=self.hidden_omega_0,
                           out_activation=output_activation)
-            network = nn.ModuleDict({'siren': siren})
         elif self.conditioning == "FiLM":
-            siren = FiLMSiren(
-                in_dim=directional_input_dim,
+            network = FiLMSiren(
+                in_dim=input_dims['direction'],
                 hidden_layers=self.hidden_layers,
                 hidden_features=self.hidden_features,
-                mapping_network_in_dim=conditioning_input_dim,
+                mapping_network_in_dim=input_dims['conditioning'],
                 mapping_network_layers=self.mapping_layers,
                 mapping_network_features=self.mapping_features,
                 out_dim=self.out_features,
                 outermost_linear=True,
                 out_activation=output_activation
             )
-            network = nn.ModuleDict({'siren': siren})
         elif self.conditioning == "Attention":
             # transformer where K, V is from conditioning input and Q is from directional input
-            network = Decoder(in_dim=directional_input_dim,
-                              conditioning_input_dim=conditioning_input_dim,
+            network = Decoder(in_dim=input_dims['direction'],
+                              conditioning_input_dim=input_dims['conditioning'],
                               hidden_features=self.config.hidden_features,
                               num_heads=self.config.num_attention_heads,
                               num_layers=self.config.num_attention_layers)
@@ -378,12 +403,14 @@ class RENIField(BaseRENIField):
         """
 
         if self.training and not self.fixed_decoder:
+            # use reparameterization trick
             mu = self.train_mu[idx, :, :]
             log_var = self.train_logvar[idx, :, :]
             std = torch.exp(0.5 * log_var)
             eps = torch.randn_like(std)
             sample = mu + (eps * std)
         else:
+            # just sample from the mean
             sample = self.eval_mu[idx, :, :]
             mu = self.eval_mu[idx, :, :]
             log_var = self.eval_logvar[idx, :, :]
@@ -423,20 +450,12 @@ class RENIField(BaseRENIField):
 
     def apply_positional_encoding(self, directional_input, conditioning_input):
         # conditioning on just invariant directional input
-        if self.config.encoded_input == "InvarDirection":
-            innerprod = directional_input[:, :self.latent_dim] # [num_rays, latent_dim]
-            d_invar = directional_input[:, self.latent_dim:self.latent_dim+1] # [num_rays, 1]
-            d_norm = directional_input[:, self.latent_dim+1:self.latent_dim+2] # [num_rays, 1]
-            d_invar = self.positional_encoding(d_invar) # [num_rays, embedding_dim]
-            directional_input = torch.cat((innerprod, d_invar, d_norm), 1) # [num_rays, latent_dim + embedding_dim + 1]
-        elif self.config.encoded_input == "Conditioning":
-            # get directional components of input first latent_dim + 2 components
-            conditioning_input = self.positional_encoding(conditioning_input) # [num_rays, embedding_dim]
-            # concatenate onto model_input
+        if self.config.encoded_input == "Conditioning":
+            conditioning_input = self.conditioning_encoding(conditioning_input) # [num_rays, embedding_dim]
         elif self.config.encoded_input == "Directions":
-            directional_input = self.positional_encoding(directional_input) # [num_rays, embedding_dim]
+            directional_input = self.direction_encoding(directional_input) # [num_rays, embedding_dim]
         elif self.config.encoded_input == "Both":
-            directional_input = self.dirctional_encoding(directional_input)
+            directional_input = self.dirction_encoding(directional_input)
             conditioning_input = self.conditioning_encoding(conditioning_input)
         
         return directional_input, conditioning_input
@@ -471,11 +490,11 @@ class RENIField(BaseRENIField):
         outputs = {}
 
         if self.conditioning == "Concat":
-            model_outputs = self.network["siren"](torch.cat((directional_input, conditioning_input), dim=1)) # [num_rays, 3]
+            model_outputs = self.network(torch.cat((directional_input, conditioning_input), dim=1)) # returns -> [num_rays, 3]
         elif self.conditioning == "FiLM":
-            model_outputs = self.network["siren"](directional_input, conditioning_input) # [num_rays, 3]
+            model_outputs = self.network(directional_input, conditioning_input) # returns -> [num_rays, 3]
         elif self.conditioning == "Attention":
-            model_outputs = self.network(directional_input, conditioning_input)
+            model_outputs = self.network(directional_input, conditioning_input) # returns -> [num_rays, 3]
 
         if self.config.trainable_scale:
             scale = self.select_scale()

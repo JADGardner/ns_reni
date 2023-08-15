@@ -48,8 +48,8 @@ RENIField = MethodSpecification(
                     use_validation_as_train=False,
                 ),
                 train_num_rays_per_batch=8192,
-                full_image_per_batch=True,
-                number_of_images_per_batch=1,
+                full_image_per_batch=False,
+                number_of_images_per_batch=2,
             ),
             model=RENIModelConfig(
                 field=RENIFieldConfig(
@@ -69,7 +69,7 @@ RENIField = MethodSpecification(
                     output_activation="None",
                     last_layer_linear=True,
                 ),
-                vn_encoder=VariationalVNEncoderConfig(
+                encoder=VariationalVNEncoderConfig(
                     l2_dist_attn=True,
                     invariance="SO2",
                     fusion_strategy='late',
@@ -82,6 +82,7 @@ RENIField = MethodSpecification(
                 loss_coefficients={
                     "log_mse_loss": 10.0,
                     "hdr_mse_loss": 1.0,
+                    "ldr_mse_loss": 1.0,
                     "cosine_similarity_loss": 1.0,
                     "kld_loss": 0.00001,
                     "scale_inv_loss": 1.0,
@@ -90,6 +91,7 @@ RENIField = MethodSpecification(
                 loss_inclusions={
                     "log_mse_loss": False,
                     "hdr_mse_loss": False,
+                    "ldr_mse_loss": False,
                     "cosine_similarity_loss": True,
                     "kld_loss": True,
                     "scale_inv_loss": True,

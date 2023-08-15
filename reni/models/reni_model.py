@@ -69,10 +69,11 @@ class RENIModelConfig(ModelConfig):
     include_sine_weighting: bool = True
     """Whether to include sine weighting in the loss"""
     training_regime: Literal["vae", "autodecoder", "gan"] = "autodecoder"
-    """Type of training, either as an autodecoder or generative adversarial network"""
+    """Type of training, either as an vae, (variational)autodecoder or generative adversarial network"""
     loss_inclusions: Dict[str, bool] = to_immutable_dict({
         'log_mse_loss': True,
         'hdr_mse_loss': False,
+        'ldr_mse_loss': False,
         'kld_loss': True,
         'cosine_similarity_loss': False,
         'scale_inv_loss': False,
@@ -81,7 +82,7 @@ class RENIModelConfig(ModelConfig):
     """Which losses to include in the training"""
     discriminator: BaseDiscriminatorConfig = BaseDiscriminatorConfig()
     """Discriminator configuration"""
-    vn_encoder: VariationalVNEncoderConfig = VariationalVNEncoderConfig()
+    encoder: VariationalVNEncoderConfig = VariationalVNEncoderConfig()
     """Rotation-Equivariant Encoder configuration"""
     eval_optimisation_params: Dict[str, Any] = to_immutable_dict({
         "num_steps": 5000,
@@ -126,7 +127,7 @@ class RENIModel(Model):
 
         if self.config.training_regime == "vae":
             self.rays_per_image = self.metadata['image_height'] * self.metadata['image_width']
-            self.encoder = self.config.vn_encoder.setup(num_input_rays=self.rays_per_image,
+            self.encoder = self.config.encoder.setup(num_input_rays=self.rays_per_image,
                                                         output_dim=self.field.latent_dim * 3)
 
         # losses
@@ -134,6 +135,8 @@ class RENIModel(Model):
             self.log_mse_loss = nn.MSELoss()
         if self.config.loss_inclusions['hdr_mse_loss']:
             self.hdr_mse_loss = nn.MSELoss()
+        if self.config.loss_inclusions['ldr_mse_loss']:
+            self.ldr_mse_loss = nn.MSELoss()
         if self.config.loss_inclusions['kld_loss']:
             self.kld_loss = KLD(Z_dims=self.field.latent_dim)
         if self.config.loss_inclusions['cosine_similarity_loss']:
@@ -308,6 +311,10 @@ class RENIModel(Model):
                 hdr_mse_loss = self.hdr_mse_loss(torch.exp(outputs["rgb"]), torch.exp(batch["image"]))
                 loss_dict['hdr_mse_loss'] = hdr_mse_loss
 
+            if self.config.loss_inclusions['ldr_mse_loss']:
+                ldr_mse_loss = self.ldr_mse_loss(outputs["rgb"], batch["image"])
+                loss_dict['ldr_mse_loss'] = ldr_mse_loss
+
             if self.config.loss_inclusions['kld_loss']:
                 kld_loss = self.kld_loss(outputs["mu"], outputs["log_var"])
                 loss_dict['kld_loss'] = kld_loss
@@ -391,6 +398,9 @@ class RENIModel(Model):
             # convert from linear HDR to sRGB for viewing
             gt_image_ldr = linear_to_sRGB(gt_image, use_quantile=True)
             pred_image_ldr = linear_to_sRGB(pred_image, use_quantile=True)
+        else:
+            gt_image_ldr = gt_image
+            pred_image_ldr = pred_image
 
         combined_rgb = torch.cat([gt_image_ldr, pred_image_ldr], dim=1)
 
