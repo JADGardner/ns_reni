@@ -63,7 +63,8 @@ class RESGANPipelineConfig(VanillaPipelineConfig):
     """Number of epochs to optimise latent during eval"""
     eval_latent_optimisation_lr: float = 0.1
     """Learning rate for latent optimisation during eval"""
-
+    discriminator_train_ratio: int = 5
+    """Number of times to train discriminator for each time we train the generator"""
 
 
 class RESGANPipeline(VanillaPipeline):
@@ -122,6 +123,8 @@ class RESGANPipeline(VanillaPipeline):
             self._model = typing.cast(Model, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
             dist.barrier(device_ids=[local_rank])
 
+        self.last_step_of_eval_optimisation = 0
+
     def forward(self):
         """Blank forward method
         This is an nn.Module, and so requires a forward() method normally, although in our case
@@ -141,6 +144,7 @@ class RESGANPipeline(VanillaPipeline):
         label.fill_(self.model.fake_label)
         discriminator_outputs = self._model.forward_discriminator(ray_bundle, model_outputs['rgb'])
         loss_dict_fake = self.model.get_gan_loss_dict(discriminator_outputs, {'gt_labels': label})
+        # TODO need to correctly negate the losses for wgan
         loss_dict = {key: loss_dict_real[key] + loss_dict_fake[key] for key in loss_dict_real}
         return model_outputs, loss_dict
     

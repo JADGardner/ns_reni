@@ -60,7 +60,7 @@ RENIField = MethodSpecification(
                     axis_of_invariance="z", # Nerfstudio world space is z-up
                     positional_encoding="NeRF",
                     encoded_input="Directions", # "InvarDirection", "Directions", "Conditioning", "Both"
-                    latent_dim=100, # N for a latent code size of (N x 3)
+                    latent_dim=9, # N for a latent code size of (N x 3)
                     hidden_features=128,
                     hidden_layers=9,
                     mapping_layers=5,
@@ -130,7 +130,7 @@ RESGANField = MethodSpecification(
         method_name="resgan",
         experiment_name="resgan",
         machine=MachineConfig(num_gpus=1),
-        steps_per_eval_image=5000,
+        steps_per_eval_image=100,
         steps_per_eval_batch=100000,
         steps_per_save=1000,
         steps_per_eval_all_images=5000,  # set to a very large model so we don't eval with all images
@@ -218,7 +218,7 @@ RESGANField = MethodSpecification(
                 "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
             },
             "discriminator": {
-                "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
+                "optimizer": AdamOptimizerConfig(lr=1e-5, eps=1e-15),
                 "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
             },
         },

@@ -40,7 +40,8 @@ class BaseDiscriminatorConfig(InstantiateConfig):
 
     _target: Type = field(default_factory=lambda: BaseDiscriminator)
     """target class to instantiate"""
-
+    gan_type: Literal["std", "wgan"] = "std"
+    """type of GAN to use"""
 
 class BaseDiscriminator(nn.Module):
     """Base class for RESGAN discriminators."""
@@ -108,14 +109,16 @@ class CNNDiscriminator(BaseDiscriminator):
 
         # Pass a dummy input through the conv_layers to determine the output shape
         dummy_input = torch.randn(1, 3, self.height, self.width)
-        linear_input_shape = self.conv_layers(dummy_input).numel() 
+        linear_input_shape = self.conv_layers(dummy_input).numel()
+
+        activation = nn.Sigmoid() if self.config.gan_type == "std" else nn.Identity()
         
         # Now add Flatten and Linear layers to main model
         self.main = nn.Sequential(
             self.conv_layers,
             nn.Flatten(),
             nn.Linear(linear_input_shape, 1),
-            nn.Sigmoid()
+            activation
         )
 
     def get_outputs(self, ray_samples: RaySamples, rgb: TensorType["batch_size", "num_rays", 3]):

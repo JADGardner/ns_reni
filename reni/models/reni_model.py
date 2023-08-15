@@ -79,6 +79,7 @@ class RENIModelConfig(ModelConfig):
         'scale_inv_loss': False,
         'scale_inv_grad_loss': False,
         'bce_loss': False,
+        'wgan_loss': False,
     })
     """Which losses to include in the training"""
     discriminator: BaseDiscriminatorConfig = BaseDiscriminatorConfig()
@@ -155,6 +156,8 @@ class RENIModel(Model):
             self.scale_invariant_grad_loss = ScaleInvariantGradientMatchingLoss()
         if self.config.loss_inclusions['bce_loss']:
             self.bce_loss = nn.BCELoss()
+        if self.config.loss_inclusions['wgan_loss']:
+            pass
             
 
         # metrics
@@ -227,7 +230,7 @@ class RENIModel(Model):
         
         rotation=None
         latent_codes=None # if auto-decoder training regime latents are trainable params of the field
-        if self.config.training_regime == 'gan':
+        if self.training and self.config.training_regime == 'gan':
             # sample from a uniform distribution
             latent_codes = torch.randn(self.batch_size, self.field.latent_dim, 3).type_as(ray_bundle.origins)
             latent_codes = latent_codes.unsqueeze(1).expand(-1, self.rays_per_image, -1, -1).reshape(-1, self.field.latent_dim, 3) # [num_rays, latent_dim, 3]
@@ -322,6 +325,12 @@ class RENIModel(Model):
         if self.config.loss_inclusions['bce_loss']:
             bce_loss = self.bce_loss(outputs["predictions"], batch["gt_labels"])
             loss_dict['bce_loss'] = bce_loss
+        if self.config.loss_inclusions['wgan_loss']:
+            if batch["gt_labels"][0] == self.real_label:
+                wgan_loss = torch.mean(outputs["predictions"])
+            else:
+                wgan_loss = torch.mean(outputs["predictions"])
+            loss_dict['wgan_loss'] = wgan_loss
 
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
         return loss_dict
