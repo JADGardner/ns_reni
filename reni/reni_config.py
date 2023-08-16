@@ -131,7 +131,7 @@ RESGANField = MethodSpecification(
         method_name="resgan",
         experiment_name="resgan",
         machine=MachineConfig(num_gpus=1),
-        steps_per_eval_image=100,
+        steps_per_eval_image=5000,
         steps_per_eval_batch=100000,
         steps_per_save=1000,
         steps_per_eval_all_images=5000,  # set to a very large model so we don't eval with all images
@@ -180,11 +180,6 @@ RESGANField = MethodSpecification(
                     depth=2,
                     dim_head=32,
                     heads=2,
-                    l2_dist_attn=True,
-                    invariance="SO2",
-                    fusion_strategy='late',
-                ),
-                encoder=VariationalVNEncoderConfig(
                     l2_dist_attn=True,
                     invariance="SO2",
                     fusion_strategy='late',

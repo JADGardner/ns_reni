@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple, Type, Literal, Optional
 from rich.progress import BarColumn, Console, Progress, TextColumn, TimeRemainingColumn
 import functools
-import matplotlib.colors
 
 import torch
 import torch.nn as nn
@@ -34,25 +33,13 @@ from torch.nn import KLDivLoss
 
 from nerfstudio.cameras.rays import RayBundle, RaySamples, Frustums
 from nerfstudio.configs.config_utils import to_immutable_dict
-from nerfstudio.field_components.encodings import NeRFEncoding
-from nerfstudio.field_components.field_heads import FieldHeadNames
-from nerfstudio.field_components.temporal_distortions import TemporalDistortionKind
-from nerfstudio.fields.vanilla_nerf_field import NeRFField
-from nerfstudio.model_components.losses import MSELoss
-from nerfstudio.model_components.ray_samplers import PDFSampler, UniformSampler
-from nerfstudio.model_components.renderers import (
-    AccumulationRenderer,
-    DepthRenderer,
-    RGBRenderer,
-)
 from nerfstudio.models.base_model import Model, ModelConfig
-from nerfstudio.utils import colormaps, colors, misc
+from nerfstudio.utils import colormaps, misc
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
 
 from reni.illumination_fields.base_spherical_field import SphericalFieldConfig
-from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
 from reni.field_components.field_heads import RENIFieldHeadNames
-from reni.model_components.losses import WeightedMSE, KLD, WeightedCosineSimilarity, ScaleInvariantLogLoss, ScaleInvariantGradientMatchingLoss
+from reni.model_components.losses import KLD, ScaleInvariantLogLoss, ScaleInvariantGradientMatchingLoss
 from reni.utils.colourspace import linear_to_sRGB
 from reni.discriminators.discriminators import BaseDiscriminatorConfig
 from reni.field_components.vn_encoder import VariationalVNEncoderConfig
@@ -121,14 +108,13 @@ class RENIModel(Model):
 
         normalisations = {'min_max': self.metadata['min_max'],
                           'log_domain': self.metadata['convert_to_log_domain']}
-        
+
         self.field = self.config.field.setup(num_train_data=self.num_train_data, num_eval_data=self.num_eval_data, normalisations=normalisations)
 
         if self.config.training_regime == 'gan':
             self.discriminator = self.config.discriminator.setup(height=self.metadata['image_height'],
                                                                  width=self.metadata['image_width'],
                                                                  gan_type=self.metadata['gan_type'])
-            self.discriminator = self.discriminator.double()
             self.batch_size = self.metadata['batch_size']
             self.rays_per_image = self.metadata['image_height'] * self.metadata['image_width']
             self.real_label = 1
@@ -159,14 +145,14 @@ class RENIModel(Model):
         if self.config.loss_inclusions['bce_loss']:
             self.bce_loss = nn.BCELoss()
         if self.config.loss_inclusions['wgan_loss']:
-            pass
-            
+            pass # NOTE just a flag
+
 
         # metrics
         self.psnr = PeakSignalNoiseRatio()
         self.ssim = structural_similarity_index_measure
         self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
-    
+
     def forward(self, ray_bundle: RayBundle, batch: Optional[dict] = None) -> Dict[str, torch.Tensor]:
         """Run forward starting with a ray bundle. This outputs different things depending on the configuration
         of the model and whether or not the batch is provided (whether or not we are training basically)
@@ -175,7 +161,7 @@ class RENIModel(Model):
             ray_bundle: containing all the information needed to render that ray latents included
         """
         return self.get_outputs(ray_bundle, batch)
-    
+
     def forward_discriminator(self, ray_bundle: RayBundle, image_batch: torch.Tensor) -> Dict[str, torch.Tensor]:
         """Foward on the discriminator"""
         if len(ray_bundle.directions.shape) == 3: # [2, num_rays, 3]
@@ -230,7 +216,7 @@ class RENIModel(Model):
             ray_samples = self.create_ray_samples(ray_bundle.origins[0], ray_bundle.directions[0], ray_bundle.camera_indices[0])
         else:
             ray_samples = self.create_ray_samples(ray_bundle.origins, ray_bundle.directions, ray_bundle.camera_indices)
-        
+
         rotation=None
         latent_codes=None # if auto-decoder training regime latents are trainable params of the field
         if self.training and self.config.training_regime == 'gan':
@@ -255,7 +241,7 @@ class RENIModel(Model):
                 latent_codes = mu + (eps * std) # [num_images, self.field.latent_dim * 3]
             else:
                 latent_codes = mu # [num_images, self.field.latent_dim * 3]
-            
+
             # now reshape to match RENI latent code [num_rays, latent_dim, 3]
             latent_codes = latent_codes.view(self.batch_size, self.field.latent_dim, 3).unsqueeze(1) # [num_images, 1, latent_dim, 3]
             latent_codes = latent_codes.expand(-1, self.rays_per_image, -1, -1)
@@ -263,7 +249,7 @@ class RENIModel(Model):
 
             mu = mu.view(-1, self.field.latent_dim, 3)
             log_var = log_var.view(-1, self.field.latent_dim, 3)
-        
+
         field_outputs = self.field.forward(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes)
 
         outputs = {
@@ -286,14 +272,14 @@ class RENIModel(Model):
             outputs['rgb_rolled'] = field_outputs[RENIFieldHeadNames.RGB]
 
         return outputs
-    
+
     def get_metrics_dict(self, outputs, batch) -> Dict[str, torch.Tensor]:
-        
+
         if len(batch['image'].shape) == 3: # [2, num_rays, 3]
             assert self.config.loss_inclusions['scale_inv_grad_loss']
             assert batch['image'].shape[0] == 2
             batch = {key: value[0] for key, value in batch.items()} # [num_rays, ...]
-        
+
         device = outputs["rgb"].device
         gt_image = batch["image"].to(device)
         pred_image = outputs["rgb"]
@@ -308,12 +294,12 @@ class RENIModel(Model):
             # need to unnormalize the image from between -1 and 1
             gt_image = 0.5 * (gt_image + 1) * (max_val - min_val) + min_val
             pred_image = 0.5 * (pred_image + 1) * (max_val - min_val) + min_val
-        
+
         if self.metadata['convert_to_log_domain']:
             # undo log domain conversion
             gt_image = torch.exp(gt_image)
             pred_image = torch.exp(pred_image)
-                
+
         psnr = self.psnr(preds=pred_image, target=gt_image)
 
         metrics_dict = {"psnr": psnr}
@@ -348,9 +334,9 @@ class RENIModel(Model):
             batch_rolled = {key: value[1] for key, value in batch.items()} # [num_rays, ...]
             batch = {key: value[0] for key, value in batch.items()} # [num_rays, ...]
             batch_rolled['image'] = batch_rolled['image'].to(device)
-        
+
         batch['image'] = batch['image'].to(device)
-            
+
         loss_dict = {}
 
         # Unlike original RENI implementation, the sineweighting 
@@ -398,7 +384,7 @@ class RENIModel(Model):
             batch_rolled = {key: value[1] for key, value in batch.items()} # [num_rays, ...]
             batch = {key: value[0] for key, value in batch.items()} # [num_rays, ...]
             batch_rolled['image'] = batch_rolled['image'].to(device)
-        
+
         batch['image'] = batch['image'].to(device)
 
         gt_image = batch["image"] # [num_rays, 3]
@@ -423,7 +409,7 @@ class RENIModel(Model):
             # undo log domain conversion
             gt_image = torch.exp(gt_image)
             pred_image = torch.exp(pred_image)
-        
+
         # converting to grayscale by taking the mean across the color dimension
         gt_image_gray = torch.mean(gt_image, dim=-1)
         pred_image_gray = torch.mean(pred_image, dim=-1)
@@ -520,7 +506,7 @@ class RENIModel(Model):
 
         # Extract the z coordinates
         z_coordinates = directions[:, 2]
-        
+
         # The inclination angle (θ) is the angle from the positive z-axis, calculated as arccos(z)
         theta = torch.acos(z_coordinates)
 
@@ -534,7 +520,7 @@ class RENIModel(Model):
         lr_end = self.config.eval_optimisation_params["lr_end"]
 
         opt = torch.optim.Adam([self.field.eval_mu], lr=lr_start)
-        
+
         # create exponential learning rate scheduler decaying 
         # from lr_start to lr_end over the course of steps
         lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(opt, gamma=(lr_end/lr_start)**(1/steps))
