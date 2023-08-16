@@ -217,6 +217,7 @@ class VNTransformerDiscriminator(BaseDiscriminator):
         """Returns the prediction of the discriminator."""
         directions = ray_samples.frustums.directions # [batch_size, num_rays, 3]
 
+        original_dtype = directions.dtype
         directions = directions.double()
         rgb = rgb.double()
 
@@ -241,6 +242,7 @@ class VNTransformerDiscriminator(BaseDiscriminator):
         if self.config.fusion_strategy == "late":
             x = torch.cat([x, rgb], dim=-1) # [batch_size, num_rays, 6]
         x = self.out(x).squeeze(1) # [batch_size]
+        x = x.to(original_dtype)
 
         return x
         
