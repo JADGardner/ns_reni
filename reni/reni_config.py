@@ -207,13 +207,13 @@ RESGANField = MethodSpecification(
                     "kld_loss": True,
                     "scale_inv_loss": True,
                     "scale_inv_grad_loss": False,
-                    "bce_loss": True, # for GAN
-                    "wgan_loss": False, # for WGAN
+                    "bce_loss": False, # for GAN
+                    "wgan_loss": True, # for WGAN
                 },
                 include_sine_weighting=False, # This is already done by the equirectangular pixel sampler
                 training_regime="gan",
             ),
-            gan_type="std",
+            gan_type="wgan",
             discriminator_train_ratio=1,
         ),
         optimizers={

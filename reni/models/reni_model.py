@@ -318,7 +318,7 @@ class RENIModel(Model):
             if batch["gt_labels"][0] == self.real_label:
                 wgan_loss = torch.mean(outputs["predictions"])
             else:
-                wgan_loss = torch.mean(outputs["predictions"])
+                wgan_loss = -torch.mean(outputs["predictions"])
             loss_dict['wgan_loss'] = wgan_loss
 
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)

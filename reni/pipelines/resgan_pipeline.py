@@ -123,7 +123,7 @@ class RESGANPipeline(VanillaPipeline):
         self.model.to(device)
 
         self.world_size = world_size
-        
+
         if world_size > 1:
             self._model = typing.cast(Model, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
             dist.barrier(device_ids=[local_rank])
@@ -149,10 +149,12 @@ class RESGANPipeline(VanillaPipeline):
         label.fill_(self.model.fake_label)
         discriminator_outputs = self._model.forward_discriminator(ray_bundle, model_outputs['rgb'])
         loss_dict_fake = self.model.get_gan_loss_dict(discriminator_outputs, {'gt_labels': label})
-        # TODO need to correctly negate the losses for wgan
+        loss_dict = {key: loss_dict_real[key] + loss_dict_fake[key] for key in loss_dict_real}
+        if self.config.gan_type == 'wgan':
+            loss_dict['wgan_loss'] = -loss_dict['wgan_loss']       
         loss_dict = {key: loss_dict_real[key] + loss_dict_fake[key] for key in loss_dict_real}
         return model_outputs, loss_dict
-    
+
     @profiler.time_function
     def get_train_loss_generator(self, step: int):
         ray_bundle, batch = self.datamanager.next_train(step)
@@ -162,7 +164,7 @@ class RESGANPipeline(VanillaPipeline):
         discriminator_outputs = self._model.forward_discriminator(ray_bundle, model_outputs['rgb'])
         loss_dict = self.model.get_gan_loss_dict(discriminator_outputs, {'gt_labels': label})
         return model_outputs, loss_dict
-    
+
     @profiler.time_function
     def get_eval_loss_dict(self, step: int):
         """This function gets your evaluation loss dict. It needs to get the data
