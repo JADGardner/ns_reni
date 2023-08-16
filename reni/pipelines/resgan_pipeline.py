@@ -70,7 +70,7 @@ class RESGANPipelineConfig(VanillaPipelineConfig):
 
 
 class RESGANPipeline(VanillaPipeline):
-    """The pipeline class for the vanilla nerf setup of multiple cameras for one or a few scenes.
+    """The pipeline class for Rotation Equivariant Spherical Generative Adverserial Networks.
 
     Args:
         config: configuration to instantiate pipeline

@@ -114,7 +114,7 @@ class CNNDiscriminator(BaseDiscriminator):
         dummy_input = torch.randn(1, 3, self.height, self.width)
         linear_input_shape = self.conv_layers(dummy_input).numel()
 
-        activation = nn.Sigmoid() if self.config.gan_type == "std" else nn.Identity()
+        activation = nn.Sigmoid() if self.gan_type == "std" else nn.Identity()
         
         # Now add Flatten and Linear layers to main model
         self.main = nn.Sequential(
