@@ -14,7 +14,7 @@ from reni.illumination_fields.environment_map_field import EnvironmentMapFieldCo
 from reni.engine.resgan_trainer import RESGANTrainerConfig
 from reni.pipelines.resgan_pipeline import RESGANPipelineConfig
 from reni.field_components.vn_encoder import VariationalVNEncoderConfig
-from reni.discriminators.discriminators import CNNDiscriminatorConfig
+from reni.discriminators.discriminators import CNNDiscriminatorConfig, VNTransformerDiscriminatorConfig
 
 from nerfstudio.configs.base_config import ViewerConfig, MachineConfig
 from nerfstudio.engine.trainer import TrainerConfig
@@ -50,7 +50,7 @@ RENIField = MethodSpecification(
                 ),
                 train_num_rays_per_batch=8192,
                 full_image_per_batch=False,
-                number_of_images_per_batch=2,
+                number_of_images_per_batch=2, # if using full images
             ),
             model=RENIModelConfig(
                 field=RENIFieldConfig(
@@ -171,9 +171,18 @@ RESGANField = MethodSpecification(
                     output_activation="None",
                     last_layer_linear=True,
                 ),
-                discriminator=CNNDiscriminatorConfig(
-                    num_layers=5,
-                    initial_filters=64,
+                # discriminator=CNNDiscriminatorConfig(
+                #     num_layers=5,
+                #     initial_filters=64,
+                # ),
+                discriminator=VNTransformerDiscriminatorConfig(
+                    hidden_dim=32,
+                    depth=2,
+                    dim_head=32,
+                    heads=2,
+                    l2_dist_attn=True,
+                    invariance="SO2",
+                    fusion_strategy='late',
                 ),
                 encoder=VariationalVNEncoderConfig(
                     l2_dist_attn=True,
@@ -209,6 +218,8 @@ RESGANField = MethodSpecification(
                 include_sine_weighting=False, # This is already done by the equirectangular pixel sampler
                 training_regime="gan",
             ),
+            gan_type="std",
+            discriminator_train_ratio=1,
         ),
         optimizers={
             "field": {

@@ -63,6 +63,8 @@ class RESGANPipelineConfig(VanillaPipelineConfig):
     """Number of epochs to optimise latent during eval"""
     eval_latent_optimisation_lr: float = 0.1
     """Learning rate for latent optimisation during eval"""
+    gan_type: Literal["std", "wgan"] = "std",
+    """Type of GAN to use"""
     discriminator_train_ratio: int = 5
     """Number of times to train discriminator for each time we train the generator"""
 
@@ -109,11 +111,14 @@ class RESGANPipeline(VanillaPipeline):
         num_eval_data = self.datamanager.num_eval
         self.batch_size = self.datamanager.config.number_of_images_per_batch
 
+        metadata = self.datamanager.train_dataset.metadata
+        metadata['gan_type'] = self.config.gan_type
+
         self._model = config.model.setup(
             scene_box=None,
             num_train_data=num_train_data,
             num_eval_data=num_eval_data,
-            metadata=self.datamanager.train_dataset.metadata,
+            metadata=metadata,
         )
         self.model.to(device)
 

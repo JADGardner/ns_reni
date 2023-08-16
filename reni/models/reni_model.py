@@ -126,7 +126,9 @@ class RENIModel(Model):
 
         if self.config.training_regime == 'gan':
             self.discriminator = self.config.discriminator.setup(height=self.metadata['image_height'],
-                                                                 width=self.metadata['image_width'])
+                                                                 width=self.metadata['image_width'],
+                                                                 gan_type=self.metadata['gan_type'])
+            self.discriminator = self.discriminator.double()
             self.batch_size = self.metadata['batch_size']
             self.rays_per_image = self.metadata['image_height'] * self.metadata['image_width']
             self.real_label = 1
@@ -188,6 +190,7 @@ class RENIModel(Model):
             image_batch = images_rolled - images # finite difference for scale invariant gan input
         else:
             ray_samples = self.create_ray_samples(ray_bundle.origins, ray_bundle.directions, ray_bundle.camera_indices)
+            ray_samples.frustums.directions = ray_samples.frustums.directions.reshape(self.batch_size, -1, 3) # [batch_size, num_rays, 3]
             image_batch = image_batch.reshape(self.batch_size, -1, 3) # [batch_size, num_rays, 3]
 
         image_batch = image_batch.to(self.device)
@@ -477,6 +480,8 @@ class RENIModel(Model):
         # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
         gt_image = gt_image.unsqueeze(0).permute(0, 3, 1, 2)
         pred_image = pred_image.unsqueeze(0).permute(0, 3, 1, 2)
+        gt_image_ldr = gt_image_ldr.unsqueeze(0).permute(0, 3, 1, 2)
+        pred_image_ldr = pred_image_ldr.unsqueeze(0).permute(0, 3, 1, 2)
 
         # # TODO: since we are now sampling every pixel in the image, should we use sinewighting when computing metrics?
         # # and is this valid?
@@ -488,19 +493,20 @@ class RENIModel(Model):
         # image = image * sineweight
         # rgb = rgb * sineweight
 
-        psnr = self.psnr(preds=pred_image, target=gt_image)
-        ssim = self.ssim(preds=pred_image, target=gt_image)
-        # for lpips we need to convert to 0 to 1 using image.min() and image.max()
-        # gt_image = (gt_image - gt_image.min()) / (gt_image.max() - gt_image.min())
-        # pred_image = (pred_image - pred_image.min()) / (pred_image.max() - pred_image.min())
-        # lpips = self.lpips(pred_image, gt_image)
-        assert isinstance(ssim, torch.Tensor)
+        metrics_dict = {}
 
-        metrics_dict = {
-            "psnr": float(psnr),
-            "ssim": float(ssim),
-            # "lpips": float(lpips),
-        }
+        metrics_dict['psnr_hdr'] = self.psnr(preds=pred_image, target=gt_image)
+        metrics_dict['ssim_hdr'] = self.ssim(preds=pred_image, target=gt_image)
+        # for lpips we need to convert to 0 to 1 using image.min() and image.max()
+        gt_image = (gt_image - gt_image.min()) / (gt_image.max() - gt_image.min())
+        pred_image = (pred_image - pred_image.min()) / (pred_image.max() - pred_image.min())
+        metrics_dict['lpips_hdr'] = self.lpips(pred_image, gt_image)
+
+        # if we are not already learning in LDR space
+        if not self.metadata['convert_to_ldr']:
+            metrics_dict['psnr_ldr'] = self.psnr(preds=pred_image_ldr, target=gt_image_ldr)
+            metrics_dict['ssim_ldr'] = self.ssim(preds=pred_image_ldr, target=gt_image_ldr)
+            metrics_dict['lpips_ldr'] = self.lpips(pred_image_ldr, gt_image_ldr)
 
         return metrics_dict, images_dict
 

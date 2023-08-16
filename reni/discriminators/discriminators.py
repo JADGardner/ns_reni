@@ -40,16 +40,22 @@ class BaseDiscriminatorConfig(InstantiateConfig):
 
     _target: Type = field(default_factory=lambda: BaseDiscriminator)
     """target class to instantiate"""
-    gan_type: Literal["std", "wgan"] = "std"
-    """type of GAN to use"""
 
 class BaseDiscriminator(nn.Module):
     """Base class for RESGAN discriminators."""
 
     def __init__(
         self,
+        config: BaseDiscriminatorConfig,
+        height: int,
+        width: int,
+        gan_type: Literal["std", "wgan"] = "std",
     ) -> None:
         super().__init__()
+        self.config = config
+        self.height = height
+        self.width = width
+        self.gan_type = gan_type
 
     @abstractmethod
     def get_outputs(self, ray_samples: RaySamples, rgb: TensorType["batch_size", "num_rays", 3]):
@@ -85,12 +91,9 @@ class CNNDiscriminator(BaseDiscriminator):
         config: CNNDiscriminatorConfig,
         height: int,
         width: int,
+        gan_type: Literal["std", "wgan"] = "std",
     ) -> None:
-        super().__init__()
-        self.config = config
-        self.height = height
-        self.width = width
-      
+        super().__init__(config, height, width, gan_type)   
         layers = []
         in_channels = 3
         out_channels = self.config.initial_filters
@@ -155,8 +158,6 @@ class VNTransformerDiscriminatorConfig(BaseDiscriminatorConfig):
     """whether to use flash attention in the attention"""
     invariance: Literal["None", "SO2", "SO3"] = "None"
     """invariance of the discriminator"""
-    return_intermediate_components: bool = False
-    """whether to return the intermediate components of the discriminator (for testing)"""
     output_dim: int = 1
     """output dimension of the discriminator"""
     output_activation: torch.nn.Module = nn.Sigmoid()
@@ -165,13 +166,15 @@ class VNTransformerDiscriminatorConfig(BaseDiscriminatorConfig):
     """early fusion concat at the input, late fusion concat at the output"""
 
 
-class VNTransformerDiscriminator(nn.Module):
+class VNTransformerDiscriminator(BaseDiscriminator):
     def __init__(
         self,
         config: VNTransformerDiscriminatorConfig,
+        height: int,
+        width: int,
+        gan_type: Literal["std", "wgan"] = "std",
     ) -> None:
-        super().__init__()
-        self.config = config
+        super().__init__(config, height, width, gan_type)
 
         if self.config.fusion_strategy == "early":
             self.dim_coor = 6
@@ -200,48 +203,46 @@ class VNTransformerDiscriminator(nn.Module):
           self.vn_invariant = nn.Identity()
         else:
           self.vn_invariant = VNInvariant(self.config.hidden_dim, dim_coor=self.dim_coor)
+
+        output_activation = nn.Sigmoid() if self.gan_type == "std" else nn.Identity()
         
         self.out = nn.Sequential(
             Reduce('b n d -> b d', 'mean'),
             nn.Linear(6, 1),
-            nn.Sigmoid()
+            output_activation
         )
 
 
     def get_outputs(self, ray_samples: RaySamples, rgb: TensorType["batch_size", "num_rays", 3]):
         """Returns the prediction of the discriminator."""
         directions = ray_samples.frustums.directions # [batch_size, num_rays, 3]
-        
-        # set both directions and rgb to be long
-        directions = directions
-        rgb = rgb
+
+        directions = directions.double()
+        rgb = rgb.double()
 
         # early fusion just concatenates the two inputs
         if self.config.fusion_strategy == "early":
-            x1 = torch.cat([directions, rgb], dim=-1) # [batch_size, num_rays, 6]
+            x = torch.cat([directions, rgb], dim=-1) # [batch_size, num_rays, 6]
         else:
-            x1 = directions
-        x2 = self.vn_proj_in(x1) # [batch_size, num_rays, hidden_dim, self.dim_coor]
-        x3 = self.encoder(x2) # [batch_size, num_rays, hidden_dim, self.dim_coor]
-        x3 = self.layer_norm(x3) # [batch_size, num_rays, hidden_dim, self.dim_coor]
+            x = directions
+        x = self.vn_proj_in(x) # [batch_size, num_rays, hidden_dim, self.dim_coor]
+        x = self.encoder(x) # [batch_size, num_rays, hidden_dim, self.dim_coor]
+        x = self.layer_norm(x) # [batch_size, num_rays, hidden_dim, self.dim_coor]
 
         if self.config.invariance == "SO2":
-            x3_z = x3[..., 2:3, :] # [batch_size, num_rays, hidden_dim, 1]
-            x4_z = Reduce('b n f c -> b n c', 'mean')(x3_z) # [batch_size, num_rays, 1]
-            x4 = self.vn_invariant(x3) # [batch_size, num_rays, self.dim_coor]
+            x_z = x[..., 2:3] # [batch_size, num_rays, hidden_dim, 1]
+            x_z = Reduce('b n f c -> b n c', 'mean')(x_z) # [batch_size, num_rays, 1]
+            x = self.vn_invariant(x) # [batch_size, num_rays, self.dim_coor]
             # swap z component with x4_z
-            x4[:, :, 2:3] = x4_z
+            x[:, :, 2:3] = x_z
         else:
-            x4 = self.vn_invariant(x3) # [batch_size, num_rays, self.dim_coor]
+            x = self.vn_invariant(x) # [batch_size, num_rays, self.dim_coor]
 
         if self.config.fusion_strategy == "late":
-            x4 = torch.cat([x4, rgb], dim=-1) # [batch_size, num_rays, 6]
-        x5 = self.out(x4) # [batch_size, 1]
+            x = torch.cat([x, rgb], dim=-1) # [batch_size, num_rays, 6]
+        x = self.out(x).squeeze(1) # [batch_size]
 
-        if self.config.return_intermediate_components:
-            return x5, (x1, x2, x3, x4)
-        else:
-            return x5
+        return x
         
 
     def forward(self, ray_samples: RaySamples, rgb: TensorType["batch_size", "num_rays", 3]):
