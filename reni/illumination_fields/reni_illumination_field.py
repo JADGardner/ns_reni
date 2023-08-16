@@ -213,8 +213,9 @@ class RENIField(BaseRENIField):
         other_axes = [i for i in range(3) if i != axis_of_invariance]
 
         if equivariance == "None":
-            innerprod = torch.bmm(D, torch.transpose(Z, 1, 2))
-            z_input = Z.flatten(start_dim=1).unsqueeze(1).repeat(1, D.shape[1], 1)
+            # get inner product between latent code and direction coordinates
+            innerprod = torch.sum(Z * D.unsqueeze(1), dim=-1) # [num_rays, latent_dim]
+            z_input = Z.flatten(start_dim=1) # [num_rays, latent_dim * 3]
             return innerprod, z_input
         
         if equivariance == "SO2":
@@ -247,7 +248,8 @@ class RENIField(BaseRENIField):
         if equivariance == "SO3":
             z = self.vn_proj_in(Z) # [num_rays, latent_dim, 1, 3]
             z_invar = self.vn_invar(z) # [num_rays, latent_dim, 3]
-            innerprod = torch.bmm(D, torch.transpose(Z, 1, 2)) # [num_rays, 3, 3]
+            conditioning_input = z_invar.flatten(1) # [num_rays, latent_dim * 3] 
+            innerprod = torch.sum(Z * D.unsqueeze(1), dim=-1) # [num_rays, latent_dim]
             return innerprod, z_invar
 
     
@@ -268,8 +270,9 @@ class RENIField(BaseRENIField):
 
 
         if equivariance == "None":
-            innerprod = torch.bmm(D, torch.transpose(Z, 1, 2))
-            z_input = Z.flatten(start_dim=1).unsqueeze(1).repeat(1, D.shape[1], 1)
+            # get inner product between latent code and direction coordinates
+            innerprod = torch.sum(Z * D.unsqueeze(1), dim=-1) # [num_rays, latent_dim]
+            z_input = Z.flatten(start_dim=1) # [num_rays, latent_dim * 3]
             return innerprod, z_input
 
         if equivariance == "SO2":
@@ -302,9 +305,9 @@ class RENIField(BaseRENIField):
             return directional_input, conditioning_input
 
         if equivariance == "SO3":
-            G = Z @ torch.transpose(Z, 1, 2)
-            innerprod = torch.bmm(D, torch.transpose(Z, 1, 2))
-            z_invar = G.flatten(start_dim=1).unsqueeze(1).repeat(1, D.shape[1], 1)
+            G = Z @ torch.transpose(Z, 1, 2) # [num_rays, latent_dim, latent_dim]
+            innerprod = torch.sum(Z * D.unsqueeze(1), dim=-1) # [num_rays, latent_dim]
+            z_invar = G.flatten(start_dim=1) # [num_rays, latent_dim^2]
             return innerprod, z_invar
 
     def setup_network(self):
@@ -312,14 +315,14 @@ class RENIField(BaseRENIField):
         # TODO come back and fix the rest
         base_input_dims = {
             'VN': {
-                'None': {'direction': None, 'conditioning': None},
+                'None': {'direction': self.latent_dim, 'conditioning': self.latent_dim * 3},
                 'SO2': {'direction': self.latent_dim + 2, 'conditioning': self.latent_dim * 3},
-                'SO3': {'direction': None, 'conditioning': None}
+                'SO3': {'direction': self.latent_dim, 'conditioning': self.latent_dim * 3}
             },
             'GramMatrix': {
-                'None': {'direction': None, 'conditioning': None},
+                'None': {'direction': self.latent_dim, 'conditioning': self.latent_dim * 3},
                 'SO2': {'direction': self.latent_dim + 2, 'conditioning': self.latent_dim**2 + self.latent_dim},
-                'SO3': {'direction': None, 'conditioning': None}
+                'SO3': {'direction': self.latent_dim, 'conditioning': self.latent_dim**2}
             }
         }
 
@@ -482,7 +485,7 @@ class RENIField(BaseRENIField):
 
         directions = ray_samples.frustums.directions # [num_rays, 3] # each has unique latent code defined by camera index
 
-        directional_input, conditioning_input  = self.invariant_function(latent_codes, directions, axis_of_invariance=self.axis_of_invariance) # [num_rays, 3]
+        directional_input, conditioning_input  = self.invariant_function(latent_codes, directions, equivariance=self.equivariance, axis_of_invariance=self.axis_of_invariance) # [num_rays, 3]
 
         if self.config.positional_encoding == "NeRF":
             directional_input, conditioning_input = self.apply_positional_encoding(directional_input, conditioning_input)

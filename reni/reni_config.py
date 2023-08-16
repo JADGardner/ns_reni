@@ -56,7 +56,7 @@ RENIField = MethodSpecification(
                 field=RENIFieldConfig(
                     conditioning='Attention',
                     invariant_function="VN",
-                    equivariance="SO2",
+                    equivariance="None",
                     axis_of_invariance="z", # Nerfstudio world space is z-up
                     positional_encoding="NeRF",
                     encoded_input="Directions", # "InvarDirection", "Directions", "Conditioning", "Both"
@@ -103,6 +103,7 @@ RENIField = MethodSpecification(
                     "scale_inv_loss": True,
                     "scale_inv_grad_loss": False,
                     "bce_loss": True, # for GAN
+                    "wgan_loss": False, # for WGAN
                 },
                 include_sine_weighting=False, # This is already done by the equirectangular pixel sampler
                 training_regime="autodecoder",
@@ -203,6 +204,7 @@ RESGANField = MethodSpecification(
                     "scale_inv_loss": True,
                     "scale_inv_grad_loss": False,
                     "bce_loss": True, # for GAN
+                    "wgan_loss": False, # for WGAN
                 },
                 include_sine_weighting=False, # This is already done by the equirectangular pixel sampler
                 training_regime="gan",
