@@ -29,7 +29,10 @@ from reni.illumination_fields.reni_illumination_field import RENIField
 from reni.model_components.illumination_samplers import IlluminationSamplerConfig
 from reni.model_components.shaders import LambertianShader
 from reni.utils.utils import find_nerfstudio_project_root
+from reni.fields.nerfacto_reni import TCNNNerfactoFieldRENI
+from reni.field_components.field_heads import RENIFieldHeadNames
 
+from nerfstudio.field_components.spatial_distortions import SceneContraction
 from nerfstudio.cameras.rays import RayBundle, RaySamples
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.model_components.losses import (
@@ -53,6 +56,8 @@ class NerfactoRENIModelConfig(NerfactoModelConfig):
     """Step of pretrained illumination field"""
     illumination_sampler: IlluminationSamplerConfig = IlluminationSamplerConfig()
     """Illumination sampler to use"""
+    predict_specular: bool = False
+    """Whether to predict specular"""
 
 class NerfactoRENIModel(NerfactoModel):
     """Nerfacto model
@@ -66,6 +71,29 @@ class NerfactoRENIModel(NerfactoModel):
     def populate_modules(self):
         """Set the fields and modules."""
         super().populate_modules()
+
+        # Overwrite nerfacto field with one that predicts albedo (and optionally specular)
+
+
+        if self.config.disable_scene_contraction:
+            scene_contraction = None
+        else:
+            scene_contraction = SceneContraction(order=float("inf"))
+
+        self.field = TCNNNerfactoFieldRENI(
+            self.scene_box.aabb,
+            hidden_dim=self.config.hidden_dim,
+            num_levels=self.config.num_levels,
+            max_res=self.config.max_res,
+            log2_hashmap_size=self.config.log2_hashmap_size,
+            hidden_dim_color=self.config.hidden_dim_color,
+            hidden_dim_transient=self.config.hidden_dim_transient,
+            spatial_distortion=scene_contraction,
+            num_images=self.num_train_data,
+            use_pred_normals=self.config.predict_normals,
+            use_average_appearance_embedding=self.config.use_average_appearance_embedding,
+            predict_specular=self.config.predict_specular,
+        )
 
         self.illumination_sampler = self.config.illumination_sampler.setup()
 
@@ -134,11 +162,13 @@ class NerfactoRENIModel(NerfactoModel):
         if self.config.use_gradient_scaling:
             field_outputs = scale_gradients_by_distance_squared(field_outputs, ray_samples)
 
-        weights = ray_samples.get_weights(field_outputs[FieldHeadNames.DENSITY])
+        weights = ray_samples.get_weights(field_outputs[RENIFieldHeadNames.DENSITY])
         weights_list.append(weights)
         ray_samples_list.append(ray_samples)
 
-        albedo = self.renderer_rgb(rgb=field_outputs[FieldHeadNames.albedo], weights=weights)
+        albedo = self.renderer_rgb(rgb=field_outputs[RENIFieldHeadNames.ALBEDO], weights=weights)
+        if self.config.predict_specular:
+            specular = self.renderer_rgb(rgb=field_outputs[RENIFieldHeadNames.SPECULAR], weights=weights)
         depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
         accumulation = self.renderer_accumulation(weights=weights)
 
@@ -151,7 +181,6 @@ class NerfactoRENIModel(NerfactoModel):
                                                                      normals=normals,
                                                                      light_directions=light_directions,
                                                                      light_colors=light_colors)
-
         outputs = {
             "rgb": shaded_albedo,
             "accumulation": accumulation,

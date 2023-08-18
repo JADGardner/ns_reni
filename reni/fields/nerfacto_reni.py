@@ -22,6 +22,8 @@ from typing import Dict, Optional
 import torch
 from torch import Tensor
 
+from reni.field_components.field_heads import RENIFieldHeadNames
+
 from nerfstudio.cameras.rays import RaySamples
 from nerfstudio.field_components.spatial_distortions import (
     SpatialDistortion,
@@ -130,7 +132,7 @@ class TCNNNerfactoFieldRENI(TCNNNerfactoField):
 
     def get_outputs(
         self, ray_samples: RaySamples, density_embedding: Optional[Tensor] = None
-    ) -> Dict[FieldHeadNames, Tensor]:
+    ) -> Dict[RENIFieldHeadNames, Tensor]:
         assert density_embedding is not None
         outputs = {}
         if ray_samples.camera_indices is None:
@@ -151,9 +153,9 @@ class TCNNNerfactoFieldRENI(TCNNNerfactoField):
                 dim=-1,
             )
             x = self.mlp_transient(transient_input).view(*outputs_shape, -1).to(directions)
-            outputs[FieldHeadNames.UNCERTAINTY] = self.field_head_transient_uncertainty(x)
-            outputs[FieldHeadNames.TRANSIENT_RGB] = self.field_head_transient_rgb(x)
-            outputs[FieldHeadNames.TRANSIENT_DENSITY] = self.field_head_transient_density(x)
+            outputs[RENIFieldHeadNames.UNCERTAINTY] = self.field_head_transient_uncertainty(x)
+            outputs[RENIFieldHeadNames.TRANSIENT_RGB] = self.field_head_transient_rgb(x)
+            outputs[RENIFieldHeadNames.TRANSIENT_DENSITY] = self.field_head_transient_density(x)
 
         # semantics
         if self.use_semantics:
@@ -162,7 +164,7 @@ class TCNNNerfactoFieldRENI(TCNNNerfactoField):
                 semantics_input = semantics_input.detach()
 
             x = self.mlp_semantics(semantics_input).view(*outputs_shape, -1).to(directions)
-            outputs[FieldHeadNames.SEMANTICS] = self.field_head_semantics(x)
+            outputs[RENIFieldHeadNames.SEMANTICS] = self.field_head_semantics(x)
 
         # predicted normals
         if self.use_pred_normals:
@@ -172,7 +174,7 @@ class TCNNNerfactoFieldRENI(TCNNNerfactoField):
             pred_normals_inp = torch.cat([positions_flat, density_embedding.view(-1, self.geo_feat_dim)], dim=-1)
 
             x = self.mlp_pred_normals(pred_normals_inp).view(*outputs_shape, -1).to(directions)
-            outputs[FieldHeadNames.PRED_NORMALS] = self.field_head_pred_normals(x)
+            outputs[RENIFieldHeadNames.PRED_NORMALS] = self.field_head_pred_normals(x)
 
         h = density_embedding.view(-1, self.geo_feat_dim)
 
@@ -181,8 +183,29 @@ class TCNNNerfactoFieldRENI(TCNNNerfactoField):
         if self.prdict_specular:
             specular = rgb[..., 3:]
             rgb = rgb[..., :3]
-            outputs.update({FieldHeadNames.SPECULAR: specular})
+            outputs.update({RENIFieldHeadNames.SPECULAR: specular})
 
-        outputs.update({FieldHeadNames.ALBEDO: rgb})
+        outputs.update({RENIFieldHeadNames.ALBEDO: rgb})
 
         return outputs
+
+    def forward(self, ray_samples: RaySamples, compute_normals: bool = False) -> Dict[RENIFieldHeadNames, Tensor]:
+        """Evaluates the field at points along the ray.
+
+        Args:
+            ray_samples: Samples to evaluate field on.
+        """
+        if compute_normals:
+            with torch.enable_grad():
+                density, density_embedding = self.get_density(ray_samples)
+        else:
+            density, density_embedding = self.get_density(ray_samples)
+
+        field_outputs = self.get_outputs(ray_samples, density_embedding=density_embedding)
+        field_outputs[RENIFieldHeadNames.DENSITY] = density  # type: ignore
+
+        if compute_normals:
+            with torch.enable_grad():
+                normals = self.get_normals()
+            field_outputs[RENIFieldHeadNames.NORMALS] = normals  # type: ignore
+        return field_outputs

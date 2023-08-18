@@ -3,9 +3,10 @@ RENI + NeRF configuration file.
 """
 from reni.data.dataparsers.nerd_dataparser import NeRDDataParserConfig
 from reni.data.datamanagers.nerd_datamanager import NeRDDataManagerConfig
+from reni.models.nerfacto_reni import NerfactoRENIModelConfig
+
 from nerfstudio.cameras.camera_optimizers import CameraOptimizerConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig
-from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManagerConfig
 from nerfstudio.configs.base_config import ViewerConfig
 from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.plugins.types import MethodSpecification
@@ -23,7 +24,7 @@ NeRFactoRENI = MethodSpecification(
         max_num_iterations=30000,
         mixed_precision=True,
         pipeline=VanillaPipelineConfig(
-            datamanager=NeRDDataManagerConfig(lll
+            datamanager=NeRDDataManagerConfig(
                 dataparser=NeRDDataParserConfig(),
                 train_num_rays_per_batch=4096,
                 eval_num_rays_per_batch=4096,
@@ -33,8 +34,8 @@ NeRFactoRENI = MethodSpecification(
                     scheduler=ExponentialDecaySchedulerConfig(lr_final=6e-6, max_steps=200000),
                 ),
             ),
-            model=NerfactoModelConfig(eval_num_rays_per_chunk=1 << 15,
-                                      background_color='white'),
+            model=NerfactoRENIModelConfig(eval_num_rays_per_chunk=1 << 15,
+                                          background_color='white'),
         ),
         optimizers={
             "proposal_networks": {
@@ -49,5 +50,5 @@ NeRFactoRENI = MethodSpecification(
         viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
         vis="viewer",
     ),
-    description="Base config for Nerfacto NeRF-OSR.",
+    description="Base config for Nerfacto.",
 )
