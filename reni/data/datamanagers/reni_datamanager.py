@@ -67,7 +67,7 @@ from nerfstudio.utils.misc import IterableWrapper
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager, VanillaDataManagerConfig, variable_res_collate, TDataset
 from nerfstudio.utils.rich_utils import CONSOLE
 
-from reni.data.reni_dataset import RENIDataset
+from reni.data.datasets.reni_dataset import RENIDataset
 from reni.data.reni_pixel_sampler import RENIEquirectangularPixelSampler
 
 @dataclass

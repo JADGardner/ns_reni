@@ -11,8 +11,9 @@ dependencies=[
 include = ["reni*"]
 
 [project.entry-points.'nerfstudio.method_configs']
-reni = 'reni.reni_config:RENIField'
-resgan = 'reni.reni_config:RESGANField'
-sh-illumination-field = 'reni.reni_config:SHField'
-sg-illumination-field = 'reni.reni_config:SGField'
-envrionment-map-field = 'reni.reni_config:EnvMapField'
+reni = 'reni.configs.reni_config:RENIField'
+resgan = 'reni.configs.resgan_config:RESGANField'
+sh-illumination-field = 'reni.configs.sh_sg_envmap_configs:SHField'
+sg-illumination-field = 'reni.configs.sh_sg_envmap_configs:SGField'
+envrionment-map-field = 'reni.configs.sh_sg_envmap_configs:EnvMapField'
+nerfacto-reni = 'reni.configs.nerfacto_reni_config:NeRFactoRENI'

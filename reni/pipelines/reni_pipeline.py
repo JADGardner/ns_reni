@@ -42,7 +42,7 @@ from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import profiler
 from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig, VanillaPipeline
 
-from reni.data.reni_datamanager import RENIDataManagerConfig, RENIDataManager
+from reni.data.datamanagers.reni_datamanager import RENIDataManagerConfig, RENIDataManager
 
 
 @dataclass

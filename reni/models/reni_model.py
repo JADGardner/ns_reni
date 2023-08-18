@@ -58,10 +58,10 @@ class RENIModelConfig(ModelConfig):
     training_regime: Literal["vae", "autodecoder", "gan"] = "autodecoder"
     """Type of training, either as an vae, (variational)autodecoder or generative adversarial network"""
     loss_inclusions: Dict[str, bool] = to_immutable_dict({
-        'log_mse_loss': True,
+        'log_mse_loss': False,
         'hdr_mse_loss': False,
         'ldr_mse_loss': False,
-        'kld_loss': True,
+        'kld_loss': False,
         'cosine_similarity_loss': False,
         'scale_inv_loss': False,
         'scale_inv_grad_loss': False,

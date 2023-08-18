@@ -36,7 +36,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from typing_extensions import Literal
 
 
-from reni.data.reni_datamanager import RENIDataManagerConfig, RENIDataManager
+from reni.data.datamanagers.reni_datamanager import RENIDataManagerConfig, RENIDataManager
 from reni.discriminators.discriminators import BaseDiscriminatorConfig
 
 from nerfstudio.data.datamanagers.base_datamanager import (
