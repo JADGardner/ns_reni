@@ -15,7 +15,10 @@
 """Shaders for rendering."""
 from typing import Optional
 
+from reni.utils.colourspace import linear_to_sRGB
+
 from jaxtyping import Float
+import torch
 from torch import Tensor, nn
 
 class LambertianShader(nn.Module):
@@ -49,7 +52,7 @@ class LambertianShader(nn.Module):
         normals_expanded = normals.unsqueeze(1)
 
         # Compute dot product along last dimension [-1], result has shape [bs, num_light_directions]
-        lambertian_per_light = (normals_expanded @ light_directions).squeeze(-1).clamp(min=0)
+        lambertian_per_light = torch.einsum("...i,...i->...", normals_expanded, light_directions).clamp(min=0.0)
 
         # Compute shading for each light, result has shape [bs, num_light_directions, 3]
         lambertian_colors = lambertian_per_light.unsqueeze(-1) * light_colors
@@ -58,6 +61,9 @@ class LambertianShader(nn.Module):
         lambertian_color_sum = lambertian_colors.sum(1)
 
         shaded_albedo = albedo * lambertian_color_sum
+
+        lambertian_color_sum = linear_to_sRGB(lambertian_color_sum)
+        shaded_albedo = linear_to_sRGB(shaded_albedo)
 
         return lambertian_color_sum, shaded_albedo
 

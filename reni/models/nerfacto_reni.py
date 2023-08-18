@@ -103,7 +103,7 @@ class NerfactoRENIModel(NerfactoModel):
 
         self.illumination_field = self.config.illumination_field.setup(num_train_data=None, num_eval_data=self.num_train_data, normalisations=normalisations)
 
-        if isinstance(self.illumination_field_train, RENIField):
+        if isinstance(self.illumination_field, RENIField):
             # # Now you can use this to construct paths:
             project_root = find_nerfstudio_project_root(Path(__file__))
             relative_path = self.config.illumination_field_ckpt_path / 'nerfstudio_models' / f'step-{self.config.illumination_field_ckpt_step:09d}.ckpt'
@@ -131,6 +131,7 @@ class NerfactoRENIModel(NerfactoModel):
     def get_illumination(self, camera_indices: torch.Tensor):
         """Generate samples and sample illumination field"""
         illumination_ray_samples = self.illumination_sampler()  #[num_illumination_directions, 3]
+        illumination_ray_samples = illumination_ray_samples.to(self.device)
         camera_indices_for_uniqueness = camera_indices[:, 0] # [num_rays, sampels_per_ray] -> [num_rays]
         unique_indices, inverse_indices = torch.unique(camera_indices_for_uniqueness, return_inverse=True)
         # unique_indices: [num_unique_camera_indices]
@@ -172,15 +173,16 @@ class NerfactoRENIModel(NerfactoModel):
         depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
         accumulation = self.renderer_accumulation(weights=weights)
 
-        normals = self.renderer_normals(normals=field_outputs[FieldHeadNames.NORMALS], weights=weights)
-        pred_normals = self.renderer_normals(field_outputs[FieldHeadNames.PRED_NORMALS], weights=weights)
+        normals = self.renderer_normals(normals=field_outputs[RENIFieldHeadNames.NORMALS], weights=weights)
+        pred_normals = self.renderer_normals(field_outputs[RENIFieldHeadNames.PRED_NORMALS], weights=weights)
 
         light_colors, light_directions = self.get_illumination(ray_bundle.camera_indices)
 
         lambertian_color_sum, shaded_albedo = self.lambertian_shader(albedo=albedo,
                                                                      normals=normals,
                                                                      light_directions=light_directions,
-                                                                     light_colors=light_colors)
+                                                                     light_colors=light_colors,
+                                                                     detach_normals=False)
         outputs = {
             "rgb": shaded_albedo,
             "accumulation": accumulation,
@@ -196,13 +198,13 @@ class NerfactoRENIModel(NerfactoModel):
 
         if self.training and self.config.predict_normals:
             outputs["rendered_orientation_loss"] = orientation_loss(
-                weights.detach(), field_outputs[FieldHeadNames.NORMALS], ray_bundle.directions
+                weights.detach(), field_outputs[RENIFieldHeadNames.NORMALS], ray_bundle.directions
             )
 
             outputs["rendered_pred_normal_loss"] = pred_normal_loss(
                 weights.detach(),
-                field_outputs[FieldHeadNames.NORMALS].detach(),
-                field_outputs[FieldHeadNames.PRED_NORMALS],
+                field_outputs[RENIFieldHeadNames.NORMALS].detach(),
+                field_outputs[RENIFieldHeadNames.PRED_NORMALS],
             )
 
         for i in range(self.config.num_proposal_iterations):
