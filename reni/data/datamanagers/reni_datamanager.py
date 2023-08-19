@@ -51,8 +51,6 @@ from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
 from nerfstudio.data.dataparsers.blender_dataparser import BlenderDataParserConfig
 from nerfstudio.data.datasets.base_dataset import InputDataset
 from nerfstudio.data.pixel_samplers import (
-    EquirectangularPixelSampler,
-    PatchPixelSampler,
     PixelSampler,
 )
 from nerfstudio.data.utils.dataloaders import (
@@ -64,11 +62,16 @@ from nerfstudio.data.utils.nerfstudio_collate import nerfstudio_collate
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes
 from nerfstudio.model_components.ray_generators import RayGenerator
 from nerfstudio.utils.misc import IterableWrapper
-from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager, VanillaDataManagerConfig, variable_res_collate, TDataset
+from nerfstudio.data.datamanagers.base_datamanager import (
+    VanillaDataManager,
+    VanillaDataManagerConfig,
+    variable_res_collate,
+    TDataset,
+)
 from nerfstudio.utils.rich_utils import CONSOLE
 
 from reni.data.datasets.reni_dataset import RENIDataset
-from reni.data.reni_pixel_sampler import RENIEquirectangularPixelSampler
+
 
 @dataclass
 class RENIDataManagerConfig(VanillaDataManagerConfig):
@@ -76,10 +79,6 @@ class RENIDataManagerConfig(VanillaDataManagerConfig):
 
     _target: Type = field(default_factory=lambda: RENIDataManager)
     """Target class to instantiate."""
-    full_image_per_batch: bool = False
-    """Whether to use full images per batch."""
-    number_of_images_per_batch: int = 1
-    """Number of images per batch."""
 
 
 class RENIDataManager(VanillaDataManager):
@@ -134,11 +133,11 @@ class RENIDataManager(VanillaDataManager):
         self.num_train = len(self.train_dataset)
         self.num_eval = len(self.eval_dataset)
 
-        self.image_height = self.train_dataset.metadata['image_height']
-        self.image_width = self.train_dataset.metadata['image_width']
+        self.image_height = self.train_dataset.metadata["image_height"]
+        self.image_width = self.train_dataset.metadata["image_width"]
 
         # add batch_size to metadata
-        self.train_dataset.metadata['batch_size'] = self.config.number_of_images_per_batch
+        self.train_dataset.metadata["batch_size"] = self.config.pixel_sampler.images_per_batch
 
         if self.train_dataparser_outputs is not None:
             cameras = self.train_dataparser_outputs.cameras
@@ -151,19 +150,9 @@ class RENIDataManager(VanillaDataManager):
 
         super(VanillaDataManager, self).__init__()  # Call grandparent class constructor ignoring parent class
 
-    def _get_pixel_sampler(self, dataset: TDataset, *args: Any, **kwargs: Any) -> PixelSampler:
+    def _get_pixel_sampler(self, dataset: TDataset, num_rays_per_batch: int, **kwargs) -> PixelSampler:
         """Infer pixel sampler to use."""
-        if self.config.patch_size > 1:
-            return PatchPixelSampler(*args, **kwargs, patch_size=self.config.patch_size)
-
-        # If all images are equirectangular, use equirectangular pixel sampler
-        is_equirectangular = dataset.cameras.camera_type == CameraType.EQUIRECTANGULAR.value
-        if is_equirectangular.all():
-            return RENIEquirectangularPixelSampler(*args, **kwargs) # NOTE: Updated to RENI sampler
-        # Otherwise, use the default pixel sampler
-        if is_equirectangular.any():
-            CONSOLE.print("[bold yellow]Warning: Some cameras are equirectangular, but using default pixel sampler.")
-        return PixelSampler(*args, **kwargs)
+        return self.config.pixel_sampler.setup(is_equirectangular=True, num_rays_per_batch=num_rays_per_batch, **kwargs)
 
     def setup_train(self):
         """Sets up the data loaders for training"""
@@ -180,7 +169,7 @@ class RENIDataManager(VanillaDataManager):
         )
         self.iter_train_image_dataloader = iter(self.train_image_dataloader)
         # NOTE: Updated to RENI sampler where full image per batch is possible
-        self.train_pixel_sampler = self._get_pixel_sampler(self.train_dataset, self.config.train_num_rays_per_batch, keep_full_image=False, sample_full_image=self.config.full_image_per_batch, images_per_batch=self.config.number_of_images_per_batch)
+        self.train_pixel_sampler = self._get_pixel_sampler(self.train_dataset, self.config.train_num_rays_per_batch)
         self.train_camera_optimizer = self.config.camera_optimizer.setup(
             num_cameras=self.train_dataset.cameras.size, device=self.device
         )
@@ -203,8 +192,13 @@ class RENIDataManager(VanillaDataManager):
             collate_fn=self.config.collate_fn,
         )
         self.iter_eval_image_dataloader = iter(self.eval_image_dataloader)
-        self.eval_pixel_sampler = self._get_pixel_sampler(self.eval_dataset, self.config.eval_num_rays_per_batch, keep_full_image=False, sample_full_image=self.config.full_image_per_batch, images_per_batch=1)
-        self.eval_image_pixel_sampler = self._get_pixel_sampler(self.eval_dataset, self.config.eval_num_rays_per_batch, keep_full_image=False, sample_full_image=True, images_per_batch=1)
+        self.eval_pixel_sampler = self._get_pixel_sampler(self.eval_dataset, self.config.eval_num_rays_per_batch)
+        self.eval_image_pixel_sampler = self._get_pixel_sampler(
+            self.eval_dataset,
+            self.config.eval_num_rays_per_batch,
+            full_image_per_batch=True,
+            images_per_batch=1,
+        )
 
         self.eval_camera_optimizer = self.config.camera_optimizer.setup(
             num_cameras=self.eval_dataset.cameras.size, device=self.device
@@ -226,83 +220,89 @@ class RENIDataManager(VanillaDataManager):
         )
 
     def stack_ray_bundle(self, ray_bundle: RayBundle, num_rays: int) -> RayBundle:
-        ray_bundle.directions = torch.stack([ray_bundle.directions[:num_rays], ray_bundle.directions[num_rays:]], dim=0) # [2, N, 3]
-        ray_bundle.origins = torch.stack([ray_bundle.origins[:num_rays], ray_bundle.origins[num_rays:]], dim=0) # [2, N, 3]
-        ray_bundle.camera_indices = torch.stack([ray_bundle.camera_indices[:num_rays], ray_bundle.camera_indices[num_rays:]], dim=0) # [2, N, 1]
+        ray_bundle.directions = torch.stack(
+            [ray_bundle.directions[:num_rays], ray_bundle.directions[num_rays:]], dim=0
+        )  # [2, N, 3]
+        ray_bundle.origins = torch.stack(
+            [ray_bundle.origins[:num_rays], ray_bundle.origins[num_rays:]], dim=0
+        )  # [2, N, 3]
+        ray_bundle.camera_indices = torch.stack(
+            [ray_bundle.camera_indices[:num_rays], ray_bundle.camera_indices[num_rays:]], dim=0
+        )  # [2, N, 1]
         return ray_bundle
-    
+
     def next_train(self, step: int) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data from the train dataloader."""
         self.train_count += 1
-        image_batch = next(self.iter_train_image_dataloader) # [len(train_dataset), H, W, 3]
+        image_batch = next(self.iter_train_image_dataloader)  # [len(train_dataset), H, W, 3]
         assert self.train_pixel_sampler is not None
         assert isinstance(image_batch, dict)
         batch = self.train_pixel_sampler.sample(image_batch)
         if self.using_scale_inv_grad_loss:
-            finite_diff_grad_indices = batch['indices'].clone()
+            finite_diff_grad_indices = batch["indices"].clone()
             # update the index to be samples_idxs
-            finite_diff_grad_indices[:, 0] = batch['sampled_idxs'].clone()
+            finite_diff_grad_indices[:, 0] = batch["sampled_idxs"].clone()
             # roll the x values by 1 using datamanger.image_width as mod
             finite_diff_grad_indices[:, 2] = (finite_diff_grad_indices[:, 2] + 1) % self.image_width
             finite_diff_batch = self.train_pixel_sampler.sample(image_batch, indices=finite_diff_grad_indices)
-            ray_indices = torch.cat([batch["indices"], finite_diff_batch['indices']], dim=0) # [2N, 3]
+            ray_indices = torch.cat([batch["indices"], finite_diff_batch["indices"]], dim=0)  # [2N, 3]
             for key in batch:
-                batch[key] = torch.stack([batch[key], finite_diff_batch[key]], dim=0) # [2, N, ...]
-            batch.pop('sampled_idxs')
-            ray_bundle = self.train_ray_generator(ray_indices) # [2N, 3]
-            ray_bundle = self.stack_ray_bundle(ray_bundle, self.config.train_num_rays_per_batch) # [2, N, 3]
+                batch[key] = torch.stack([batch[key], finite_diff_batch[key]], dim=0)  # [2, N, ...]
+            batch.pop("sampled_idxs")
+            ray_bundle = self.train_ray_generator(ray_indices)  # [2N, 3]
+            ray_bundle = self.stack_ray_bundle(ray_bundle, self.config.train_num_rays_per_batch)  # [2, N, 3]
         else:
-          ray_indices = batch["indices"] # [N, 3]
-          ray_bundle = self.train_ray_generator(ray_indices) # [N, 3]
+            ray_indices = batch["indices"]  # [N, 3]
+            ray_bundle = self.train_ray_generator(ray_indices)  # [N, 3]
         return ray_bundle, batch
 
     def next_eval(self, step: int) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data from the eval dataloader."""
         self.eval_count += 1
-        image_batch = next(self.iter_eval_image_dataloader) # [len(eval_dataset), H, W, 3]
+        image_batch = next(self.iter_eval_image_dataloader)  # [len(eval_dataset), H, W, 3]
         assert self.eval_pixel_sampler is not None
         assert isinstance(image_batch, dict)
         batch = self.eval_pixel_sampler.sample(image_batch)
         if self.using_scale_inv_grad_loss:
-            finite_diff_grad_indices = batch['indices'].clone()
+            finite_diff_grad_indices = batch["indices"].clone()
             # update the index to be samples_idxs
-            finite_diff_grad_indices[:, 0] = batch['sampled_idxs'].clone()
+            finite_diff_grad_indices[:, 0] = batch["sampled_idxs"].clone()
             # # roll the x values by 1 using datamanger.image_width as mod
             finite_diff_grad_indices[:, 2] = (finite_diff_grad_indices[:, 2] + 1) % self.image_width
             finite_diff_batch = self.eval_pixel_sampler.sample(image_batch, indices=finite_diff_grad_indices)
-            ray_indices = torch.cat([batch["indices"], finite_diff_batch['indices']], dim=0) # [2N, 3]
+            ray_indices = torch.cat([batch["indices"], finite_diff_batch["indices"]], dim=0)  # [2N, 3]
             for key in batch:
-                batch[key] = torch.stack([batch[key], finite_diff_batch[key]], dim=0) # [2, N, ...]
-            batch.pop('sampled_idxs')
-            ray_bundle = self.eval_ray_generator(ray_indices) # [2N, 3]
-            ray_bundle = self.stack_ray_bundle(ray_bundle, self.config.eval_num_rays_per_batch) # [2, N, 3]
+                batch[key] = torch.stack([batch[key], finite_diff_batch[key]], dim=0)  # [2, N, ...]
+            batch.pop("sampled_idxs")
+            ray_bundle = self.eval_ray_generator(ray_indices)  # [2N, 3]
+            ray_bundle = self.stack_ray_bundle(ray_bundle, self.config.eval_num_rays_per_batch)  # [2, N, 3]
         else:
             ray_indices = batch["indices"]
             ray_bundle = self.eval_ray_generator(ray_indices)
         return ray_bundle, batch
-    
+
     def next_eval_image(self, idx: int) -> Tuple[int, RayBundle, Dict]:
         self.eval_count += 1
         idx = idx % len(self.eval_dataset)
-        image_batch = self.eval_image_dataloader[idx] # [H, W, 3]
-        image_batch['image_idx'] = torch.tensor([image_batch['image_idx']])
-        image_batch['image'] = image_batch['image'].unsqueeze(0)
+        image_batch = self.eval_image_dataloader[idx]  # [H, W, 3]
+        image_batch["image_idx"] = torch.tensor([image_batch["image_idx"]])
+        image_batch["image"] = image_batch["image"].unsqueeze(0)
         assert self.eval_image_pixel_sampler is not None
         assert isinstance(image_batch, dict)
         batch = self.eval_image_pixel_sampler.sample(image_batch)
         if self.using_scale_inv_grad_loss:
-            finite_diff_grad_indices = batch['indices'].clone()
+            finite_diff_grad_indices = batch["indices"].clone()
             # update the index to be samples_idxs
-            finite_diff_grad_indices[:, 0] = batch['sampled_idxs'].clone()
+            finite_diff_grad_indices[:, 0] = batch["sampled_idxs"].clone()
             # # roll the x values by 1 using datamanger.image_width as mod
             finite_diff_grad_indices[:, 2] = (finite_diff_grad_indices[:, 2] + 1) % self.image_width
             finite_diff_batch = self.eval_image_pixel_sampler.sample(image_batch, indices=finite_diff_grad_indices)
-            ray_indices = torch.cat([batch["indices"], finite_diff_batch['indices']], dim=0) # [2N, 3]
+            ray_indices = torch.cat([batch["indices"], finite_diff_batch["indices"]], dim=0)  # [2N, 3]
             for key in batch:
-                batch[key] = torch.stack([batch[key], finite_diff_batch[key]], dim=0) # [2, N, ...]
-            batch.pop('sampled_idxs')
-            ray_bundle = self.eval_ray_generator(ray_indices) # [2N, 3]
-            ray_bundle = self.stack_ray_bundle(ray_bundle, self.image_height*self.image_width) # [2, N, 3]
+                batch[key] = torch.stack([batch[key], finite_diff_batch[key]], dim=0)  # [2, N, ...]
+            batch.pop("sampled_idxs")
+            ray_bundle = self.eval_ray_generator(ray_indices)  # [2N, 3]
+            ray_bundle = self.stack_ray_bundle(ray_bundle, self.image_height * self.image_width)  # [2, N, 3]
             image_idx = int(ray_bundle.camera_indices[0, 0, 0])
         else:
             ray_indices = batch["indices"]

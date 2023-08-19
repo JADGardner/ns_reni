@@ -17,30 +17,6 @@ Collection of RENI Losses.
 """
 import torch
 from torch import nn
-from torch.functional import F
-
-class WeightedMSE(nn.Module):
-    """
-    CSlass for the weighted Mean Squared Error (MSE) loss.
-    """
-    def __init__(self):
-        super(WeightedMSE, self).__init__()
-
-    def forward(self, model_output, ground_truth, sineweight):
-        """
-        WeightedMSE class.
-
-        Parameters:
-        model_output (torch.Tensor): The output of the model.
-        ground_truth (torch.Tensor): The actual truth or label.
-        sineweight (torch.Tensor): The weight for each prediction.
-
-        Returns:
-        torch.Tensor: The weighted mean squared error.
-        """
-        MSE = (((model_output - ground_truth) ** 2) * sineweight).mean(0).sum()
-        return MSE
-
 
 class KLD(nn.Module):
     """
@@ -66,16 +42,6 @@ class KLD(nn.Module):
         kld /= self.Z_dims
         kld = kld.sum(0)
         return kld
-
-class WeightedCosineSimilarity(nn.Module):
-    """Weighted Cosine Similarity loss"""
-
-    def __init__(self, *args, **kwargs) -> None:
-        super(WeightedCosineSimilarity, self).__init__()
-
-    def forward(self, model_output, ground_truth, sineweight):
-        return (1 - (F.cosine_similarity(model_output, ground_truth, dim=1, eps=1e-20)* sineweight[:, 0]).mean(0)).sum(0)
-    
 
 class ScaleInvariantLogLoss(nn.Module):
     def __init__(self):

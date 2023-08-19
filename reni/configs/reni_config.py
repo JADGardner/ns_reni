@@ -10,6 +10,7 @@ from reni.pipelines.reni_pipeline import RENIPipelineConfig
 from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
 from reni.field_components.vn_encoder import VariationalVNEncoderConfig
 from reni.discriminators.discriminators import CNNDiscriminatorConfig
+from reni.data.reni_pixel_sampler import RENIEquirectangularPixelSamplerConfig
 
 from nerfstudio.configs.base_config import ViewerConfig, MachineConfig
 from nerfstudio.engine.trainer import TrainerConfig
@@ -24,7 +25,7 @@ RENIField = MethodSpecification(
     config=TrainerConfig(
         method_name="reni",
         experiment_name="reni",
-        machine=MachineConfig(num_gpus=1),
+        machine=MachineConfig(),
         steps_per_eval_image=5000,
         steps_per_eval_batch=100000,
         steps_per_save=1000,
@@ -40,30 +41,34 @@ RENIField = MethodSpecification(
                     val_subset_size=None,
                     convert_to_ldr=False,
                     convert_to_log_domain=True,
-                    min_max_normalize=None, # in e^min = 0.0111, e^max = 8103.08
+                    min_max_normalize=None,  # in e^min = 0.0111, e^max = 8103.08
                     use_validation_as_train=False,
                 ),
+                pixel_sampler=RENIEquirectangularPixelSamplerConfig(
+                    num_rays_per_batch=8192,
+                    full_image_per_batch=False,
+                    images_per_batch=2,
+                    is_equirectangular=True,
+                ),
                 train_num_rays_per_batch=8192,
-                full_image_per_batch=False,
-                number_of_images_per_batch=2, # if using full images
             ),
             model=RENIModelConfig(
                 field=RENIFieldConfig(
-                    conditioning='Attention',
+                    conditioning="Attention",
                     invariant_function="VN",
                     equivariance="SO2",
-                    axis_of_invariance="z", # Nerfstudio world space is z-up
+                    axis_of_invariance="z",  # Nerfstudio world space is z-up
                     positional_encoding="NeRF",
-                    encoded_input="Directions", # "InvarDirection", "Directions", "Conditioning", "Both"
-                    latent_dim=100, # N for a latent code size of (N x 3)
-                    hidden_features=128, # ALL
-                    hidden_layers=9, # SIRENs
-                    mapping_layers=5, # FiLM MAPPING NETWORK
-                    mapping_features=128, # FiLM MAPPING NETWORK
-                    num_attention_heads=8, # TRANSFORMER
-                    num_attention_layers=6, # TRANSFORMER
-                    output_activation="None", # ALL
-                    last_layer_linear=True, # SIRENs
+                    encoded_input="Directions",  # "InvarDirection", "Directions", "Conditioning", "Both"
+                    latent_dim=100,  # N for a latent code size of (N x 3)
+                    hidden_features=128,  # ALL
+                    hidden_layers=9,  # SIRENs
+                    mapping_layers=5,  # FiLM MAPPING NETWORK
+                    mapping_features=128,  # FiLM MAPPING NETWORK
+                    num_attention_heads=8,  # TRANSFORMER
+                    num_attention_layers=6,  # TRANSFORMER
+                    output_activation="None",  # ALL
+                    last_layer_linear=True,  # SIRENs
                 ),
                 discriminator=CNNDiscriminatorConfig(
                     num_layers=5,
@@ -72,12 +77,12 @@ RENIField = MethodSpecification(
                 encoder=VariationalVNEncoderConfig(
                     l2_dist_attn=True,
                     invariance="SO2",
-                    fusion_strategy='late',
+                    fusion_strategy="late",
                 ),
                 eval_optimisation_params={
                     "num_steps": 2500,
                     "lr_start": 1e-1,
-                    "lr_end": 1e-7, 
+                    "lr_end": 1e-7,
                 },
                 loss_coefficients={
                     "log_mse_loss": 10.0,
@@ -96,14 +101,16 @@ RENIField = MethodSpecification(
                     "kld_loss": True,
                     "scale_inv_loss": True,
                     "scale_inv_grad_loss": False,
+                    "bce_loss": False,
+                    "wgan_loss": False,
                 },
-                include_sine_weighting=False, # This is already done by the equirectangular pixel sampler
+                include_sine_weighting=False,  # This is already done by the equirectangular pixel sampler
                 training_regime="autodecoder",
             ),
         ),
         optimizers={
             "field": {
-                "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15), # 1e-3 for Attention, 1e-5 for Other
+                "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),  # 1e-3 for Attention, 1e-5 for Other
                 "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
             },
             "encoder": {

@@ -34,6 +34,7 @@ from rich.progress import (
 
 from torch.nn.parallel import DistributedDataParallel as DDP
 from typing_extensions import Literal
+from torch.cuda.amp.grad_scaler import GradScaler
 
 from nerfstudio.data.datamanagers.base_datamanager import (
     DataManagerConfig,
@@ -86,15 +87,20 @@ class RENIPipeline(VanillaPipeline):
         test_mode: Literal["test", "val", "inference"] = "val",
         world_size: int = 1,
         local_rank: int = 0,
+        grad_scaler: Optional[GradScaler] = None,
     ):
         super(VanillaPipeline, self).__init__()  # Call grandparent class constructor ignoring parent class
         self.config = config
         self.test_mode = test_mode
 
-        self.using_scale_inv_grad_loss = self.config.model.loss_inclusions['scale_inv_grad_loss']
+        self.using_scale_inv_grad_loss = self.config.model.loss_inclusions["scale_inv_grad_loss"]
 
         self.datamanager: RENIDataManager = config.datamanager.setup(
-            device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank, using_scale_inv_grad_loss=self.using_scale_inv_grad_loss
+            device=device,
+            test_mode=test_mode,
+            world_size=world_size,
+            local_rank=local_rank,
+            using_scale_inv_grad_loss=self.using_scale_inv_grad_loss,
         )
         self.datamanager.to(device)
         assert self.datamanager.train_dataset is not None, "Missing input dataset"
@@ -117,7 +123,6 @@ class RENIPipeline(VanillaPipeline):
         if world_size > 1:
             self._model = typing.cast(Model, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
             dist.barrier(device_ids=[local_rank])
-
 
         self.last_step_of_eval_optimisation = 0
 
@@ -143,7 +148,7 @@ class RENIPipeline(VanillaPipeline):
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
 
         return model_outputs, loss_dict, metrics_dict
-    
+
     @profiler.time_function
     def get_eval_loss_dict(self, step: int):
         """This function gets your evaluation loss dict. It needs to get the data
@@ -178,12 +183,12 @@ class RENIPipeline(VanillaPipeline):
                 self.model.fit_eval_latents(self.datamanager)
             self.last_step_of_eval_optimisation = step
         image_idx, ray_bundle, batch = self.datamanager.next_eval_image(step)
-        outputs = self.model(ray_bundle, batch)  
+        outputs = self.model(ray_bundle, batch)
         metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
         assert "image_idx" not in metrics_dict
         metrics_dict["image_idx"] = image_idx
         assert "num_rays" not in metrics_dict
-        metrics_dict["num_rays"] = ray_bundle.directions.shape[-2] # as directions is either [2, N, 3] or [N, 3]
+        metrics_dict["num_rays"] = ray_bundle.directions.shape[-2]  # as directions is either [2, N, 3] or [N, 3]
         self.train()
         return metrics_dict, images_dict
 
@@ -216,7 +221,7 @@ class RENIPipeline(VanillaPipeline):
                 num_rays = ray_bundle.directions.shape[-2]
                 # time this the following line
                 inner_start = time()
-                outputs = self.model(ray_bundle, batch)    
+                outputs = self.model(ray_bundle, batch)
                 metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch)
                 assert "num_rays_per_sec" not in metrics_dict
                 metrics_dict["num_rays_per_sec"] = num_rays / (time() - inner_start)

@@ -17,15 +17,11 @@ Optimizers class.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Type
+from typing import Optional
 
 import torch
 from torch.cuda.amp.grad_scaler import GradScaler
-from torch.nn.parameter import Parameter
 
-from nerfstudio.configs import base_config
-from nerfstudio.utils import writer
 from nerfstudio.engine.optimizers import Optimizers
 
 
@@ -36,9 +32,6 @@ class RESGANOptimizers(Optimizers):
         config: The optimizer configuration object.
         param_groups: A dictionary of parameter groups to optimize.
     """
-
-    def __init__(self, config: Dict[str, Any], param_groups: Dict[str, List[Parameter]]) -> None:
-        super().__init__(config, param_groups)
 
     def optimizer_step(self, param_group_name: str, grad_scaler: Optional[GradScaler] = None) -> None:
         """Fetch and step corresponding optimizer using grad scaler if provided.
@@ -60,12 +53,3 @@ class RESGANOptimizers(Optimizers):
                 optimizer.zero_grad()
         else:
             optimizer.step()
-
-    def scheduler_step(self, param_group_name: str) -> None:
-        """Fetch and step corresponding scheduler.
-
-        Args:
-            param_group_name: name of scheduler to step forward
-        """
-        if "scheduler" in self.config[param_group_name]:
-            self.schedulers[param_group_name].step()

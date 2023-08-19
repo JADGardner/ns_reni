@@ -28,8 +28,8 @@ from nerfstudio.cameras.rays import RaySamples
 from nerfstudio.field_components.spatial_distortions import (
     SpatialDistortion,
 )
-from nerfstudio.fields.base_field import shift_directions_for_tcnn
-from nerfstudio.fields.nerfacto_field import TCNNNerfactoField
+
+from nerfstudio.fields.nerfacto_field import NerfactoField
 
 try:
     import tinycudann as tcnn
@@ -38,7 +38,7 @@ except ImportError:
     pass
 
 
-class TCNNNerfactoFieldRENI(TCNNNerfactoField):
+class NerfactoFieldRENI(NerfactoField):
     """Compound Field that uses TCNN
 
     Args:
@@ -92,28 +92,30 @@ class TCNNNerfactoFieldRENI(TCNNNerfactoField):
         spatial_distortion: Optional[SpatialDistortion] = None,
         predict_specular: bool = False,
     ) -> None:
-        super().__init__(aabb=aabb,
-                         num_images=num_images,
-                         num_layers=num_layers,
-                         hidden_dim=hidden_dim,
-                         geo_feat_dim=geo_feat_dim,
-                         num_levels=num_levels,
-                         max_res=max_res,
-                         log2_hashmap_size=log2_hashmap_size,
-                         num_layers_color=num_layers_color,
-                         num_layers_transient=num_layers_transient,
-                         hidden_dim_color=hidden_dim_color,
-                         hidden_dim_transient=hidden_dim_transient,
-                         appearance_embedding_dim=appearance_embedding_dim,
-                         transient_embedding_dim=transient_embedding_dim,
-                         use_transient_embedding=use_transient_embedding,
-                         use_semantics=use_semantics,
-                         num_semantic_classes=num_semantic_classes,
-                         pass_semantic_gradients=pass_semantic_gradients,
-                         use_pred_normals=use_pred_normals,
-                         use_average_appearance_embedding=use_average_appearance_embedding,
-                         spatial_distortion=spatial_distortion)
-        
+        super().__init__(
+            aabb=aabb,
+            num_images=num_images,
+            num_layers=num_layers,
+            hidden_dim=hidden_dim,
+            geo_feat_dim=geo_feat_dim,
+            num_levels=num_levels,
+            max_res=max_res,
+            log2_hashmap_size=log2_hashmap_size,
+            num_layers_color=num_layers_color,
+            num_layers_transient=num_layers_transient,
+            hidden_dim_color=hidden_dim_color,
+            hidden_dim_transient=hidden_dim_transient,
+            appearance_embedding_dim=appearance_embedding_dim,
+            transient_embedding_dim=transient_embedding_dim,
+            use_transient_embedding=use_transient_embedding,
+            use_semantics=use_semantics,
+            num_semantic_classes=num_semantic_classes,
+            pass_semantic_gradients=pass_semantic_gradients,
+            use_pred_normals=use_pred_normals,
+            use_average_appearance_embedding=use_average_appearance_embedding,
+            spatial_distortion=spatial_distortion,
+        )
+
         self.prdict_specular = predict_specular
 
         # modify so only takes in positions
@@ -138,7 +140,7 @@ class TCNNNerfactoFieldRENI(TCNNNerfactoField):
         if ray_samples.camera_indices is None:
             raise AttributeError("Camera indices are not provided.")
         camera_indices = ray_samples.camera_indices.squeeze()
-        directions = shift_directions_for_tcnn(ray_samples.frustums.directions)
+        directions = get_normalized_directions(ray_samples.frustums.directions)
 
         outputs_shape = ray_samples.frustums.directions.shape[:-1]
 

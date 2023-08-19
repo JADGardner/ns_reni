@@ -10,6 +10,7 @@ from reni.pipelines.reni_pipeline import RENIPipelineConfig
 from reni.illumination_fields.sg_illumination_field import SphericalGaussianFieldConfig
 from reni.illumination_fields.sh_illumination_field import SphericalHarmonicIlluminationFieldConfig
 from reni.illumination_fields.environment_map_field import EnvironmentMapFieldConfig
+from reni.data.reni_pixel_sampler import RENIEquirectangularPixelSamplerConfig
 
 from nerfstudio.configs.base_config import ViewerConfig
 from nerfstudio.engine.trainer import TrainerConfig
@@ -38,12 +39,16 @@ SHField = MethodSpecification(
                     val_subset_size=None,
                     convert_to_ldr=True,
                     convert_to_log_domain=False,
-                    min_max_normalize=None, # in e^min = 0.0111, e^max = 8103.08
+                    min_max_normalize=None,  # in e^min = 0.0111, e^max = 8103.08
                     use_validation_as_train=False,
                 ),
+                pixel_sampler=RENIEquirectangularPixelSamplerConfig(
+                    num_rays_per_batch=8192,
+                    full_image_per_batch=False,
+                    images_per_batch=2,
+                    is_equirectangular=True,
+                ),
                 train_num_rays_per_batch=8192,
-                full_image_per_batch=False, # overwrites train_num_rays_per_batch
-                number_of_images_per_batch=1, # overwrites train_num_rays_per_batch
             ),
             model=RENIModelConfig(
                 field=SphericalHarmonicIlluminationFieldConfig(
@@ -102,16 +107,18 @@ SGField = MethodSpecification(
                     train_subset_size=None,
                     convert_to_ldr=False,
                     convert_to_log_domain=True,
-                    min_max_normalize=None, # in e^min = 0.0111, e^max = 8103.08
+                    min_max_normalize=None,  # in e^min = 0.0111, e^max = 8103.08
+                ),
+                pixel_sampler=RENIEquirectangularPixelSamplerConfig(
+                    num_rays_per_batch=8192,
+                    full_image_per_batch=False,
+                    images_per_batch=2,
+                    is_equirectangular=True,
                 ),
                 train_num_rays_per_batch=8192,
-                full_image_per_batch=False,
             ),
             model=RENIModelConfig(
-                field=SphericalGaussianFieldConfig(
-                    row_col_gaussian_dims=(2, 1),
-                    channel_dim=3
-                ),
+                field=SphericalGaussianFieldConfig(row_col_gaussian_dims=(2, 1), channel_dim=3),
                 eval_optimisation_params={
                     "num_steps": 5000,
                     "lr_start": 0.1,
@@ -165,14 +172,19 @@ EnvMapField = MethodSpecification(
                     train_subset_size=None,
                     convert_to_ldr=False,
                     convert_to_log_domain=True,
-                    min_max_normalize=None, # in e^min = 0.0111, e^max = 8103.08
+                    min_max_normalize=None,  # in e^min = 0.0111, e^max = 8103.08
+                ),
+                pixel_sampler=RENIEquirectangularPixelSamplerConfig(
+                    num_rays_per_batch=8192,
+                    full_image_per_batch=False,
+                    images_per_batch=2,
+                    is_equirectangular=True,
                 ),
                 train_num_rays_per_batch=8192,
-                full_image_per_batch=False,
             ),
             model=RENIModelConfig(
                 field=EnvironmentMapFieldConfig(
-                    path=Path('path/to/environment_map.exr'),
+                    path=Path("path/to/environment_map.exr"),
                     resolution=(512, 1024),
                     trainable=False,
                     apply_padding=True,

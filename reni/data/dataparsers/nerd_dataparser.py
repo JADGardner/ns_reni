@@ -42,12 +42,12 @@ def _get_camera_params(
     base_dir: Path, split: Literal["train", "val", "test"]
 ) -> Tuple[torch.Tensor, torch.Tensor, int]:
     """Reads the camera parameters from the json file."""
-    with open(base_dir / f"transforms_{split}.json", "r", encoding='utf-8') as f:
+    with open(base_dir / f"transforms_{split}.json", "r", encoding="utf-8") as f:
         metadata = json.load(f)
 
     camera_to_worlds = []
 
-    exr_file = pyexr.open(str(base_dir / metadata["frames"][0]["file_path"])) # pylint: disable=W1514
+    exr_file = pyexr.open(str(base_dir / metadata["frames"][0]["file_path"]))  # pylint: disable=W1514
     image = exr_file.get("Image")[..., 0:3]
     H, W = image.shape[:2]
     camera_angle_x = float(metadata["camera_angle_x"])
@@ -59,8 +59,8 @@ def _get_camera_params(
 
     for frame in metadata["frames"]:
         # Read the poses
-        camera_to_worlds.append(np.array(frame["transform_matrix"])) # 4x4
-    
+        camera_to_worlds.append(np.array(frame["transform_matrix"]))  # 4x4
+
     # convert pose to torch
     camera_to_worlds = torch.tensor(np.array(camera_to_worlds)).float()
 
@@ -75,7 +75,9 @@ class NeRDDataParserConfig(DataParserConfig):
     """target class to instantiate"""
     data: Path = Path("data/NeRD")
     """Directory specifying location of data."""
-    scene: Literal["Car", "Chair", "Globe", "EthiopianHead", "Gnome", "GoldCape", "MotherChild", "StatueOfLiberty"] = "Car"
+    scene: Literal[
+        "Car", "Chair", "Globe", "EthiopianHead", "Gnome", "GoldCape", "MotherChild", "StatueOfLiberty"
+    ] = "Car"
     """Scene name"""
     orientation_method: Literal["pca", "up", "vertical", "none"] = "vertical"
     """The method to use for orientation."""
@@ -96,11 +98,11 @@ class NeRDDataParser(DataParser):
     config: NeRDDataParserConfig
 
     def __post_init__(self):
-        self.scene_source = 'synthetic' if self.config.scene in ['Car', 'Chair', 'Globe'] else 'real_world'
+        self.scene_source = "synthetic" if self.config.scene in ["Car", "Chair", "Globe"] else "real_world"
 
     def _generate_dataparser_outputs(self, split="train"):
         base_dir = self.config.data / self.scene_source / self.config.scene
-        
+
         intrinisics_train, camera_to_worlds_train, n_train = _get_camera_params(base_dir, "train")
         intrinisics_val, camera_to_worlds_val, n_val = _get_camera_params(base_dir, "val")
         intrinisics_test, camera_to_worlds_test, _ = _get_camera_params(base_dir, "test")
@@ -132,7 +134,7 @@ class NeRDDataParser(DataParser):
         elif split == "test":
             camera_to_worlds = camera_to_worlds[n_train + n_val :]
             intrinsics = intrinisics_test
-        
+
         aabb_scale = self.config.scene_scale
         scene_box = SceneBox(
             aabb=torch.tensor(
@@ -154,38 +156,35 @@ class NeRDDataParser(DataParser):
         masks = []
         image_filenames = []
 
-        with open(base_dir / f"transforms_{split}.json", "r", encoding='utf-8') as f:
+        with open(base_dir / f"transforms_{split}.json", "r", encoding="utf-8") as f:
             metadata = json.load(f)
 
         for frame in metadata["frames"]:
             # Read the image
             fname = base_dir / frame["file_path"]
-            exr_file = pyexr.open(str(fname)) # pylint: disable=W1514
+            exr_file = pyexr.open(str(fname))  # pylint: disable=W1514
             image_filenames.append(fname)
             images.append(exr_file.get("Image")[..., 0:3])
             masks.append(exr_file.get("Mask"))
-            
+
             if split == "train":
                 white_balance = np.average(
-                    pyexr.open(str(fname).replace("results_train", "wb_train")).get("Image")[ # pylint: disable=W1514
+                    pyexr.open(str(fname).replace("results_train", "wb_train")).get("Image")[  # pylint: disable=W1514
                         ..., :3
                     ],
                     axis=(0, 1),
                 )
                 white_balances.append(white_balance)
-        
+
         # Do the full image reconstruction pipeline
         # The EXRs are in linear color space and 0-1
-        images = np.array(images).astype(np.float32) # [N, H, W, 3]
+        images = np.array(images).astype(np.float32)  # [N, H, W, 3]
         # Start with auto exposure
         # Compute auto-exposed images and their respective EV100 values.
-        images, ev100 = exphelp.compute_auto_exp(images) # [N, H, W, 3], [N]
+        images, ev100 = exphelp.compute_auto_exp(images)  # [N, H, W, 3], [N]
 
         if split == "train":
-            white_balances = (
-                np.stack(white_balances, 0)
-                * exphelp.convert_ev100_to_exp(ev100)[:, np.newaxis]
-            ) # [N, 3]
+            white_balances = np.stack(white_balances, 0) * exphelp.convert_ev100_to_exp(ev100)[:, np.newaxis]  # [N, 3]
         else:
             # just create numpy array of shape 0, 3
             white_balances = np.zeros((0, 3))
@@ -197,27 +196,25 @@ class NeRDDataParser(DataParser):
         # Continue with the masks.
         # They only require values to be between 0 and 1
         # Clip to be sure
-        masks = np.clip(np.array(masks).astype(np.float32), 0, 1) # [N, H, W, 1]
+        masks = np.clip(np.array(masks).astype(np.float32), 0, 1)  # [N, H, W, 1]
 
         # Convert to torch
         images = torch.from_numpy(images).float()
         masks = torch.from_numpy(masks)
         white_balances = torch.from_numpy(white_balances)
         ev100 = torch.from_numpy(ev100)
-        
+
         # Use standard white balance if there are not enough white balance values
         difference_white_balances = images.shape[0] - white_balances.shape[0]
         base_white_balance = [0.8, 0.8, 0.8]
-        additional_white_balances = torch.tensor(
-            [base_white_balance for _ in range(difference_white_balances)]
-        )
+        additional_white_balances = torch.tensor([base_white_balance for _ in range(difference_white_balances)])
         white_balances = torch.cat([white_balances, additional_white_balances], 0)
 
         metadata = {
-            "images": images, # [N, H, W, 3]
-            "masks": masks, # [N, H, W, 1]
-            "white_balances": white_balances, # [N, 3]
-            "ev100s": ev100, # [N]
+            "images": images,  # [N, H, W, 3]
+            "masks": masks,  # [N, H, W, 1]
+            "white_balances": white_balances,  # [N, 3]
+            "ev100s": ev100,  # [N]
         }
 
         dataparser_outputs = DataparserOutputs(
