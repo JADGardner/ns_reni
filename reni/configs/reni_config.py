@@ -3,15 +3,6 @@ RENI configuration file.
 """
 from pathlib import Path
 
-from reni.data.dataparsers.reni_dataparser import RENIDataParserConfig
-from reni.data.datamanagers.reni_datamanager import RENIDataManagerConfig
-from reni.models.reni_model import RENIModelConfig
-from reni.pipelines.reni_pipeline import RENIPipelineConfig
-from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
-from reni.field_components.vn_encoder import VariationalVNEncoderConfig
-from reni.discriminators.discriminators import CNNDiscriminatorConfig
-from reni.data.reni_pixel_sampler import RENIEquirectangularPixelSamplerConfig
-
 from nerfstudio.configs.base_config import ViewerConfig, MachineConfig
 from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.plugins.types import MethodSpecification
@@ -20,6 +11,13 @@ from nerfstudio.engine.optimizers import AdamOptimizerConfig
 from nerfstudio.engine.schedulers import (
     CosineDecaySchedulerConfig,
 )
+
+from reni.data.dataparsers.reni_dataparser import RENIDataParserConfig
+from reni.data.datamanagers.reni_datamanager import RENIDataManagerConfig
+from reni.models.reni_model import RENIModelConfig
+from reni.pipelines.reni_pipeline import RENIPipelineConfig
+from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
+from reni.data.reni_pixel_sampler import RENIEquirectangularPixelSamplerConfig
 
 RENIField = MethodSpecification(
     config=TrainerConfig(
@@ -45,12 +43,13 @@ RENIField = MethodSpecification(
                     use_validation_as_train=False,
                 ),
                 pixel_sampler=RENIEquirectangularPixelSamplerConfig(
-                    num_rays_per_batch=8192,
                     full_image_per_batch=False,
                     images_per_batch=2,
                     is_equirectangular=True,
                 ),
+                images_on_gpu=True,
                 train_num_rays_per_batch=8192,
+                eval_num_rays_per_batch=8192,
             ),
             model=RENIModelConfig(
                 field=RENIFieldConfig(
@@ -69,15 +68,6 @@ RENIField = MethodSpecification(
                     num_attention_layers=6,  # TRANSFORMER
                     output_activation="None",  # ALL
                     last_layer_linear=True,  # SIRENs
-                ),
-                discriminator=CNNDiscriminatorConfig(
-                    num_layers=5,
-                    initial_filters=64,
-                ),
-                encoder=VariationalVNEncoderConfig(
-                    l2_dist_attn=True,
-                    invariance="SO2",
-                    fusion_strategy="late",
                 ),
                 eval_optimisation_params={
                     "num_steps": 2500,
@@ -101,8 +91,8 @@ RENIField = MethodSpecification(
                     "kld_loss": True,
                     "scale_inv_loss": True,
                     "scale_inv_grad_loss": False,
-                    "bce_loss": False,
-                    "wgan_loss": False,
+                    "bce_loss": False, # For RESGAN, leave False
+                    "wgan_loss": False, # For RESGAN, leave False
                 },
                 include_sine_weighting=False,  # This is already done by the equirectangular pixel sampler
                 training_regime="autodecoder",

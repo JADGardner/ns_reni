@@ -24,10 +24,11 @@ from typing import Literal, Type, Union
 
 import torch
 
-from reni.data.datasets.nerd_dataset import NeRDDataset
-
 from nerfstudio.utils.rich_utils import CONSOLE
+from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager, VanillaDataManagerConfig, variable_res_collate
+
+from reni.data.datasets.nerd_dataset import NeRDDataset
 
 @dataclass
 class NeRDDataManagerConfig(VanillaDataManagerConfig):
@@ -59,6 +60,7 @@ class NeRDDataManager(VanillaDataManager):
         local_rank: int = 0,
         **kwargs,
     ):
+        
         self.config = config
         self.device = device
         self.world_size = world_size
@@ -72,11 +74,19 @@ class NeRDDataManager(VanillaDataManager):
         else:
             self.config.data = self.config.dataparser.data
         self.dataparser = self.dataparser_config.setup()
+        if test_mode == "inference":
+            self.dataparser.downscale_factor = 1  # Avoid opening images
         self.includes_time = self.dataparser.includes_time
-        self.train_dataparser_outputs = self.dataparser.get_dataparser_outputs(split="train")
+        self.train_dataparser_outputs: DataparserOutputs = self.dataparser.get_dataparser_outputs(split="train")
 
         self.train_dataset = self.create_train_dataset()
         self.eval_dataset = self.create_eval_dataset()
+        self.exclude_batch_keys_from_device = self.train_dataset.exclude_batch_keys_from_device
+        
+        if self.config.masks_on_gpu is True:
+            self.exclude_batch_keys_from_device.remove("mask")
+        if self.config.images_on_gpu is True:
+            self.exclude_batch_keys_from_device.remove("image")
 
         if self.train_dataparser_outputs is not None:
             cameras = self.train_dataparser_outputs.cameras

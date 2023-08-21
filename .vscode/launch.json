@@ -12,6 +12,15 @@
       "console": "integratedTerminal",
       "args": ["reni"],
       "cwd": "${workspaceFolder}/../../"
+    },
+    {
+      "name": "Python: train nerfacto-reni",
+      "type": "python",
+      "request": "launch",
+      "program": "nerfstudio/scripts/train.py",
+      "console": "integratedTerminal",
+      "args": ["nerfacto-reni"],
+      "cwd": "${workspaceFolder}/../../"
     }
   ]
 }

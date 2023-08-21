@@ -26,7 +26,7 @@ from PIL import Image
 from torch import Tensor
 import scipy
 
-from typing import Type, Union, Tuple, Dict
+from typing import Type, Union, Tuple, Dict, List
 
 from nerfstudio.cameras.cameras import Cameras, CameraType
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
@@ -42,6 +42,7 @@ class RENIDataset(InputDataset):
         scale_factor: The scaling factor for the dataparser outputs
     """
 
+    exclude_batch_keys_from_device: List[str] = ["image", "mask"]
     cameras: Cameras
 
     def __init__(self, dataparser_outputs: DataparserOutputs, scale_factor: float = 1.0, min_max: Union[Tuple[float, float], None] = None):

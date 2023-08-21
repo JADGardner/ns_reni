@@ -42,6 +42,7 @@ class NeRDDataset(InputDataset):
         scale_factor: The scaling factor for the dataparser outputs
     """
 
+    exclude_batch_keys_from_device: List[str] = ["image", "mask"]
     cameras: Cameras
 
     def __init__(self, dataparser_outputs: DataparserOutputs, scale_factor: float = 1.0):
@@ -52,12 +53,12 @@ class NeRDDataset(InputDataset):
 
         self.metadata = deepcopy(dataparser_outputs.metadata)
         self.images = self.metadata['images']
-        self.masks = self.metadata['masks']
+        self.masks = self.metadata['masks'] if 'masks' in self.metadata else None
         self.white_balances = self.metadata['white_balances']
         self.ev100s = self.metadata['ev100s']
         # now pop them from the metadata
         self.metadata.pop('images')
-        self.metadata.pop('masks')
+        self.metadata.pop('masks') if 'masks' in self.metadata else None
         self.metadata.pop('white_balances')
         self.metadata.pop('ev100s')
         
@@ -85,10 +86,11 @@ class NeRDDataset(InputDataset):
         """
         data = {"image_idx": image_idx,
                 "image": self.images[image_idx],
-                "mask": self.masks[image_idx],
                 # "white_balance": self.white_balances[image_idx],
                 # "ev100": self.ev100s[image_idx]
                 }
+        if self.masks is not None:
+            data["mask"] = self.masks[image_idx]
         return data
 
     def __getitem__(self, image_idx: int) -> Dict:

@@ -48,10 +48,11 @@ RESGANField = MethodSpecification(
                 ),
                 pixel_sampler=RENIEquirectangularPixelSamplerConfig(
                     num_rays_per_batch=8192,
-                    full_image_per_batch=False,
-                    images_per_batch=2,
+                    full_image_per_batch=True,
+                    images_per_batch=4,
                     is_equirectangular=True,
                 ),
+                images_on_gpu=True,
                 train_num_rays_per_batch=8192,
             ),
             model=RENIModelConfig(

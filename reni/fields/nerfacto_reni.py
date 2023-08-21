@@ -22,14 +22,15 @@ from typing import Dict, Optional
 import torch
 from torch import Tensor
 
-from reni.field_components.field_heads import RENIFieldHeadNames
 
 from nerfstudio.cameras.rays import RaySamples
 from nerfstudio.field_components.spatial_distortions import (
     SpatialDistortion,
 )
-
 from nerfstudio.fields.nerfacto_field import NerfactoField
+from nerfstudio.fields.base_field import get_normalized_directions
+
+from reni.field_components.field_heads import RENIFieldHeadNames
 
 try:
     import tinycudann as tcnn

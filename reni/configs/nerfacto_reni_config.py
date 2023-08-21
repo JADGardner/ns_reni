@@ -3,12 +3,6 @@ RENI + NeRF configuration file.
 """
 from pathlib import Path
 
-from reni.data.dataparsers.nerd_dataparser import NeRDDataParserConfig
-from reni.data.datamanagers.nerd_datamanager import NeRDDataManagerConfig
-from reni.models.nerfacto_reni import NerfactoRENIModelConfig
-from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
-from reni.model_components.illumination_samplers import IcosahedronSamplerConfig
-
 from nerfstudio.cameras.camera_optimizers import CameraOptimizerConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig
 from nerfstudio.configs.base_config import ViewerConfig
@@ -19,6 +13,12 @@ from nerfstudio.engine.schedulers import (
     ExponentialDecaySchedulerConfig,
 )
 
+from reni.data.dataparsers.nerd_dataparser import NeRDDataParserConfig
+from reni.data.datamanagers.nerd_datamanager import NeRDDataManagerConfig
+from reni.models.nerfacto_reni import NerfactoRENIModelConfig
+from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
+from reni.model_components.illumination_samplers import IcosahedronSamplerConfig
+
 NeRFactoRENI = MethodSpecification(
     config=TrainerConfig(
         method_name="nerfacto-reni",
@@ -28,7 +28,14 @@ NeRFactoRENI = MethodSpecification(
         mixed_precision=True,
         pipeline=VanillaPipelineConfig(
             datamanager=NeRDDataManagerConfig(
-                dataparser=NeRDDataParserConfig(),
+                dataparser=NeRDDataParserConfig(
+                    scene="Car",
+                    background_color="white",
+                    mask_out_background=True,
+                    return_masks=False,
+                ),
+                masks_on_gpu=True,
+                images_on_gpu=True,
                 train_num_rays_per_batch=4096,
                 eval_num_rays_per_batch=4096,
                 camera_optimizer=CameraOptimizerConfig(
@@ -38,15 +45,15 @@ NeRFactoRENI = MethodSpecification(
                 ),
             ),
             model=NerfactoRENIModelConfig(
-                eval_num_rays_per_chunk=1 << 15,
-                background_color='black',
+                eval_num_rays_per_chunk=4096,
+                background_color="white",
                 disable_scene_contraction=True,
                 predict_normals=True,
                 illumination_field=RENIFieldConfig(
-                    conditioning='Attention',
+                    conditioning="Attention",
                     invariant_function="VN",
                     equivariance="SO2",
-                    axis_of_invariance="z", # Nerfstudio world space is z-up
+                    axis_of_invariance="z",  # Nerfstudio world space is z-up
                     positional_encoding="NeRF",
                     encoded_input="Directions",
                     latent_dim=100,
@@ -68,7 +75,7 @@ NeRFactoRENI = MethodSpecification(
                 ),
                 illumination_field_ckpt_path=Path("outputs/unnamed/reni/2023-08-07_154753/"),
                 illumination_field_ckpt_step=50000,
-                ),
+            ),
         ),
         optimizers={
             "proposal_networks": {

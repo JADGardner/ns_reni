@@ -130,6 +130,12 @@ class RENIDataManager(VanillaDataManager):
         self.train_dataset = self.create_train_dataset()
         self.eval_dataset = self.create_eval_dataset()
 
+        self.exclude_batch_keys_from_device = self.train_dataset.exclude_batch_keys_from_device
+        if self.config.masks_on_gpu is True:
+            self.exclude_batch_keys_from_device.remove("mask")
+        if self.config.images_on_gpu is True:
+            self.exclude_batch_keys_from_device.remove("image")
+
         self.num_train = len(self.train_dataset)
         self.num_eval = len(self.eval_dataset)
 
@@ -166,6 +172,7 @@ class RENIDataManager(VanillaDataManager):
             num_workers=self.world_size * 4,
             pin_memory=True,
             collate_fn=self.config.collate_fn,
+            exclude_batch_keys_from_device=self.exclude_batch_keys_from_device,
         )
         self.iter_train_image_dataloader = iter(self.train_image_dataloader)
         # NOTE: Updated to RENI sampler where full image per batch is possible
@@ -190,6 +197,7 @@ class RENIDataManager(VanillaDataManager):
             num_workers=self.world_size * 4,
             pin_memory=True,
             collate_fn=self.config.collate_fn,
+            exclude_batch_keys_from_device=self.exclude_batch_keys_from_device,
         )
         self.iter_eval_image_dataloader = iter(self.eval_image_dataloader)
         self.eval_pixel_sampler = self._get_pixel_sampler(self.eval_dataset, self.config.eval_num_rays_per_batch)

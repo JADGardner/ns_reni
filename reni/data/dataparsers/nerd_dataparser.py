@@ -26,8 +26,6 @@ import numpy as np
 import torch
 import pyexr
 
-import reni.utils.exposure_helper as exphelp
-
 from nerfstudio.cameras import camera_utils
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.data.dataparsers.base_dataparser import (
@@ -36,6 +34,8 @@ from nerfstudio.data.dataparsers.base_dataparser import (
     DataparserOutputs,
 )
 from nerfstudio.data.scene_box import SceneBox
+
+import reni.utils.exposure_helper as exphelp
 
 
 def _get_camera_params(
@@ -89,7 +89,12 @@ class NeRDDataParserConfig(DataParserConfig):
     """Whether to automatically scale the poses to fit in +/- 1 bounding box."""
     scale_factor: float = 1.0
     """Scale factor to apply to the poses."""
-
+    background_color: Literal["black", "white"] = "white"
+    """Background color to use for the images."""
+    mask_out_background: bool = False
+    """Whether to mask out the background setting it to background_colour."""
+    return_masks: bool = True
+    """Whether to return masks."""
 
 @dataclass
 class NeRDDataParser(DataParser):
@@ -99,6 +104,7 @@ class NeRDDataParser(DataParser):
 
     def __post_init__(self):
         self.scene_source = "synthetic" if self.config.scene in ["Car", "Chair", "Globe"] else "real_world"
+        self.background_colour = torch.tensor([0.0, 0.0, 0.0]) if self.config.background_color == "black" else torch.tensor([1.0, 1.0, 1.0])
 
     def _generate_dataparser_outputs(self, split="train"):
         base_dir = self.config.data / self.scene_source / self.config.scene
@@ -204,6 +210,10 @@ class NeRDDataParser(DataParser):
         white_balances = torch.from_numpy(white_balances)
         ev100 = torch.from_numpy(ev100)
 
+        if self.config.mask_out_background:
+            # set to background to black or white based on self.background_color
+            images = images * masks + (1 - masks) * self.background_colour
+
         # Use standard white balance if there are not enough white balance values
         difference_white_balances = images.shape[0] - white_balances.shape[0]
         base_white_balance = [0.8, 0.8, 0.8]
@@ -212,10 +222,12 @@ class NeRDDataParser(DataParser):
 
         metadata = {
             "images": images,  # [N, H, W, 3]
-            "masks": masks,  # [N, H, W, 1]
             "white_balances": white_balances,  # [N, 3]
             "ev100s": ev100,  # [N]
         }
+
+        if self.config.return_masks:
+            metadata["masks"] = masks # [N, H, W, 1]
 
         dataparser_outputs = DataparserOutputs(
             image_filenames=image_filenames,
