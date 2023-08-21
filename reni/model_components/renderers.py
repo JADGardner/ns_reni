@@ -35,7 +35,7 @@ from torch import nn
 from torchtyping import TensorType
 import torch.nn.functional as F
 
-from reni_neus.utils.utils import sRGB
+from reni.utils.colourspace import linear_to_sRGB
 
 BACKGROUND_COLOR_OVERRIDE: Optional[TensorType[3]] = None
 
@@ -113,7 +113,7 @@ class RGBLambertianRenderer(nn.Module):
             comp_rgb = torch.sum(weights * radiance, dim=-2)
             accumulated_weight = torch.sum(weights, dim=-2)
 
-        comp_rgb = sRGB(comp_rgb)
+        comp_rgb = linear_to_sRGB(comp_rgb)
 
         background_color = torch.tensor([1.0, 1.0, 1.0], device=comp_rgb.device, dtype=comp_rgb.dtype)
 
