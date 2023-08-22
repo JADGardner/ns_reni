@@ -39,7 +39,7 @@ RENIField = MethodSpecification(
                     val_subset_size=None,
                     convert_to_ldr=False,
                     convert_to_log_domain=True,
-                    min_max_normalize=None,  # in e^min = 0.0111, e^max = 8103.08
+                    min_max_normalize=None,  # Tuple[float, float] | Literal['min_max', 'quantile'] | None (Tuple should be in log domain if log_domain=True)
                     use_validation_as_train=False,
                 ),
                 pixel_sampler=RENIEquirectangularPixelSamplerConfig(
