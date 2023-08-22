@@ -93,8 +93,7 @@ class NeRDDataParserConfig(DataParserConfig):
     """Background color to use for the images."""
     mask_out_background: bool = False
     """Whether to mask out the background setting it to background_colour."""
-    return_masks: bool = True
-    """Whether to return masks."""
+
 
 @dataclass
 class NeRDDataParser(DataParser):
@@ -104,7 +103,9 @@ class NeRDDataParser(DataParser):
 
     def __post_init__(self):
         self.scene_source = "synthetic" if self.config.scene in ["Car", "Chair", "Globe"] else "real_world"
-        self.background_colour = torch.tensor([0.0, 0.0, 0.0]) if self.config.background_color == "black" else torch.tensor([1.0, 1.0, 1.0])
+        self.background_colour = (
+            torch.tensor([0.0, 0.0, 0.0]) if self.config.background_color == "black" else torch.tensor([1.0, 1.0, 1.0])
+        )
 
     def _generate_dataparser_outputs(self, split="train"):
         base_dir = self.config.data / self.scene_source / self.config.scene
@@ -156,78 +157,16 @@ class NeRDDataParser(DataParser):
             camera_to_worlds=camera_to_worlds[:, :3, :4],
         )
 
-        images = []
-        white_balances = []
-        ev100 = []
-        masks = []
-        image_filenames = []
-
         with open(base_dir / f"transforms_{split}.json", "r", encoding="utf-8") as f:
             metadata = json.load(f)
 
+        image_filenames = []
         for frame in metadata["frames"]:
-            # Read the image
             fname = base_dir / frame["file_path"]
-            exr_file = pyexr.open(str(fname))  # pylint: disable=W1514
             image_filenames.append(fname)
-            images.append(exr_file.get("Image")[..., 0:3])
-            masks.append(exr_file.get("Mask"))
 
-            if split == "train":
-                white_balance = np.average(
-                    pyexr.open(str(fname).replace("results_train", "wb_train")).get("Image")[  # pylint: disable=W1514
-                        ..., :3
-                    ],
-                    axis=(0, 1),
-                )
-                white_balances.append(white_balance)
-
-        # Do the full image reconstruction pipeline
-        # The EXRs are in linear color space and 0-1
-        images = np.array(images).astype(np.float32)  # [N, H, W, 3]
-        # Start with auto exposure
-        # Compute auto-exposed images and their respective EV100 values.
-        images, ev100 = exphelp.compute_auto_exp(images)  # [N, H, W, 3], [N]
-
-        if split == "train":
-            white_balances = np.stack(white_balances, 0) * exphelp.convert_ev100_to_exp(ev100)[:, np.newaxis]  # [N, 3]
-        else:
-            # just create numpy array of shape 0, 3
-            white_balances = np.zeros((0, 3))
-
-        # The images are now linear from 0 to 1
-        # Convert them to sRGB
-        images = exphelp.linearTosRGB(images)
-
-        # Continue with the masks.
-        # They only require values to be between 0 and 1
-        # Clip to be sure
-        masks = np.clip(np.array(masks).astype(np.float32), 0, 1)  # [N, H, W, 1]
-
-        # Convert to torch
-        images = torch.from_numpy(images).float()
-        masks = torch.from_numpy(masks)
-        white_balances = torch.from_numpy(white_balances)
-        ev100 = torch.from_numpy(ev100)
-
-        if self.config.mask_out_background:
-            # set to background to black or white based on self.background_color
-            images = images * masks + (1 - masks) * self.background_colour
-
-        # Use standard white balance if there are not enough white balance values
-        difference_white_balances = images.shape[0] - white_balances.shape[0]
-        base_white_balance = [0.8, 0.8, 0.8]
-        additional_white_balances = torch.tensor([base_white_balance for _ in range(difference_white_balances)])
-        white_balances = torch.cat([white_balances, additional_white_balances], 0)
-
-        metadata = {
-            "images": images,  # [N, H, W, 3]
-            "white_balances": white_balances,  # [N, 3]
-            "ev100s": ev100,  # [N]
-        }
-
-        if self.config.return_masks:
-            metadata["masks"] = masks # [N, H, W, 1]
+        metadata["split"] = split
+        metadata["mask_out_background"] = self.config.mask_out_background
 
         dataparser_outputs = DataparserOutputs(
             image_filenames=image_filenames,

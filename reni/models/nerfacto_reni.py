@@ -255,37 +255,33 @@ class NerfactoRENIModel(NerfactoModel):
         depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
         accumulation = self.renderer_accumulation(weights=weights)
 
-        normals = self.renderer_normals(normals=field_outputs[RENIFieldHeadNames.NORMALS], weights=weights)
-        pred_normals = self.renderer_normals(field_outputs[RENIFieldHeadNames.PRED_NORMALS], weights=weights)
+        # normals = self.renderer_normals(normals=field_outputs[RENIFieldHeadNames.NORMALS], weights=weights)
+        # pred_normals = self.renderer_normals(field_outputs[RENIFieldHeadNames.PRED_NORMALS], weights=weights)
 
-        # light_colors, light_directions = self.get_illumination(ray_samples.camera_indices)
+        light_colors, light_directions = self.get_illumination(ray_samples.camera_indices)
 
-        # rgb = self.labmertian_renderer(
-        #     albedos=field_outputs[RENIFieldHeadNames.ALBEDO],
-        #     normals=field_outputs[RENIFieldHeadNames.NORMALS],
-        #     light_directions=light_directions,
-        #     light_colors=light_colors,
-        #     weights=weights,
-        # )
-
-        light_colors, light_directions = self.get_illumination_shader(
-            ray_bundle.camera_indices
-        )
-
-        lambertian_color_sum, shaded_albedo = self.lambertian_shader(
-            albedo=field_outputs[RENIFieldHeadNames.ALBEDO],
-            normals=normals,
+        rgb = self.labmertian_renderer(
+            albedos=field_outputs[RENIFieldHeadNames.ALBEDO],
+            normals=field_outputs[RENIFieldHeadNames.NORMALS],
             light_directions=light_directions,
             light_colors=light_colors,
-            detach_normals=False,
+            weights=weights,
         )
 
+        # light_colors, light_directions = self.get_illumination_shader(ray_bundle.camera_indices)
+
+        # lambertian_color_sum, shaded_albedo = self.lambertian_shader(
+        #     albedo=albedo,
+        #     normals=normals,
+        #     light_directions=light_directions,
+        #     light_colors=light_colors,
+        #     detach_normals=False,
+        # )
+
         outputs = {
-            "rgb": shaded_albedo,
+            "rgb": rgb,
             "accumulation": accumulation,
             "depth": depth,
-            "normals": normals,
-            "pred_normals": pred_normals,
         }
 
         # These use a lot of GPU memory, so we avoid storing them for eval.

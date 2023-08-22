@@ -12,6 +12,7 @@ from nerfstudio.engine.optimizers import AdamOptimizerConfig
 from nerfstudio.engine.schedulers import (
     ExponentialDecaySchedulerConfig,
 )
+from nerfstudio.models.nerfacto import NerfactoModelConfig
 
 from reni.data.dataparsers.nerd_dataparser import NeRDDataParserConfig
 from reni.data.datamanagers.nerd_datamanager import NeRDDataManagerConfig
@@ -32,20 +33,22 @@ NeRFactoRENI = MethodSpecification(
                     scene="Car",
                     background_color="white",
                     mask_out_background=True,
-                    return_masks=False,
                 ),
                 masks_on_gpu=True,
                 images_on_gpu=True,
-                train_num_rays_per_batch=4096,
-                eval_num_rays_per_batch=4096,
-                camera_optimizer=CameraOptimizerConfig(
-                    mode="SO3xR3",
-                    optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2),
-                    scheduler=ExponentialDecaySchedulerConfig(lr_final=6e-6, max_steps=200000),
-                ),
+                train_num_images_to_sample_from=-1,
+                train_num_times_to_repeat_images=-1,
+                train_num_rays_per_batch=256,
+                eval_num_rays_per_batch=256,
+                # camera_optimizer=CameraOptimizerConfig(
+                #     mode="SO3xR3",
+                #     optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2),
+                #     scheduler=ExponentialDecaySchedulerConfig(lr_final=6e-6, max_steps=200000),
+                # ),
             ),
+            # model=NerfactoModelConfig(),
             model=NerfactoRENIModelConfig(
-                eval_num_rays_per_chunk=4096,
+                eval_num_rays_per_chunk=256,
                 background_color="white",
                 disable_scene_contraction=True,
                 predict_normals=True,
