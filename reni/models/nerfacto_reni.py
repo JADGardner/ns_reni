@@ -193,49 +193,49 @@ class NerfactoRENIModel(NerfactoModel):
         )  # [num_rays * samples_per_ray, num_illumination_directions, 3]
         return hdr_illumination_colours, illumination_directions
 
-    # def get_illumination(self, camera_indices: torch.Tensor):
-    #     """Generate samples and sample illumination field"""
-    #     illumination_ray_samples = self.illumination_sampler()  # [num_illumination_directions, 3]
-    #     illumination_ray_samples = illumination_ray_samples.to(self.device)
-    #     camera_indices_for_uniqueness = camera_indices[:, 0]  # [num_rays, sampels_per_ray] -> [num_rays]
-    #     unique_indices, inverse_indices = torch.unique(camera_indices_for_uniqueness, return_inverse=True)
-    #     # unique_indices: [num_unique_camera_indices]
-    #     # inverse_indices: [num_rays]
-    #     num_unique_camera_indices = unique_indices.shape[0]
-    #     num_illumination_directions = illumination_ray_samples.shape[0]
+    def get_illumination_shader(self, camera_indices: torch.Tensor):
+        """Generate samples and sample illumination field"""
+        illumination_ray_samples = self.illumination_sampler()  # [num_illumination_directions, 3]
+        illumination_ray_samples = illumination_ray_samples.to(self.device)
+        camera_indices_for_uniqueness = camera_indices[:, 0]  # [num_rays, sampels_per_ray] -> [num_rays]
+        unique_indices, inverse_indices = torch.unique(camera_indices_for_uniqueness, return_inverse=True)
+        # unique_indices: [num_unique_camera_indices]
+        # inverse_indices: [num_rays]
+        num_unique_camera_indices = unique_indices.shape[0]
+        num_illumination_directions = illumination_ray_samples.shape[0]
 
-    #     # Sample from RENI we want to sample all light directions for each camera
-    #     # so shape tensors as appropriate
-    #     unique_indices = unique_indices.unsqueeze(1).expand(
-    #         -1, num_illumination_directions
-    #     )  # [num_unique_camera_indices, num_illumination_directions]
-    #     directions = illumination_ray_samples.frustums.directions.unsqueeze(0).expand(
-    #         num_unique_camera_indices, -1, -1
-    #     )  # [num_unique_camera_indices, num_illumination_directions, 3]
-    #     illumination_ray_samples.camera_indices = unique_indices.reshape(
-    #         -1
-    #     )  # [num_unique_camera_indices * num_illumination_directions]
-    #     illumination_ray_samples.frustums.directions = directions.reshape(
-    #         -1, 3
-    #     )  # [num_unique_camera_indices * num_illumination_directions, 3]
-    #     illuination_field_outputs = self.illumination_field.forward(
-    #         illumination_ray_samples
-    #     )  # [num_unique_camera_indices * num_illumination_directions, 3]
-    #     hdr_illumination_colours = illuination_field_outputs[
-    #         RENIFieldHeadNames.RGB
-    #     ]  # [num_unique_camera_indices * num_illumination_directions, 3]
-    #     hdr_illumination_colours = self.illumination_field.unnormalise(
-    #         hdr_illumination_colours
-    #     )  # [num_unique_camera_indices * num_illumination_directions, 3]
-    #     hdr_illumination_colours = hdr_illumination_colours.reshape(
-    #         num_unique_camera_indices, num_illumination_directions, 3
-    #     )  # [num_unique_camera_indices, num_illumination_directions, 3]
-    #     hdr_illumination_colours = hdr_illumination_colours[
-    #         inverse_indices
-    #     ]  # [num_rays, num_illumination_directions, 3]
-    #     illumination_directions = directions[inverse_indices]  # [num_rays, num_illumination_directions, 3
+        # Sample from RENI we want to sample all light directions for each camera
+        # so shape tensors as appropriate
+        unique_indices = unique_indices.unsqueeze(1).expand(
+            -1, num_illumination_directions
+        )  # [num_unique_camera_indices, num_illumination_directions]
+        directions = illumination_ray_samples.frustums.directions.unsqueeze(0).expand(
+            num_unique_camera_indices, -1, -1
+        )  # [num_unique_camera_indices, num_illumination_directions, 3]
+        illumination_ray_samples.camera_indices = unique_indices.reshape(
+            -1
+        )  # [num_unique_camera_indices * num_illumination_directions]
+        illumination_ray_samples.frustums.directions = directions.reshape(
+            -1, 3
+        )  # [num_unique_camera_indices * num_illumination_directions, 3]
+        illuination_field_outputs = self.illumination_field.forward(
+            illumination_ray_samples
+        )  # [num_unique_camera_indices * num_illumination_directions, 3]
+        hdr_illumination_colours = illuination_field_outputs[
+            RENIFieldHeadNames.RGB
+        ]  # [num_unique_camera_indices * num_illumination_directions, 3]
+        hdr_illumination_colours = self.illumination_field.unnormalise(
+            hdr_illumination_colours
+        )  # [num_unique_camera_indices * num_illumination_directions, 3]
+        hdr_illumination_colours = hdr_illumination_colours.reshape(
+            num_unique_camera_indices, num_illumination_directions, 3
+        )  # [num_unique_camera_indices, num_illumination_directions, 3]
+        hdr_illumination_colours = hdr_illumination_colours[
+            inverse_indices
+        ]  # [num_rays, num_illumination_directions, 3]
+        illumination_directions = directions[inverse_indices]  # [num_rays, num_illumination_directions, 3
 
-    #     return hdr_illumination_colours, illumination_directions
+        return hdr_illumination_colours, illumination_directions
 
     def get_outputs(self, ray_bundle: RayBundle):
         ray_samples: RaySamples
@@ -258,36 +258,30 @@ class NerfactoRENIModel(NerfactoModel):
         normals = self.renderer_normals(normals=field_outputs[RENIFieldHeadNames.NORMALS], weights=weights)
         pred_normals = self.renderer_normals(field_outputs[RENIFieldHeadNames.PRED_NORMALS], weights=weights)
 
-        light_colors, light_directions = self.get_illumination(ray_samples.camera_indices)
+        # light_colors, light_directions = self.get_illumination(ray_samples.camera_indices)
 
-        # print(field_outputs[RENIFieldHeadNames.ALBEDO].shape)  # [num_rays, num_samples, 3]
-        # print(field_outputs[RENIFieldHeadNames.NORMALS].shape)  # [num_rays, num_samples, 3]
-        # print(light_directions.shape)  # [num_rays, num_illumination_directions, 3]
-        # print(light_colors.shape)  # [num_rays, num_illumination_directions, 3]
-        # print(weights.shape)  # [num_rays, num_samples, 1]
-
-        rgb = self.labmertian_renderer(
-            albedos=field_outputs[RENIFieldHeadNames.ALBEDO],
-            normals=field_outputs[RENIFieldHeadNames.NORMALS],
-            light_directions=light_directions,
-            light_colors=light_colors,
-            weights=weights,
-        )
-
-        # light_colors, light_directions = self.get_illumination(
-        #     ray_bundle.camera_indices
-        # )
-
-        # lambertian_color_sum, shaded_albedo = self.lambertian_shader(
-        #     albedo=albedo,
-        #     normals=normals,
+        # rgb = self.labmertian_renderer(
+        #     albedos=field_outputs[RENIFieldHeadNames.ALBEDO],
+        #     normals=field_outputs[RENIFieldHeadNames.NORMALS],
         #     light_directions=light_directions,
         #     light_colors=light_colors,
-        #     detach_normals=False,
+        #     weights=weights,
         # )
 
+        light_colors, light_directions = self.get_illumination_shader(
+            ray_bundle.camera_indices
+        )
+
+        lambertian_color_sum, shaded_albedo = self.lambertian_shader(
+            albedo=field_outputs[RENIFieldHeadNames.ALBEDO],
+            normals=normals,
+            light_directions=light_directions,
+            light_colors=light_colors,
+            detach_normals=False,
+        )
+
         outputs = {
-            "rgb": rgb,
+            "rgb": shaded_albedo,
             "accumulation": accumulation,
             "depth": depth,
             "normals": normals,
