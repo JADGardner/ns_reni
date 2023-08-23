@@ -38,7 +38,7 @@ from nerfstudio.models.nerfacto import NerfactoModelConfig, NerfactoModel
 from nerfstudio.utils import colormaps
 
 from reni.illumination_fields.base_spherical_field import SphericalFieldConfig
-from reni.illumination_fields.reni_illumination_field import RENIField
+from reni.illumination_fields.reni_illumination_field import RENIField, RENIFieldConfig
 from reni.model_components.illumination_samplers import IlluminationSamplerConfig
 from reni.model_components.shaders import LambertianShader
 from reni.utils.utils import find_nerfstudio_project_root
@@ -101,16 +101,10 @@ class NerfactoRENIModel(NerfactoModel):
 
         self.illumination_sampler = self.config.illumination_sampler.setup()
 
-        # TODO Get from checkpoint
-        normalisations = {"min_max": None, "log_domain": True}
+        # # TODO Get from checkpoint
+        # normalisations = {"min_max": None, "log_domain": True}
 
-        self.illumination_field = self.config.illumination_field.setup(
-            num_train_data=None,
-            num_eval_data=self.num_train_data,
-            normalisations=normalisations,
-        )
-
-        if isinstance(self.illumination_field, RENIField):
+        if isinstance(self.config.illumination_field, RENIFieldConfig):
             # # Now you can use this to construct paths:
             project_root = find_nerfstudio_project_root(Path(__file__))
             relative_path = (
@@ -129,6 +123,14 @@ class NerfactoRENIModel(NerfactoModel):
             for key in ckpt["pipeline"].keys():
                 if key.startswith(match_str):
                     illumination_field_dict[key[len(match_str) :]] = ckpt["pipeline"][key]
+            
+            normalisations = ckpt["pipeline._model.normalisations"]
+            
+            self.illumination_field = self.config.illumination_field.setup(
+                num_train_data=None,
+                num_eval_data=self.num_train_data,
+                normalisations=normalisations,
+            )
             # load weights of the decoder
             self.illumination_field.network.load_state_dict(illumination_field_dict)
 
@@ -248,38 +250,38 @@ class NerfactoRENIModel(NerfactoModel):
         weights_list.append(weights)
         ray_samples_list.append(ray_samples)
 
-        # albedo = self.renderer_rgb(rgb=field_outputs[RENIFieldHeadNames.ALBEDO], weights=weights)
-        # if self.config.predict_specular:
-        #     specular = self.renderer_rgb(rgb=field_outputs[RENIFieldHeadNames.SPECULAR], weights=weights)
+        albedo = self.renderer_rgb(rgb=field_outputs[RENIFieldHeadNames.ALBEDO], weights=weights)
+        if self.config.predict_specular:
+            specular = self.renderer_rgb(rgb=field_outputs[RENIFieldHeadNames.SPECULAR], weights=weights)
 
         depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
         accumulation = self.renderer_accumulation(weights=weights)
 
-        # normals = self.renderer_normals(normals=field_outputs[RENIFieldHeadNames.NORMALS], weights=weights)
-        # pred_normals = self.renderer_normals(field_outputs[RENIFieldHeadNames.PRED_NORMALS], weights=weights)
+        normals = self.renderer_normals(normals=field_outputs[RENIFieldHeadNames.NORMALS], weights=weights)
+        pred_normals = self.renderer_normals(field_outputs[RENIFieldHeadNames.PRED_NORMALS], weights=weights)
 
-        light_colors, light_directions = self.get_illumination(ray_samples.camera_indices)
+        # light_colors, light_directions = self.get_illumination(ray_samples.camera_indices)
 
-        rgb = self.labmertian_renderer(
-            albedos=field_outputs[RENIFieldHeadNames.ALBEDO],
-            normals=field_outputs[RENIFieldHeadNames.NORMALS],
-            light_directions=light_directions,
-            light_colors=light_colors,
-            weights=weights,
-        )
-
-        # light_colors, light_directions = self.get_illumination_shader(ray_bundle.camera_indices)
-
-        # lambertian_color_sum, shaded_albedo = self.lambertian_shader(
-        #     albedo=albedo,
-        #     normals=normals,
+        # rgb = self.labmertian_renderer(
+        #     albedos=field_outputs[RENIFieldHeadNames.ALBEDO],
+        #     normals=field_outputs[RENIFieldHeadNames.NORMALS],
         #     light_directions=light_directions,
         #     light_colors=light_colors,
-        #     detach_normals=False,
+        #     weights=weights,
         # )
 
+        light_colors, light_directions = self.get_illumination_shader(ray_bundle.camera_indices)
+
+        lambertian_color_sum, rgb = self.lambertian_shader(
+            albedo=albedo,
+            normals=pred_normals,
+            light_directions=light_directions,
+            light_colors=light_colors,
+            detach_normals=False,
+        )
+
         outputs = {
-            "rgb": rgb,
+            "rgb": albedo,
             "accumulation": accumulation,
             "depth": depth,
         }

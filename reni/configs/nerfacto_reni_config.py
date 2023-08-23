@@ -40,11 +40,6 @@ NeRFactoRENI = MethodSpecification(
                 train_num_times_to_repeat_images=-1,
                 train_num_rays_per_batch=256,
                 eval_num_rays_per_batch=256,
-                # camera_optimizer=CameraOptimizerConfig(
-                #     mode="SO3xR3",
-                #     optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2),
-                #     scheduler=ExponentialDecaySchedulerConfig(lr_final=6e-6, max_steps=200000),
-                # ),
             ),
             # model=NerfactoModelConfig(),
             model=NerfactoRENIModelConfig(
@@ -76,7 +71,7 @@ NeRFactoRENI = MethodSpecification(
                     apply_random_rotation=False,
                     remove_lower_hemisphere=False,
                 ),
-                illumination_field_ckpt_path=Path("outputs/unnamed/reni/2023-08-07_154753/"),
+                illumination_field_ckpt_path=Path("outputs/reni/2023-08-07_154753/"),
                 illumination_field_ckpt_step=50000,
             ),
         ),
