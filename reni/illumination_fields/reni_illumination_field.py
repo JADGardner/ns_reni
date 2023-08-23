@@ -14,7 +14,7 @@
 
 """RENI field"""
 
-from typing import Literal, Type, Union, Dict, Any
+from typing import Literal, Type, Union, Dict, Any, Optional
 from dataclasses import dataclass, field
 import contextlib
 
@@ -89,9 +89,9 @@ class RENIField(BaseRENIField):
     def __init__(
         self,
         config: RENIFieldConfig,
-        num_train_data: Union[int, None],
-        num_eval_data: Union[int, None],
-        normalisations: Dict[str, Any],
+        num_train_data: Optional[int] = None,
+        num_eval_data: Optional[int] = None,
+        normalisations: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(
             config=config, num_train_data=num_train_data, num_eval_data=num_eval_data, normalisations=normalisations
@@ -187,7 +187,7 @@ class RENIField(BaseRENIField):
 
     def unnormalise(self, x):
         """Undo normalisation of the image"""
-        if self.min_max is not None:
+        if not self.min_max.dtype == torch.bool:
             min_val, max_val = self.min_max
             # need to unnormalize the image from between -1 and 1
             x = 0.5 * (x + 1) * (max_val - min_val) + min_val

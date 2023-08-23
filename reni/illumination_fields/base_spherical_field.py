@@ -18,7 +18,7 @@ Base class for the Spherical Neural Fields.
 
 from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import Type, Union, Dict, Any
+from typing import Type, Union, Dict, Any, Optional
 import contextlib
 
 import torch
@@ -29,6 +29,7 @@ from reni.field_components.field_heads import RENIFieldHeadNames
 
 from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.cameras.rays import RaySamples
+
 
 # Field related configs
 @dataclass
@@ -48,16 +49,20 @@ class SphericalField(nn.Module):
         super().__init__()
 
     @abstractmethod
-    def get_outputs(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
+    def get_outputs(
+        self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None]
+    ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Returns the outputs of the field.
-        
+
         Args:
             ray_samples: [num_rays]
             rotation: [3, 3]
         """
         raise NotImplementedError
 
-    def forward(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
+    def forward(
+        self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None]
+    ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:
@@ -84,9 +89,9 @@ class BaseRENIField(SphericalField):
     def __init__(
         self,
         config: BaseRENIFieldConfig,
-        num_train_data: Union[int, None],
-        num_eval_data: Union[int, None],
-        normalisations: Dict[str, Any],
+        num_train_data: Optional[int] = None,
+        num_eval_data: Optional[int] = None,
+        normalisations: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -94,13 +99,14 @@ class BaseRENIField(SphericalField):
         self.num_eval_data = num_eval_data
         self.normalisations = normalisations
 
-        assert "min_max" in self.normalisations
-        assert "log_domain" in self.normalisations
-        
-        if normalisations["min_max"] is not None:
-            self.register_buffer("min_max", torch.tensor(self.normalisations["min_max"]))
+        if self.normalisations is not None:
+            if "min_max" in self.normalisations and self.normalisations["min_max"] is not None:
+                self.register_buffer("min_max", torch.tensor(self.normalisations["min_max"]))
+            else:
+                self.register_buffer("min_max", torch.tensor(False))
 
-        self.register_buffer("log_domain", torch.tensor(self.normalisations["log_domain"]))
+            if "log_domain" in self.normalisations and self.normalisations["log_domain"] is not None:
+                self.register_buffer("log_domain", torch.tensor(self.normalisations["log_domain"]))
 
         self.fixed_decoder = config.fixed_decoder
 
@@ -116,16 +122,21 @@ class BaseRENIField(SphericalField):
         ```
         """
         raise NotImplementedError
-    
+
     @abstractmethod
     def unnormalise(self, rgb: torch.Tensor) -> torch.Tensor:
         """Undo normalisations applied to the HDR RGB values prior to fitting"""
         raise NotImplementedError
 
     @abstractmethod
-    def get_outputs(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None] = None, latent_codes: Union[torch.Tensor, None] = None) -> Dict[RENIFieldHeadNames, TensorType]:
+    def get_outputs(
+        self,
+        ray_samples: RaySamples,
+        rotation: Union[torch.Tensor, None] = None,
+        latent_codes: Union[torch.Tensor, None] = None,
+    ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Returns the outputs of the field.
-        
+
         Args:
             ray_samples: [num_rays]
             rotation: [3, 3]
@@ -133,7 +144,12 @@ class BaseRENIField(SphericalField):
         """
         raise NotImplementedError
 
-    def forward(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None] = None, latent_codes: Union[torch.Tensor, None] = None) -> Dict[RENIFieldHeadNames, TensorType]:
+    def forward(
+        self,
+        ray_samples: RaySamples,
+        rotation: Union[torch.Tensor, None] = None,
+        latent_codes: Union[torch.Tensor, None] = None,
+    ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:
@@ -142,5 +158,3 @@ class BaseRENIField(SphericalField):
             latent_codes: [latent_shape]
         """
         return self.get_outputs(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes)
-
-
