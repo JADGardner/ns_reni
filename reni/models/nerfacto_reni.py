@@ -19,7 +19,7 @@ NeRF implementation that combines many recent advancements.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Type
+from typing import Dict, List, Type, Tuple
 from pathlib import Path
 import torch
 from torch.nn import Parameter
@@ -101,8 +101,10 @@ class NerfactoRENIModel(NerfactoModel):
 
         self.illumination_sampler = self.config.illumination_sampler.setup()
 
-        # # TODO Get from checkpoint
-        # normalisations = {"min_max": None, "log_domain": True}
+        self.illumination_field = self.config.illumination_field.setup(
+            num_train_data=None,
+            num_eval_data=self.num_train_data,
+        )
 
         if isinstance(self.config.illumination_field, RENIFieldConfig):
             # # Now you can use this to construct paths:
@@ -119,20 +121,14 @@ class NerfactoRENIModel(NerfactoModel):
 
             ckpt = torch.load(str(ckpt_path))
             illumination_field_dict = {}
-            match_str = "_model.field.network."
+            match_str = "_model.field."
+            ignore_strs = ["_model.field.train_logvar", "_model.field.eval_logvar", "_model.field.train_mu", "_model.field.eval_mu"]
             for key in ckpt["pipeline"].keys():
-                if key.startswith(match_str):
+                if key.startswith(match_str) and not any([ignore_str in key for ignore_str in ignore_strs]):
                     illumination_field_dict[key[len(match_str) :]] = ckpt["pipeline"][key]
             
-            normalisations = ckpt["pipeline._model.normalisations"]
-            
-            self.illumination_field = self.config.illumination_field.setup(
-                num_train_data=None,
-                num_eval_data=self.num_train_data,
-                normalisations=normalisations,
-            )
             # load weights of the decoder
-            self.illumination_field.network.load_state_dict(illumination_field_dict)
+            self.illumination_field.load_state_dict(illumination_field_dict, strict=False)
 
         self.lambertian_shader = LambertianShader()
         self.labmertian_renderer = RGBLambertianRenderer()
@@ -281,7 +277,7 @@ class NerfactoRENIModel(NerfactoModel):
         )
 
         outputs = {
-            "rgb": albedo,
+            "rgb": rgb,
             "accumulation": accumulation,
             "depth": depth,
         }

@@ -10,6 +10,7 @@ from nerfstudio.plugins.types import MethodSpecification
 from nerfstudio.engine.optimizers import AdamOptimizerConfig
 from nerfstudio.engine.schedulers import (
     CosineDecaySchedulerConfig,
+    ExponentialDecaySchedulerConfig
 )
 
 from reni.data.dataparsers.reni_dataparser import RENIDataParserConfig
@@ -69,10 +70,11 @@ RENIField = MethodSpecification(
                     output_activation="None",  # ALL
                     last_layer_linear=True,  # SIRENs
                 ),
-                eval_optimisation_params={
-                    "num_steps": 2500,
-                    "lr_start": 1e-1,
-                    "lr_end": 1e-7,
+                eval_latent_optimizer={
+                    "eval_latents": {
+                        "optimizer": AdamOptimizerConfig(lr=1e-1, eps=1e-15),
+                        "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-7, max_steps=2500),
+                    },
                 },
                 loss_coefficients={
                     "log_mse_loss": 10.0,
@@ -94,7 +96,7 @@ RENIField = MethodSpecification(
                     "bce_loss": False, # For RESGAN, leave False
                     "wgan_loss": False, # For RESGAN, leave False
                 },
-                include_sine_weighting=False,  # This is already done by the equirectangular pixel sampler
+                include_sine_weighting=False,  # This is already handled by the equirectangular pixel sampler
                 training_regime="autodecoder",
             ),
         ),
@@ -111,5 +113,5 @@ RENIField = MethodSpecification(
         viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
         vis="wandb",
     ),
-    description="Base config for Rotation-Equivariant Natural Illumination Field.",
+    description="Base config for Rotation-Equivariant Natural Illumination Fields.",
 )

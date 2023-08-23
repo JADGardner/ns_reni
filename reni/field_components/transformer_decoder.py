@@ -51,7 +51,7 @@ class AttentionLayer(nn.Module):
     
 
 class Decoder(nn.Module):
-    def __init__(self, in_dim, conditioning_input_dim, hidden_features, num_heads, num_layers):
+    def __init__(self, in_dim, conditioning_input_dim, hidden_features, num_heads, num_layers, out_activation):
         super().__init__()
         self.residual_projection = nn.Linear(in_dim, hidden_features)  # projection for residual connection
         self.layers = nn.ModuleList(
@@ -59,9 +59,13 @@ class Decoder(nn.Module):
              for i in range(num_layers)]
         )  
         self.fc = nn.Linear(hidden_features, 3)  # 3 for RGB
+        self.out_activation = out_activation
 
     def forward(self, x, conditioning_input):
         x = self.residual_projection(x)
         for layer in self.layers:
             x = layer(x, conditioning_input)
-        return self.fc(x)
+        x = self.fc(x)
+        if self.out_activation is not None:
+            x = self.out_activation(x)
+        return x

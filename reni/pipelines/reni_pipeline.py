@@ -116,6 +116,7 @@ class RENIPipeline(VanillaPipeline):
             num_train_data=num_train_data,
             num_eval_data=num_eval_data,
             metadata=self.datamanager.train_dataset.metadata,
+            grad_scaler=grad_scaler,
         )
         self.model.to(device)
 
@@ -124,7 +125,7 @@ class RENIPipeline(VanillaPipeline):
             self._model = typing.cast(Model, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
             dist.barrier(device_ids=[local_rank])
 
-        self.last_step_of_eval_optimisation = 0
+        self.last_step_of_eval_optimisation = 0 # used to avoid fitting eval latents on each eval function call below
 
     def forward(self):
         """Blank forward method
@@ -158,6 +159,7 @@ class RENIPipeline(VanillaPipeline):
             step: current iteration step
         """
         self.eval()
+        # if we haven't already fit the eval latents this step, do it now 
         if self.last_step_of_eval_optimisation != step:
             if self.model.config.training_regime != "vae":
                 self.model.fit_eval_latents(self.datamanager)
@@ -178,6 +180,7 @@ class RENIPipeline(VanillaPipeline):
             step: current iteration step
         """
         self.eval()
+        # if we haven't already fit the eval latents this step, do it now 
         if self.last_step_of_eval_optimisation != step:
             if self.model.config.training_regime != "vae":
                 self.model.fit_eval_latents(self.datamanager)
@@ -200,6 +203,7 @@ class RENIPipeline(VanillaPipeline):
             metrics_dict: dictionary of metrics
         """
         self.eval()
+        # if we haven't already fit the eval latents this step, do it now 
         if self.last_step_of_eval_optimisation != step:
             if self.model.config.training_regime != "vae":
                 self.model.fit_eval_latents(self.datamanager)

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-apptainer shell --nv --no-home \
+apptainer exec --nv --no-home \
   -B /mnt/scratch/users/$USER:/users/$USER/scratch \
   -B /users/$USER/.bashrc:/users/$USER/.bashrc \
   -B /users/$USER/scratch/.config:/users/$USER/.config \
@@ -9,4 +9,4 @@ apptainer shell --nv --no-home \
   -B /users/$USER/.vscode-server:/users/$USER/.vscode-server \
   -B /users/$USER/.jupyter:/users/$USER/.jupyter \
   --env MPLCONFIGDIR=/users/$USER/scratch/.config/matplotlib \
-  /users/$USER/scratch/.apptainer/containers/nerfstudio.sif
+  /users/$USER/scratch/.apptainer/containers/nerfstudio.sif /bin/bash -c "source /mnt/nerfstudio/bin/activate && /bin/bash --norc"

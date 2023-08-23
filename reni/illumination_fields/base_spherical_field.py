@@ -99,14 +99,15 @@ class BaseRENIField(SphericalField):
         self.num_eval_data = num_eval_data
         self.normalisations = normalisations
 
+        self.register_buffer("min_max", torch.tensor(False))
+        self.register_buffer("log_domain", torch.tensor(False))
+
         if self.normalisations is not None:
             if "min_max" in self.normalisations and self.normalisations["min_max"] is not None:
-                self.register_buffer("min_max", torch.tensor(self.normalisations["min_max"]))
-            else:
-                self.register_buffer("min_max", torch.tensor(False))
+                self.min_max.data = torch.tensor(self.normalisations["min_max"])
 
             if "log_domain" in self.normalisations and self.normalisations["log_domain"] is not None:
-                self.register_buffer("log_domain", torch.tensor(self.normalisations["log_domain"]))
+                self.log_domain.data = torch.tensor(self.normalisations["log_domain"])
 
         self.fixed_decoder = config.fixed_decoder
 

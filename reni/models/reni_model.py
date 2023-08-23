@@ -26,7 +26,7 @@ import functools
 import torch
 import torch.nn as nn
 from torch.nn import Parameter
-from torchmetrics import PeakSignalNoiseRatio
+from torchmetrics.image import PeakSignalNoiseRatio
 from torchmetrics.functional import structural_similarity_index_measure
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 from torch.nn import KLDivLoss
@@ -36,6 +36,8 @@ from nerfstudio.configs.config_utils import to_immutable_dict
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import colormaps, misc
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
+from nerfstudio.engine.optimizers import OptimizerConfig, Optimizers
+from nerfstudio.engine.schedulers import SchedulerConfig
 
 from reni.illumination_fields.base_spherical_field import SphericalFieldConfig
 from reni.field_components.field_heads import RENIFieldHeadNames
@@ -73,6 +75,15 @@ class RENIModelConfig(ModelConfig):
     """Discriminator configuration"""
     encoder: VariationalVNEncoderConfig = VariationalVNEncoderConfig()
     """Rotation-Equivariant Encoder configuration"""
+    eval_latent_optimizer: Dict[str, Any] = to_immutable_dict(
+        {
+            "eval_latents": {
+                "optimizer": OptimizerConfig(),
+                "scheduler": SchedulerConfig(),
+            }
+        }
+    )
+    """Optimizer and scheduler for latent code optimisation"""
     eval_optimisation_params: Dict[str, Any] = to_immutable_dict({
         "num_steps": 5000,
         "lr_start": 0.1,
@@ -235,7 +246,7 @@ class RENIModel(Model):
 
             # reparameterisation trick
             if self.training:
-                log_var = torch.clamp(log_var, min=-3, max=3) # TODO make this a config option anc check if this even makes sense
+                log_var = torch.clamp(log_var, min=-3, max=3) # TODO make this a config option and check if this even makes sense
                 std = torch.exp(0.5 * log_var)
                 eps = torch.randn_like(std)
                 latent_codes = mu + (eps * std) # [num_images, self.field.latent_dim * 3]
@@ -289,16 +300,8 @@ class RENIModel(Model):
             scale = (gt_image * pred_image).sum() / (pred_image * pred_image).sum()
             pred_image = scale * pred_image
 
-        if self.metadata["min_max_normalize"]:
-            min_val, max_val = self.metadata["min_max"]
-            # need to unnormalize the image from between -1 and 1
-            gt_image = 0.5 * (gt_image + 1) * (max_val - min_val) + min_val
-            pred_image = 0.5 * (pred_image + 1) * (max_val - min_val) + min_val
-
-        if self.metadata['convert_to_log_domain']:
-            # undo log domain conversion
-            gt_image = torch.exp(gt_image)
-            pred_image = torch.exp(pred_image)
+        gt_image = self.field.unnormalise(gt_image)
+        pred_image = self.field.unnormalise(pred_image)
 
         psnr = self.psnr(preds=pred_image, target=gt_image)
 
@@ -399,16 +402,19 @@ class RENIModel(Model):
             scale = (gt_image * pred_image).sum() / (pred_image * pred_image).sum()
             pred_image = scale * pred_image
 
-        if self.metadata["min_max_normalize"] is not None:
-            min_val, max_val = self.metadata["min_max"]
-            # need to unnormalize the image from between -1 and 1
-            gt_image = 0.5 * (gt_image + 1) * (max_val - min_val) + min_val
-            pred_image = 0.5 * (pred_image + 1) * (max_val - min_val) + min_val
+        gt_image = self.field.unnormalise(gt_image)
+        pred_image = self.field.unnormalise(pred_image)
 
-        if self.metadata['convert_to_log_domain']:
-            # undo log domain conversion
-            gt_image = torch.exp(gt_image)
-            pred_image = torch.exp(pred_image)
+        # if self.metadata["min_max_normalize"] is not None:
+        #     min_val, max_val = self.metadata["min_max"]
+        #     # need to unnormalize the image from between -1 and 1
+        #     gt_image = 0.5 * (gt_image + 1) * (max_val - min_val) + min_val
+        #     pred_image = 0.5 * (pred_image + 1) * (max_val - min_val) + min_val
+
+        # if self.metadata['convert_to_log_domain']:
+        #     # undo log domain conversion
+        #     gt_image = torch.exp(gt_image)
+        #     pred_image = torch.exp(pred_image)
 
         # converting to grayscale by taking the mean across the color dimension
         gt_image_gray = torch.mean(gt_image, dim=-1)
@@ -496,7 +502,7 @@ class RENIModel(Model):
 
         return metrics_dict, images_dict
 
-    def get_sineweighting(self, directions):
+    def get_sineweighting(self, directions: torch.Tensor):
         """
           Returns a sineweight based on the vertical Z axis for a set of directions.
           Assumes directions are normalized.
@@ -515,15 +521,10 @@ class RENIModel(Model):
 
     def fit_eval_latents(self, datamanager: VanillaDataManager):
         """Fit eval latents"""
-        steps = self.config.eval_optimisation_params["num_steps"]
-        lr_start = self.config.eval_optimisation_params["lr_start"]
-        lr_end = self.config.eval_optimisation_params["lr_end"]
 
-        opt = torch.optim.Adam([self.field.eval_mu], lr=lr_start)
-
-        # create exponential learning rate scheduler decaying 
-        # from lr_start to lr_end over the course of steps
-        lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(opt, gamma=(lr_end/lr_start)**(1/steps))
+        param_group = {"eval_latents": [self.field.eval_mu]}
+        optimizer = Optimizers(self.config.eval_latent_optimizer, param_group)
+        steps = optimizer.config['eval_latents']['scheduler'].max_steps
 
         with Progress(
             TextColumn("[progress.description]{task.description}"),
@@ -540,13 +541,14 @@ class RENIModel(Model):
 
                 for step in range(steps):
                     ray_bundle, batch = datamanager.next_eval(step)
-                    model_outputs = self(ray_bundle)  # train distributed data parallel model if world_size > 1
+                    model_outputs = self(ray_bundle)
                     loss_dict = self.get_loss_dict(model_outputs, batch, ray_bundle)
                     # add all losses together
                     loss = functools.reduce(torch.add, loss_dict.values())
-                    opt.zero_grad()
+                    optimizer.zero_grad_all()
                     loss.backward()
-                    opt.step()
-                    lr_scheduler.step()
+                    optimizer.optimizer_step("eval_latents")
+                    optimizer.scheduler_step("eval_latents")
 
-                    progress.update(task, advance=1, loss=f"{loss.item():.4f}", lr=f"{lr_scheduler.get_last_lr()[0]:.8f}")
+
+                    progress.update(task, advance=1, loss=f"{loss.item():.4f}", lr=f"{optimizer.schedulers['eval_latents'].get_last_lr()[0]:.8f}")

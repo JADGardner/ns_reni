@@ -397,6 +397,7 @@ class RENIField(BaseRENIField):
                 hidden_features=self.config.hidden_features,
                 num_heads=self.config.num_attention_heads,
                 num_layers=self.config.num_attention_layers,
+                out_activation=output_activation,
             )
         return network
 

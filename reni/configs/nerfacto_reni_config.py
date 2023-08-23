@@ -71,7 +71,7 @@ NeRFactoRENI = MethodSpecification(
                     apply_random_rotation=False,
                     remove_lower_hemisphere=False,
                 ),
-                illumination_field_ckpt_path=Path("outputs/reni/2023-08-07_154753/"),
+                illumination_field_ckpt_path=Path("outputs/reni/reni/2023-08-23_075123/"),
                 illumination_field_ckpt_step=50000,
             ),
         ),

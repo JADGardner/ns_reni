@@ -62,7 +62,7 @@ class RENIDataset(InputDataset):
             self.min_max_normalize = True
             print("Computing min and max quantiles of the dataset...")
             # min_max = self.get_dataset_min_max()
-            min_max = self.get_dataset_percentiles(0.5, 0.999)
+            min_max = self.get_dataset_percentiles(0.1, 0.9)
             print(f"Min and max values of the dataset are {min_max}.")
 
         self.metadata["min_max"] = min_max
