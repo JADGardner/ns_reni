@@ -1,8 +1,31 @@
+# Copyright 2022 The Nerfstudio Team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import torch
 from torch import nn
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, direction_input_dim, conditioning_input_dim, latent_dim, num_heads):
+    def __init__(self, direction_input_dim: int, conditioning_input_dim: int, latent_dim: int, num_heads: int):
+        """
+        Multi-Head Attention module.
+
+        Args:
+            direction_input_dim (int): The input dimension of the directional input.
+            conditioning_input_dim (int): The input dimension of the conditioning input.
+            latent_dim (int): The latent dimension of the module.
+            num_heads (int): The number of heads to use in the attention mechanism.
+        """
         super().__init__()
         assert latent_dim % num_heads == 0, "latent_dim must be divisible by num_heads"
         self.num_heads = num_heads
@@ -14,7 +37,18 @@ class MultiHeadAttention(nn.Module):
         self.value = nn.Linear(conditioning_input_dim, latent_dim)
         self.fc_out = nn.Linear(latent_dim, latent_dim)
 
-    def forward(self, query, key, value):
+    def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the Multi-Head Attention module.
+
+        Args:
+            query (torch.Tensor): The directional input tensor.
+            key (torch.Tensor): The conditioning input tensor for the keys.
+            value (torch.Tensor): The conditioning input tensor for the values.
+
+        Returns:
+            torch.Tensor: The output tensor of the Multi-Head Attention module.
+        """
         batch_size = query.size(0)
 
         Q = self.query(query).view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
@@ -31,7 +65,16 @@ class MultiHeadAttention(nn.Module):
         return out
 
 class AttentionLayer(nn.Module):
-    def __init__(self, direction_input_dim, conditioning_input_dim, latent_dim, num_heads):
+    def __init__(self, direction_input_dim: int, conditioning_input_dim: int, latent_dim: int, num_heads: int):
+        """
+        Attention Layer module.
+
+        Args:
+            direction_input_dim (int): The input dimension of the directional input.
+            conditioning_input_dim (int): The input dimension of the conditioning input.
+            latent_dim (int): The latent dimension of the module.
+            num_heads (int): The number of heads to use in the attention mechanism.
+        """
         super().__init__()
         self.mha = MultiHeadAttention(direction_input_dim, conditioning_input_dim, latent_dim, num_heads)
         self.norm1 = nn.LayerNorm(latent_dim)
@@ -42,7 +85,17 @@ class AttentionLayer(nn.Module):
             nn.Linear(latent_dim, latent_dim)
         )
 
-    def forward(self, directional_input, conditioning_input):
+    def forward(self, directional_input: torch.Tensor, conditioning_input: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the Attention Layer module.
+
+        Args:
+            directional_input (torch.Tensor): The directional input tensor.
+            conditioning_input (torch.Tensor): The conditioning input tensor.
+
+        Returns:
+            torch.Tensor: The output tensor of the Attention Layer module.
+        """
         attn_output = self.mha(directional_input, conditioning_input, conditioning_input)
         out1 = self.norm1(attn_output + directional_input)
         fc_output = self.fc(out1)
@@ -51,7 +104,18 @@ class AttentionLayer(nn.Module):
     
 
 class Decoder(nn.Module):
-    def __init__(self, in_dim, conditioning_input_dim, hidden_features, num_heads, num_layers, out_activation):
+    def __init__(self, in_dim: int, conditioning_input_dim: int, hidden_features: int, num_heads: int, num_layers: int, out_activation: nn.Module):
+        """
+        Decoder module.
+
+        Args:
+            in_dim (int): The input dimension of the module.
+            conditioning_input_dim (int): The input dimension of the conditioning input.
+            hidden_features (int): The number of hidden features in the module.
+            num_heads (int): The number of heads to use in the attention mechanism.
+            num_layers (int): The number of layers in the module.
+            out_activation (nn.Module): The activation function to use on the output tensor.
+        """
         super().__init__()
         self.residual_projection = nn.Linear(in_dim, hidden_features)  # projection for residual connection
         self.layers = nn.ModuleList(
@@ -61,7 +125,17 @@ class Decoder(nn.Module):
         self.fc = nn.Linear(hidden_features, 3)  # 3 for RGB
         self.out_activation = out_activation
 
-    def forward(self, x, conditioning_input):
+    def forward(self, x: torch.Tensor, conditioning_input: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the Decoder module.
+
+        Args:
+            x (torch.Tensor): The input tensor.
+            conditioning_input (torch.Tensor): The conditioning input tensor.
+
+        Returns:
+            torch.Tensor: The output tensor of the Decoder module.
+        """
         x = self.residual_projection(x)
         for layer in self.layers:
             x = layer(x, conditioning_input)

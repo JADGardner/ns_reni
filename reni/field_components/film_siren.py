@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Siren MLP"""
+"""FiLM Siren MLP as per https://marcoamonteiro.github.io/pi-GAN-website/."""
 from typing import Callable, Optional
 
 import numpy as np

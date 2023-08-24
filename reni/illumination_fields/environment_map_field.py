@@ -104,6 +104,10 @@ class EnvironmentMapField(SphericalField):
         self.train_envmaps = self.train_envmaps[:, :3, :, :]
         self.eval_envmaps = self.eval_envmaps[:, :3, :, :]
 
+        # to match RENI training make train_mu and eval_mu pointers to self.train_envmaps, self.eval_envmaps
+        self.train_mu = self.train_envmaps
+        self.eval_mu = self.eval_envmaps
+
     @contextlib.contextmanager
     def hold_decoder_fixed(self):
         """Context manager to fix the decoder weights
