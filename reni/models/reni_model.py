@@ -84,11 +84,6 @@ class RENIModelConfig(ModelConfig):
         }
     )
     """Optimizer and scheduler for latent code optimisation"""
-    eval_optimisation_params: Dict[str, Any] = to_immutable_dict({
-        "num_steps": 5000,
-        "lr_start": 0.1,
-        "lr_end": 0.0001,
-    })
 
 
 class RENIModel(Model):
