@@ -54,11 +54,6 @@ SHField = MethodSpecification(
                 field=SphericalHarmonicIlluminationFieldConfig(
                     spherical_harmonic_order=2,
                 ),
-                eval_optimisation_params={
-                    "num_steps": 5000,
-                    "lr_start": 0.1,
-                    "lr_end": 0.0001,
-                },
                 loss_coefficients={
                     "mse_loss": 10.0,
                     "cosine_similarity_loss": 1.0,
@@ -119,11 +114,6 @@ SGField = MethodSpecification(
             ),
             model=RENIModelConfig(
                 field=SphericalGaussianFieldConfig(row_col_gaussian_dims=(2, 1), channel_dim=3),
-                eval_optimisation_params={
-                    "num_steps": 5000,
-                    "lr_start": 0.1,
-                    "lr_end": 0.0001,
-                },
                 loss_coefficients={
                     "mse_loss": 10.0,
                     "cosine_similarity_loss": 1.0,
@@ -189,11 +179,6 @@ EnvMapField = MethodSpecification(
                     trainable=False,
                     apply_padding=True,
                 ),
-                eval_optimisation_params={
-                    "num_steps": 5000,
-                    "lr_start": 0.1,
-                    "lr_end": 0.0001,
-                },
                 loss_coefficients={
                     "mse_loss": 10.0,
                     "cosine_similarity_loss": 1.0,

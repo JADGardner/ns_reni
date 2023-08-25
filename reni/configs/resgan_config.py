@@ -19,9 +19,7 @@ from nerfstudio.configs.base_config import ViewerConfig, MachineConfig
 from nerfstudio.plugins.types import MethodSpecification
 
 from nerfstudio.engine.optimizers import AdamOptimizerConfig
-from nerfstudio.engine.schedulers import (
-    CosineDecaySchedulerConfig,
-)
+from nerfstudio.engine.schedulers import CosineDecaySchedulerConfig, ExponentialDecaySchedulerConfig
 
 RESGANField = MethodSpecification(
     config=RESGANTrainerConfig(
@@ -86,10 +84,11 @@ RESGANField = MethodSpecification(
                     invariance="SO2",
                     fusion_strategy="late",
                 ),
-                eval_optimisation_params={
-                    "num_steps": 2500,
-                    "lr_start": 1e-1,
-                    "lr_end": 1e-7,
+                eval_latent_optimizer={
+                    "eval_latents": {
+                        "optimizer": AdamOptimizerConfig(lr=1e-1, eps=1e-15),
+                        "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-7, max_steps=2500),
+                    },
                 },
                 loss_coefficients={
                     "bce_loss": 1.0,
