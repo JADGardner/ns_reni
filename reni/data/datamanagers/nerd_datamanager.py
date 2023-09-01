@@ -26,9 +26,14 @@ import torch
 
 from nerfstudio.utils.rich_utils import CONSOLE
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
-from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager, VanillaDataManagerConfig, variable_res_collate
+from nerfstudio.data.datamanagers.base_datamanager import (
+    VanillaDataManager,
+    VanillaDataManagerConfig,
+    variable_res_collate,
+)
 
 from reni.data.datasets.nerd_dataset import NeRDDataset
+
 
 @dataclass
 class NeRDDataManagerConfig(VanillaDataManagerConfig):
@@ -36,6 +41,10 @@ class NeRDDataManagerConfig(VanillaDataManagerConfig):
 
     _target: Type = field(default_factory=lambda: NeRDDataManager)
     """Target class to instantiate."""
+    normals_on_gpu: bool = True
+    """Whether to put normals on GPU"""
+    depths_on_gpu: bool = True
+    """Whether to put depths on GPU"""
 
 
 class NeRDDataManager(VanillaDataManager):
@@ -60,7 +69,6 @@ class NeRDDataManager(VanillaDataManager):
         local_rank: int = 0,
         **kwargs,
     ):
-        
         self.config = config
         self.device = device
         self.world_size = world_size
@@ -82,11 +90,15 @@ class NeRDDataManager(VanillaDataManager):
         self.train_dataset = self.create_train_dataset()
         self.eval_dataset = self.create_eval_dataset()
         self.exclude_batch_keys_from_device = self.train_dataset.exclude_batch_keys_from_device
-        
+
         if self.config.masks_on_gpu is True:
             self.exclude_batch_keys_from_device.remove("mask")
         if self.config.images_on_gpu is True:
             self.exclude_batch_keys_from_device.remove("image")
+        if self.config.normals_on_gpu is True:
+            self.exclude_batch_keys_from_device.remove("normal")
+        if self.config.depths_on_gpu is True:
+            self.exclude_batch_keys_from_device.remove("depth")
 
         if self.train_dataparser_outputs is not None:
             cameras = self.train_dataparser_outputs.cameras
@@ -105,7 +117,7 @@ class NeRDDataManager(VanillaDataManager):
         This is an nn.Module, and so requires a forward() method normally, although in our case
         we do not need a forward() method"""
         raise NotImplementedError
-    
+
     def create_train_dataset(self) -> NeRDDataset:
         """Sets up the data loaders for training"""
         return NeRDDataset(

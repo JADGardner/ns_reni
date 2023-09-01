@@ -21,8 +21,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Type, Tuple
 from pathlib import Path
+from collections import defaultdict
 import torch
 from torch.nn import Parameter
+import matplotlib.cm as cm
 
 from nerfstudio.field_components.spatial_distortions import SceneContraction
 from nerfstudio.cameras.rays import RayBundle, RaySamples
@@ -122,11 +124,16 @@ class NerfactoRENIModel(NerfactoModel):
             ckpt = torch.load(str(ckpt_path))
             illumination_field_dict = {}
             match_str = "_model.field."
-            ignore_strs = ["_model.field.train_logvar", "_model.field.eval_logvar", "_model.field.train_mu", "_model.field.eval_mu"]
+            ignore_strs = [
+                "_model.field.train_logvar",
+                "_model.field.eval_logvar",
+                "_model.field.train_mu",
+                "_model.field.eval_mu",
+            ]
             for key in ckpt["pipeline"].keys():
                 if key.startswith(match_str) and not any([ignore_str in key for ignore_str in ignore_strs]):
                     illumination_field_dict[key[len(match_str) :]] = ckpt["pipeline"][key]
-            
+
             # load weights of the decoder
             self.illumination_field.load_state_dict(illumination_field_dict, strict=False)
 
@@ -246,7 +253,11 @@ class NerfactoRENIModel(NerfactoModel):
         weights_list.append(weights)
         ray_samples_list.append(ray_samples)
 
-        albedo = self.renderer_rgb(rgb=field_outputs[RENIFieldHeadNames.ALBEDO], weights=weights)
+        albedo = self.renderer_rgb(
+            rgb=field_outputs[RENIFieldHeadNames.ALBEDO],
+            weights=weights,
+            background_color=torch.tensor([1.0, 1.0, 1.0]),
+        )
         if self.config.predict_specular:
             specular = self.renderer_rgb(rgb=field_outputs[RENIFieldHeadNames.SPECULAR], weights=weights)
 
@@ -256,30 +267,32 @@ class NerfactoRENIModel(NerfactoModel):
         normals = self.renderer_normals(normals=field_outputs[RENIFieldHeadNames.NORMALS], weights=weights)
         pred_normals = self.renderer_normals(field_outputs[RENIFieldHeadNames.PRED_NORMALS], weights=weights)
 
-        # light_colors, light_directions = self.get_illumination(ray_samples.camera_indices)
+        light_colors, light_directions = self.get_illumination(ray_samples.camera_indices)
 
-        # rgb = self.labmertian_renderer(
-        #     albedos=field_outputs[RENIFieldHeadNames.ALBEDO],
-        #     normals=field_outputs[RENIFieldHeadNames.NORMALS],
-        #     light_directions=light_directions,
-        #     light_colors=light_colors,
-        #     weights=weights,
-        # )
-
-        light_colors, light_directions = self.get_illumination_shader(ray_bundle.camera_indices)
-
-        lambertian_color_sum, rgb = self.lambertian_shader(
-            albedo=albedo,
-            normals=pred_normals,
+        rgb = self.labmertian_renderer(
+            albedos=field_outputs[RENIFieldHeadNames.ALBEDO],
+            normals=field_outputs[RENIFieldHeadNames.NORMALS],
             light_directions=light_directions,
             light_colors=light_colors,
-            detach_normals=False,
+            weights=weights,
         )
+
+        # light_colors, light_directions = self.get_illumination_shader(ray_bundle.camera_indices)
+
+        # lambertian_color_sum, rgb = self.lambertian_shader(
+        #     albedo=albedo,
+        #     normals=pred_normals,
+        #     light_directions=light_directions,
+        #     light_colors=light_colors,
+        #     detach_normals=False,
+        # )
 
         outputs = {
             "rgb": rgb,
             "accumulation": accumulation,
             "depth": depth,
+            "normal": normals,
+            "pred_normal": pred_normals,
         }
 
         # These use a lot of GPU memory, so we avoid storing them for eval.
@@ -344,6 +357,47 @@ class NerfactoRENIModel(NerfactoModel):
                 )
         return loss_dict
 
+    @torch.no_grad()
+    def get_outputs_for_camera_ray_bundle(self, camera_ray_bundle: RayBundle) -> Dict[str, torch.Tensor]:
+        """Takes in camera parameters and computes the output of the model.
+
+        Args:
+            camera_ray_bundle: ray bundle to calculate outputs over
+        """
+        num_rays_per_chunk = self.config.eval_num_rays_per_chunk
+        image_height, image_width = camera_ray_bundle.origins.shape[:2]
+        num_rays = len(camera_ray_bundle)
+        outputs_lists = defaultdict(list)
+        for i in range(0, num_rays, num_rays_per_chunk):
+            start_idx = i
+            end_idx = i + num_rays_per_chunk
+            ray_bundle = camera_ray_bundle.get_row_major_sliced_ray_bundle(start_idx, end_idx)
+            outputs = self.forward(ray_bundle=ray_bundle)
+            for output_name, output in outputs.items():  # type: ignore
+                if not torch.is_tensor(output):
+                    # TODO: handle lists of tensors as well
+                    continue
+                outputs_lists[output_name].append(output)
+        outputs = {}
+        for output_name, outputs_list in outputs_lists.items():
+            outputs[output_name] = torch.cat(outputs_list).view(image_height, image_width, -1)  # type: ignore
+        return outputs
+
+    # def adjusted_sigmoid(self, tensor, a=15, b=0.95):
+    #     return 1 / (1 + torch.exp(-a * (tensor - b)))
+
+    # def to_rgb_tensor(self, gray_tensor, cmap="viridis"):
+    #     # Ensure the tensor is in the range [0, 1]
+    #     normalized_tensor = (gray_tensor - 0.0) / (2.0 - 0.0)
+
+    #     # Convert to numpy and use colormap to get RGB values
+    #     cmapped = cm.get_cmap(cmap)(normalized_tensor.cpu().numpy())
+
+    #     # Convert back to tensor and take only RGB channels (discard alpha)
+    #     rgb_tensor = torch.tensor(cmapped[..., :3])
+
+    #     return rgb_tensor
+
     def get_image_metrics_and_images(
         self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
     ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
@@ -356,9 +410,32 @@ class NerfactoRENIModel(NerfactoModel):
             accumulation=outputs["accumulation"],
         )
 
+        normal = outputs["normal"]
+        # normal = (normal + 1.0) / 2.0
+        pred_normal = outputs["pred_normal"]
+        # pred_normal = (pred_normal + 1.0) / 2.0
+        if "normal" in batch:
+            # normal_gt = (batch["normal"].to(self.device) + 1.0) / 2.0
+            normal_gt = batch["normal"].to(self.device)
+            combined_normal = torch.cat([normal_gt, pred_normal, normal], dim=1)
+        else:
+            combined_normal = torch.cat([pred_normal, normal], dim=1)
+
+        combined_normal = colormaps.apply_colormap(
+            combined_normal, colormap_options=colormaps.ColormapOptions(colormap="turbo", normalize=True)
+        )
+
         combined_rgb = torch.cat([gt_rgb, predicted_rgb], dim=1)
         combined_acc = torch.cat([acc], dim=1)
-        combined_depth = torch.cat([depth], dim=1)
+
+        if "depth" in batch:
+            depth_gt = colormaps.apply_depth_colormap(
+                batch["depth"].to(self.device),
+                accumulation=torch.where(batch["depth"].to(self.device) != torch.inf, 1, 0),
+            )
+            combined_depth = torch.cat([depth_gt, depth], dim=1)
+        else:
+            combined_depth = torch.cat([depth], dim=1)
 
         # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
         gt_rgb = torch.moveaxis(gt_rgb, -1, 0)[None, ...]
@@ -376,6 +453,7 @@ class NerfactoRENIModel(NerfactoModel):
             "img": combined_rgb,
             "accumulation": combined_acc,
             "depth": combined_depth,
+            "normal": combined_normal,
         }
 
         for i in range(self.config.num_proposal_iterations):

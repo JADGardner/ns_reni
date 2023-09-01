@@ -167,6 +167,7 @@ class NeRDDataParser(DataParser):
 
         metadata["split"] = split
         metadata["mask_out_background"] = self.config.mask_out_background
+        metadata["background_color"] = self.background_colour
 
         dataparser_outputs = DataparserOutputs(
             image_filenames=image_filenames,

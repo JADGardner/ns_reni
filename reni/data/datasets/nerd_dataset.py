@@ -45,7 +45,7 @@ class NeRDDataset(InputDataset):
         scale_factor: The scaling factor for the dataparser outputs
     """
 
-    exclude_batch_keys_from_device: List[str] = ["image", "mask"]
+    exclude_batch_keys_from_device: List[str] = ["image", "mask", "normal", "depth"]
     cameras: Cameras
 
     def __init__(self, dataparser_outputs: DataparserOutputs, scale_factor: float = 1.0):
@@ -92,7 +92,7 @@ class NeRDDataset(InputDataset):
 
         if self.metadata["mask_out_background"]:
             # set to background to black or white based on self.background_color
-            image = image * mask + (1 - mask) * torch.tensor([1.0, 1.0, 1.0])
+            image = image * mask + (1 - mask) * self.metadata["background_color"]
 
         # Use standard white balance if there are not enough white balance values
         difference_white_balances = image.shape[0] - white_balance.shape[0]
@@ -117,18 +117,47 @@ class NeRDDataset(InputDataset):
 
         return mask
 
+    def get_normal(self, image_idx: int) -> Float[Tensor, "image_height image_width num_channels"]:
+        """Returns a 3 channel image.
+
+        Args:
+            image_idx: The image index in the dataset.
+        """
+        fname = self._dataparser_outputs.image_filenames[image_idx]
+        exr_file = pyexr.open(str(fname))
+        normal = exr_file.get("Normal")
+        normal = np.array(normal).astype(np.float32)
+        normal = torch.from_numpy(normal)
+
+        return normal
+
+    def get_depth(self, image_idx: int) -> Float[Tensor, "image_height image_width num_channels"]:
+        """Returns a 3 channel image.
+
+        Args:
+            image_idx: The image index in the dataset.
+        """
+        fname = self._dataparser_outputs.image_filenames[image_idx]
+        exr_file = pyexr.open(str(fname))
+        depth = exr_file.get("Depth")
+        depth = np.array(depth).astype(np.float32)
+        depth = torch.from_numpy(depth)
+
+        return depth
+
     def get_data(self, image_idx: int) -> Dict:
         """Returns the ImageDataset data as a dictionary.
 
         Args:
             image_idx: The image index in the dataset.
         """
-        image = self.get_image(image_idx)
-        mask = self.get_mask(image_idx)
+
         data = {
             "image_idx": image_idx,
-            "image": image,
-            # "mask": mask,
+            "image": self.get_image(image_idx),
+            "mask": self.get_mask(image_idx),
+            "normal": self.get_normal(image_idx),
+            "depth": self.get_depth(image_idx),
             # "white_balance": self.white_balances[image_idx],
             # "ev100": self.ev100s[image_idx]
         }

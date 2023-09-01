@@ -36,6 +36,8 @@ NeRFactoRENI = MethodSpecification(
                 ),
                 masks_on_gpu=True,
                 images_on_gpu=True,
+                normals_on_gpu=True,
+                depths_on_gpu=True,
                 train_num_images_to_sample_from=-1,
                 train_num_times_to_repeat_images=-1,
                 train_num_rays_per_batch=256,
@@ -47,6 +49,7 @@ NeRFactoRENI = MethodSpecification(
                 background_color="white",
                 disable_scene_contraction=True,
                 predict_normals=True,
+                predict_specular=False,
                 illumination_field=RENIFieldConfig(
                     conditioning="Attention",
                     invariant_function="VN",
