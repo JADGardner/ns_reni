@@ -125,7 +125,7 @@ class RENIPipeline(VanillaPipeline):
             self._model = typing.cast(Model, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
             dist.barrier(device_ids=[local_rank])
 
-        self.last_step_of_eval_optimisation = 0 # used to avoid fitting eval latents on each eval function call below
+        self.last_step_of_eval_optimisation = 0  # used to avoid fitting eval latents on each eval function call below
 
     def forward(self):
         """Blank forward method
@@ -159,7 +159,7 @@ class RENIPipeline(VanillaPipeline):
             step: current iteration step
         """
         self.eval()
-        # if we haven't already fit the eval latents this step, do it now 
+        # if we haven't already fit the eval latents this step, do it now
         if self.last_step_of_eval_optimisation != step:
             if self.model.config.training_regime != "vae":
                 self.model.fit_eval_latents(self.datamanager)
@@ -180,7 +180,7 @@ class RENIPipeline(VanillaPipeline):
             step: current iteration step
         """
         self.eval()
-        # if we haven't already fit the eval latents this step, do it now 
+        # if we haven't already fit the eval latents this step, do it now
         if self.last_step_of_eval_optimisation != step:
             if self.model.config.training_regime != "vae":
                 self.model.fit_eval_latents(self.datamanager)
@@ -196,16 +196,16 @@ class RENIPipeline(VanillaPipeline):
         return metrics_dict, images_dict
 
     @profiler.time_function
-    def get_average_eval_image_metrics(self, step: Optional[int] = None):
+    def get_average_eval_image_metrics(self, step: Optional[int] = None, optimise_latents: bool = True):
         """Iterate over all the images in the eval dataset and get the average.
 
         Returns:
             metrics_dict: dictionary of metrics
         """
         self.eval()
-        # if we haven't already fit the eval latents this step, do it now 
+        # if we haven't already fit the eval latents this step, do it now
         if self.last_step_of_eval_optimisation != step:
-            if self.model.config.training_regime != "vae":
+            if self.model.config.training_regime != "vae" and optimise_latents:
                 self.model.fit_eval_latents(self.datamanager)
             self.last_step_of_eval_optimisation = step
         metrics_dict_list = []

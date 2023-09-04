@@ -8,10 +8,7 @@ from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.plugins.types import MethodSpecification
 
 from nerfstudio.engine.optimizers import AdamOptimizerConfig
-from nerfstudio.engine.schedulers import (
-    CosineDecaySchedulerConfig,
-    ExponentialDecaySchedulerConfig
-)
+from nerfstudio.engine.schedulers import CosineDecaySchedulerConfig, ExponentialDecaySchedulerConfig
 
 from reni.data.dataparsers.reni_dataparser import RENIDataParserConfig
 from reni.data.datamanagers.reni_datamanager import RENIDataManagerConfig
@@ -34,41 +31,46 @@ RENIField = MethodSpecification(
         pipeline=RENIPipelineConfig(
             datamanager=RENIDataManagerConfig(
                 dataparser=RENIDataParserConfig(
-                    data=Path("data/RENI_HDR_AUG"),
+                    data=Path("data/RENI_HDR"),
                     download_data=False,
                     train_subset_size=None,
                     val_subset_size=None,
                     convert_to_ldr=False,
                     convert_to_log_domain=True,
-                    min_max_normalize=None,  # Tuple[float, float] | Literal['min_max', 'quantile'] | None (Tuple should be in log domain if log_domain=True)
+                    min_max_normalize=(
+                        -18.0536,
+                        11.4633,
+                    ),  # Tuple[float, float] | Literal['min_max', 'quantile'] | None (Tuple should be in log domain if log_domain=True)
                     use_validation_as_train=False,
+                    augment_with_mirror=False,
                 ),
                 pixel_sampler=RENIEquirectangularPixelSamplerConfig(
-                    full_image_per_batch=False,
-                    images_per_batch=2,
+                    full_image_per_batch=True,
+                    images_per_batch=1,
                     is_equirectangular=True,
                 ),
                 images_on_gpu=True,
-                train_num_rays_per_batch=8192,
-                eval_num_rays_per_batch=8192,
+                train_num_rays_per_batch=8192,  # if not full_image_per_batch
+                eval_num_rays_per_batch=8192,  # if not full_image_per_batch
             ),
             model=RENIModelConfig(
                 field=RENIFieldConfig(
-                    conditioning="Attention",
-                    invariant_function="VN",
+                    conditioning="Concat",
+                    invariant_function="GramMatrix",
                     equivariance="SO2",
-                    axis_of_invariance="z",  # Nerfstudio world space is z-up
+                    axis_of_invariance="y",  # Nerfstudio world space is z-up # old reni was y-up
                     positional_encoding="NeRF",
-                    encoded_input="Directions",  # "InvarDirection", "Directions", "Conditioning", "Both"
-                    latent_dim=100,  # N for a latent code size of (N x 3)
+                    encoded_input="None",  # "InvarDirection", "Directions", "Conditioning", "Both"
+                    latent_dim=9,  # N for a latent code size of (N x 3)
                     hidden_features=128,  # ALL
-                    hidden_layers=9,  # SIRENs
+                    hidden_layers=5,  # SIRENs
                     mapping_layers=5,  # FiLM MAPPING NETWORK
                     mapping_features=128,  # FiLM MAPPING NETWORK
                     num_attention_heads=8,  # TRANSFORMER
                     num_attention_layers=6,  # TRANSFORMER
                     output_activation="None",  # ALL
-                    last_layer_linear=True,  # SIRENs
+                    last_layer_linear=False,  # SIRENs
+                    old_implementation=True,
                 ),
                 eval_latent_optimizer={
                     "eval_latents": {
@@ -86,15 +88,15 @@ RENIField = MethodSpecification(
                     "scale_inv_grad_loss": 1.0,
                 },
                 loss_inclusions={
-                    "log_mse_loss": False,
+                    "log_mse_loss": True,
                     "hdr_mse_loss": False,
                     "ldr_mse_loss": False,
-                    "cosine_similarity_loss": True,
+                    "cosine_similarity_loss": False,
                     "kld_loss": True,
-                    "scale_inv_loss": True,
+                    "scale_inv_loss": False,
                     "scale_inv_grad_loss": False,
-                    "bce_loss": False, # For RESGAN, leave False
-                    "wgan_loss": False, # For RESGAN, leave False
+                    "bce_loss": False,  # For RESGAN, leave False
+                    "wgan_loss": False,  # For RESGAN, leave False
                 },
                 include_sine_weighting=False,  # This is already handled by the equirectangular pixel sampler
                 training_regime="autodecoder",
@@ -105,7 +107,7 @@ RENIField = MethodSpecification(
                 "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),  # 1e-3 for Attention, 1e-5 for Other
                 "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
             },
-            "encoder": {
+            "encoder": {  # If (training_regime="vae")
                 "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
                 "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
             },

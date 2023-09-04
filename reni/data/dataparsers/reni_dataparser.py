@@ -47,14 +47,14 @@ class RENIDataParserConfig(DataParserConfig):
     convert_to_log_domain: bool = False
     """Whether to convert images to log domain."""
     augment_with_mirror: bool = False
-    """Whether to augment with mirror images."""
+    """Whether to augment training dataset with mirror images."""
     train_subset_size: Union[int, None] = None
     """Size of training subset."""
     val_subset_size: Union[int, None] = None
     """Size of validation subset."""
     use_validation_as_train: bool = False
     """Whether to use validation set as training set."""
-    min_max_normalize: Union[Literal['min_max', 'quantile'], Tuple[float, float], None] = 'min_max'
+    min_max_normalize: Union[Literal["min_max", "quantile"], Tuple[float, float], None] = "min_max"
     """Whether to min-max normalize the images."""
 
 
@@ -71,8 +71,6 @@ class RENIDataParser(DataParser):
     def _generate_dataparser_outputs(self, split="train"):
         if self.config.use_validation_as_train:
             split = "val"
-        else:
-            split = split
 
         path = self.data / split
 
@@ -89,9 +87,13 @@ class RENIDataParser(DataParser):
 
         if self.config.train_subset_size and split == "train":
             image_filenames = image_filenames[: self.config.train_subset_size]
-        
+
         if self.config.val_subset_size and split == "val":
             image_filenames = image_filenames[: self.config.val_subset_size]
+
+        if self.config.augment_with_mirror and split == "train":
+            # just double the number of images and dataset will handle the mirroring
+            image_filenames = image_filenames + image_filenames
 
         img_0 = imageio.v2.imread(image_filenames[0])
         image_height, image_width = img_0.shape[:2]
@@ -102,22 +104,21 @@ class RENIDataParser(DataParser):
         fx = torch.tensor(image_height, dtype=torch.float32).repeat(num_images)
         fy = torch.tensor(image_height, dtype=torch.float32).repeat(num_images)
 
-        # c2w = torch.eye(4)[None, :3, :].repeat(num_images, 1, 1)
-        c2w = torch.tensor([[[1, 0, 0, 0],
-                             [0, 0, 1, 0],
-                             [0, 1, 0, 0]]], dtype=torch.float32).repeat(num_images, 1, 1) # convert from nerfstudio camera to nerfstudio world
+        c2w = torch.tensor([[[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0]]], dtype=torch.float32).repeat(num_images, 1, 1)
 
         cameras = Cameras(fx=fx, fy=fy, cx=cx, cy=cy, camera_to_worlds=c2w, camera_type=CameraType.EQUIRECTANGULAR)
 
         dataparser_outputs = DataparserOutputs(
             image_filenames=image_filenames,
             cameras=cameras,
-            metadata={'convert_to_ldr': self.config.convert_to_ldr,
-                      'convert_to_log_domain': self.config.convert_to_log_domain,
-                      'augment_with_mirror': self.config.augment_with_mirror,
-                      'min_max_normalize': self.config.min_max_normalize,
-                      'image_height': image_height,
-                      'image_width': image_width}
+            metadata={
+                "convert_to_ldr": self.config.convert_to_ldr,
+                "convert_to_log_domain": self.config.convert_to_log_domain,
+                "augment_with_mirror": self.config.augment_with_mirror,
+                "min_max_normalize": self.config.min_max_normalize,
+                "image_height": image_height,
+                "image_width": image_width,
+            },
         )
 
         return dataparser_outputs

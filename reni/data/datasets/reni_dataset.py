@@ -34,6 +34,7 @@ from nerfstudio.data.datasets.base_dataset import InputDataset
 
 from reni.utils.colourspace import linear_to_sRGB
 
+
 class RENIDataset(InputDataset):
     """Dataset that returns images.
 
@@ -45,8 +46,15 @@ class RENIDataset(InputDataset):
     exclude_batch_keys_from_device: List[str] = ["image", "mask"]
     cameras: Cameras
 
-    def __init__(self, dataparser_outputs: DataparserOutputs, scale_factor: float = 1.0, min_max: Union[Tuple[float, float], None] = None):
+    def __init__(
+        self,
+        dataparser_outputs: DataparserOutputs,
+        scale_factor: float = 1.0,
+        min_max: Union[Tuple[float, float], None] = None,
+        split: str = "train",
+    ):
         super().__init__(dataparser_outputs=dataparser_outputs, scale_factor=scale_factor)
+        self.split = split
         self.min_max_normalize = self._dataparser_outputs.metadata["min_max_normalize"]
 
         if isinstance(self.min_max_normalize, tuple):
@@ -68,6 +76,7 @@ class RENIDataset(InputDataset):
         self.metadata["min_max"] = min_max
         self.metadata["image_height"] = self._dataparser_outputs.metadata["image_height"]
         self.metadata["image_width"] = self._dataparser_outputs.metadata["image_width"]
+        self.metadata["augment_with_mirror"] = self._dataparser_outputs.metadata["augment_with_mirror"]
 
     def __len__(self):
         return len(self._dataparser_outputs.image_filenames)
@@ -92,11 +101,18 @@ class RENIDataset(InputDataset):
         image[image == np.inf] = np.nanmax(image[image != np.inf])
         # make any values less than zero equal to min non negative
         image[image <= 0] = np.nanmin(image[image > 0])
+
+        if self.metadata["augment_with_mirror"] and self.split == "train":
+            # then every image after the halfway point is a copy of the first half and
+            # we need to reverse the order of the columns
+            if image_idx >= len(self) // 2:
+                image = image[:, ::-1, :]
+
         assert np.all(np.isfinite(image)), "Image contains non finite values."
         assert np.all(image >= 0), "Image contains negative values."
         assert len(image.shape) == 3
         assert image.dtype == np.float32
-        assert image.shape[2] in [3, 4], f"Image shape of {image.shape} is in correct."
+        assert image.shape[2] == 3, f"Image shape of {image.shape} is incorrect."
         return image
 
     def get_image(self, image_idx: int) -> Float[Tensor, "image_height image_width num_channels"]:
@@ -106,7 +122,7 @@ class RENIDataset(InputDataset):
             image_idx: The image index in the dataset.
         """
         image = torch.from_numpy(self.get_numpy_image(image_idx).astype("float32"))
-        image = image[:, :, :3] # remove alpha channel if present
+        image = image[:, :, :3]  # remove alpha channel if present
         if self._dataparser_outputs.metadata["convert_to_ldr"]:
             image = linear_to_sRGB(image)
         if self._dataparser_outputs.metadata["convert_to_log_domain"]:
@@ -116,7 +132,7 @@ class RENIDataset(InputDataset):
             # convert to between -1 and 1
             image = (image - min_val) / (max_val - min_val) * 2 - 1
         return image
-    
+
     def get_metadata(self, data: Dict) -> Dict:
         """Method that can be used to process any additional metadata that may be part of the model inputs.
 
@@ -128,24 +144,24 @@ class RENIDataset(InputDataset):
         # sun_mask = sun_mask > torch.quantile(sun_mask, 0.99)
         # data["sun_mask"] = sun_mask
         return data
-    
+
     def get_dataset_min_max(self) -> Tuple[float, float]:
         """Returns the min and max values of the dataset."""
 
         # Initialize the min and max with the values from the first image.
         first_image = torch.from_numpy(self.get_numpy_image(0).astype("float32"))
-        first_image = first_image[:, :, :3] # remove alpha channel if present
+        first_image = first_image[:, :, :3]  # remove alpha channel if present
 
         if self._dataparser_outputs.metadata["convert_to_log_domain"]:
             first_image = torch.log(first_image + 1e-8)
-        
+
         min_val = torch.min(first_image)
         max_val = torch.max(first_image)
 
         # Iterate over the rest of the images in the dataset.
         for image_idx in range(1, len(self)):
             image = torch.from_numpy(self.get_numpy_image(image_idx).astype("float32"))
-            image = image[:, :, :3] # remove alpha channel if present
+            image = image[:, :, :3]  # remove alpha channel if present
 
             if self._dataparser_outputs.metadata["convert_to_log_domain"]:
                 image = torch.log(image + 1e-8)
@@ -161,18 +177,18 @@ class RENIDataset(InputDataset):
 
         # Initialize the percentiles with the values from the first image.
         first_image = torch.from_numpy(self.get_numpy_image(0).astype("float32"))
-        first_image = first_image[:, :, :3] # remove alpha channel if present
+        first_image = first_image[:, :, :3]  # remove alpha channel if present
 
         if self._dataparser_outputs.metadata["convert_to_log_domain"]:
             first_image = torch.log(first_image + 1e-8)
-        
+
         lower_perc = torch.quantile(first_image, lower_percentile)
         upper_perc = torch.quantile(first_image, upper_percentile)
 
         # Iterate over the rest of the images in the dataset.
         for image_idx in range(1, len(self)):
             image = torch.from_numpy(self.get_numpy_image(image_idx).astype("float32"))
-            image = image[:, :, :3] # remove alpha channel if present
+            image = image[:, :, :3]  # remove alpha channel if present
 
             if self._dataparser_outputs.metadata["convert_to_log_domain"]:
                 image = torch.log(image + 1e-8)

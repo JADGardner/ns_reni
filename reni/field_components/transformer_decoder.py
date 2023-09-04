@@ -15,6 +15,9 @@
 import torch
 from torch import nn
 
+from typing import Optional
+
+
 class MultiHeadAttention(nn.Module):
     def __init__(self, direction_input_dim: int, conditioning_input_dim: int, latent_dim: int, num_heads: int):
         """
@@ -30,7 +33,7 @@ class MultiHeadAttention(nn.Module):
         assert latent_dim % num_heads == 0, "latent_dim must be divisible by num_heads"
         self.num_heads = num_heads
         self.head_dim = latent_dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
 
         self.query = nn.Linear(direction_input_dim, latent_dim)
         self.key = nn.Linear(conditioning_input_dim, latent_dim)
@@ -64,6 +67,7 @@ class MultiHeadAttention(nn.Module):
         out = self.fc_out(out).squeeze(1)
         return out
 
+
 class AttentionLayer(nn.Module):
     def __init__(self, direction_input_dim: int, conditioning_input_dim: int, latent_dim: int, num_heads: int):
         """
@@ -79,11 +83,7 @@ class AttentionLayer(nn.Module):
         self.mha = MultiHeadAttention(direction_input_dim, conditioning_input_dim, latent_dim, num_heads)
         self.norm1 = nn.LayerNorm(latent_dim)
         self.norm2 = nn.LayerNorm(latent_dim)
-        self.fc = nn.Sequential(
-            nn.Linear(latent_dim, latent_dim),
-            nn.ReLU(),
-            nn.Linear(latent_dim, latent_dim)
-        )
+        self.fc = nn.Sequential(nn.Linear(latent_dim, latent_dim), nn.ReLU(), nn.Linear(latent_dim, latent_dim))
 
     def forward(self, directional_input: torch.Tensor, conditioning_input: torch.Tensor) -> torch.Tensor:
         """
@@ -101,10 +101,18 @@ class AttentionLayer(nn.Module):
         fc_output = self.fc(out1)
         out2 = self.norm2(fc_output + out1)
         return out2
-    
+
 
 class Decoder(nn.Module):
-    def __init__(self, in_dim: int, conditioning_input_dim: int, hidden_features: int, num_heads: int, num_layers: int, out_activation: nn.Module):
+    def __init__(
+        self,
+        in_dim: int,
+        conditioning_input_dim: int,
+        hidden_features: int,
+        num_heads: int,
+        num_layers: int,
+        out_activation: Optional[nn.Module],
+    ):
         """
         Decoder module.
 
@@ -119,9 +127,11 @@ class Decoder(nn.Module):
         super().__init__()
         self.residual_projection = nn.Linear(in_dim, hidden_features)  # projection for residual connection
         self.layers = nn.ModuleList(
-            [AttentionLayer(hidden_features, conditioning_input_dim, hidden_features, num_heads)
-             for i in range(num_layers)]
-        )  
+            [
+                AttentionLayer(hidden_features, conditioning_input_dim, hidden_features, num_heads)
+                for i in range(num_layers)
+            ]
+        )
         self.fc = nn.Linear(hidden_features, 3)  # 3 for RGB
         self.out_activation = out_activation
 

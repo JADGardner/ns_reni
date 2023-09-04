@@ -49,9 +49,9 @@ class RENIFieldConfig(BaseRENIFieldConfig):
     """Type of invariant function to use"""
     conditioning: Literal["FiLM", "Concat", "Attention"] = "Concat"
     """Type of conditioning to use"""
-    positional_encoding: Literal["None", "NeRF"] = "None"
+    positional_encoding: Literal["NeRF"] = "NeRF"
     """Type of positional encoding to use"""
-    encoded_input: Literal["Directions", "Conditioning", "Both"] = "Directions"
+    encoded_input: Literal["None", "Directions", "Conditioning", "Both"] = "Directions"
     """Type of input to encode"""
     latent_dim: int = 36
     """Dimensionality of latent code, N for a latent code size of (N x 3)"""
@@ -81,6 +81,8 @@ class RENIFieldConfig(BaseRENIFieldConfig):
     """Whether to fix the decoder weights"""
     trainable_scale: bool = False
     """Whether to train the scale parameter"""
+    old_implementation: bool = False
+    """Whether to match implementation of old RENI"""
 
 
 class RENIField(BaseRENIField):
@@ -109,6 +111,7 @@ class RENIField(BaseRENIField):
         self.output_activation = self.config.output_activation
         self.first_omega_0 = self.config.first_omega_0
         self.hidden_omega_0 = self.config.hidden_omega_0
+        self.old_implementation = self.config.old_implementation
         self.axis_of_invariance = ["x", "y", "z"].index(self.config.axis_of_invariance)
 
         if self.num_train_data is not None:
@@ -256,7 +259,11 @@ class RENIField(BaseRENIField):
             return innerprod, z_invar
 
     def gram_matrix_invariance(
-        self, Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2", axis_of_invariance: int = 1
+        self,
+        Z,
+        D,
+        equivariance: Literal["None", "SO2", "SO3"] = "SO2",
+        axis_of_invariance: int = 1,
     ):
         """Generates an invariant representation from latent code Z and direction coordinates D.
 
@@ -304,8 +311,12 @@ class RENIField(BaseRENIField):
             # Get invariant component of D along the axis of invariance
             d_invar = D[:, axis_of_invariance].unsqueeze(-1)  # [num_rays, 1]
 
-            directional_input = torch.cat((innerprod, d_invar, d_other_norm), 1)  # [num_rays, latent_dim + 2]
-            conditioning_input = torch.cat((z_other_invar, z_invar), 1)  # [num_rays, latent_dim^2 + latent_dim]
+            if not self.old_implementation:
+                directional_input = torch.cat((innerprod, d_invar, d_other_norm), 1)  # [num_rays, latent_dim + 2]
+                conditioning_input = torch.cat((z_other_invar, z_invar), 1)  # [num_rays, latent_dim^2 + latent_dim]
+            else:
+                # this is matching the previous implementation of RENI, used for comparisons
+                return torch.cat((innerprod, z_other_invar, d_other_norm, z_invar, d_invar), 1)
 
             return directional_input, conditioning_input
 
@@ -344,6 +355,7 @@ class RENIField(BaseRENIField):
 
         # Dictionary-based encoding setup
         encoding_setup = {
+            "None": [],
             "Conditioning": ["conditioning"],
             "Directions": ["direction"],
             "Both": ["direction", "conditioning"],
@@ -399,6 +411,7 @@ class RENIField(BaseRENIField):
                 num_layers=self.config.num_attention_layers,
                 out_activation=output_activation,
             )
+        assert network is not None, "unknown conditioning type"
         return network
 
     def sample_latent(self, idx):
@@ -493,25 +506,34 @@ class RENIField(BaseRENIField):
             ray_samples.frustums.directions
         )  # [num_rays, 3] # each has unique latent code defined by camera index
 
-        directional_input, conditioning_input = self.invariant_function(
-            latent_codes, directions, equivariance=self.equivariance, axis_of_invariance=self.axis_of_invariance
-        )  # [num_rays, 3]
+        if not self.old_implementation:
+            directional_input, conditioning_input = self.invariant_function(
+                latent_codes, directions, equivariance=self.equivariance, axis_of_invariance=self.axis_of_invariance
+            )  # [num_rays, 3]
 
-        if self.config.positional_encoding == "NeRF":
-            directional_input, conditioning_input = self.apply_positional_encoding(
-                directional_input, conditioning_input
-            )
+            if self.config.positional_encoding == "NeRF":
+                directional_input, conditioning_input = self.apply_positional_encoding(
+                    directional_input, conditioning_input
+                )
+
+            if self.conditioning == "Concat":
+                model_outputs = self.network(
+                    torch.cat((directional_input, conditioning_input), dim=1)
+                )  # returns -> [num_rays, 3]
+            elif self.conditioning == "FiLM":
+                model_outputs = self.network(directional_input, conditioning_input)  # returns -> [num_rays, 3]
+            elif self.conditioning == "Attention":
+                model_outputs = self.network(directional_input, conditioning_input)  # returns -> [num_rays, 3]
+        else:
+            # in the old implementation directions were sampled with y-up not z-up so need to swap y and z in directions
+            directions = torch.stack((directions[:, 0], directions[:, 2], directions[:, 1]), -1)
+            model_input = self.invariant_function(
+                latent_codes, directions, equivariance=self.equivariance, axis_of_invariance=self.axis_of_invariance
+            )  # [num_rays, 3]
+
+            model_outputs = self.network(model_input)
 
         outputs = {}
-
-        if self.conditioning == "Concat":
-            model_outputs = self.network(
-                torch.cat((directional_input, conditioning_input), dim=1)
-            )  # returns -> [num_rays, 3]
-        elif self.conditioning == "FiLM":
-            model_outputs = self.network(directional_input, conditioning_input)  # returns -> [num_rays, 3]
-        elif self.conditioning == "Attention":
-            model_outputs = self.network(directional_input, conditioning_input)  # returns -> [num_rays, 3]
 
         if self.config.trainable_scale:
             scale = self.select_scale()

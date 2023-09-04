@@ -323,6 +323,7 @@ class RENIDataManager(VanillaDataManager):
         return RENIDataset(
             dataparser_outputs=self.train_dataparser_outputs,
             scale_factor=self.config.camera_res_scale_factor,
+            split="train",
         )
 
     def create_eval_dataset(self) -> RENIDataset:
@@ -331,4 +332,5 @@ class RENIDataManager(VanillaDataManager):
             dataparser_outputs=self.dataparser.get_dataparser_outputs(split=self.test_split),
             scale_factor=self.config.camera_res_scale_factor,
             min_max=self.train_dataset.metadata["min_max"],
+            split=self.test_split,
         )
