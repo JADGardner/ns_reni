@@ -481,7 +481,10 @@ class RENIField(BaseRENIField):
         return directional_input, conditioning_input
 
     def get_outputs(
-        self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None], latent_codes: Union[torch.Tensor, None]
+        self,
+        ray_samples: RaySamples,
+        rotation: Optional[torch.Tensor] = None,
+        latent_codes: Optional[torch.Tensor] = None,
     ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Returns the outputs of the field.
 
@@ -553,8 +556,8 @@ class RENIField(BaseRENIField):
     def forward(
         self,
         ray_samples: RaySamples,
-        rotation: Union[torch.Tensor, None] = None,
-        latent_codes: Union[torch.Tensor, None] = None,
+        rotation: Optional[torch.Tensor] = None,
+        latent_codes: Optional[torch.Tensor] = None,
     ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
