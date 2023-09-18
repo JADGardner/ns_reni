@@ -155,7 +155,7 @@ class NeRDDataset(InputDataset):
         data = {
             "image_idx": image_idx,
             "image": self.get_image(image_idx),
-            "mask": self.get_mask(image_idx),
+            "fg_mask": self.get_mask(image_idx),
             "normal": self.get_normal(image_idx),
             "depth": self.get_depth(image_idx),
             # "white_balance": self.white_balances[image_idx],

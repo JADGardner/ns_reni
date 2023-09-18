@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Type, Union, Literal, Tuple
+from typing import Type, Union, Literal, Tuple, Optional
 
 import imageio
 import torch
@@ -56,6 +56,8 @@ class RENIDataParserConfig(DataParserConfig):
     """Whether to use validation set as training set."""
     min_max_normalize: Union[Literal["min_max", "quantile"], Tuple[float, float], None] = "min_max"
     """Whether to min-max normalize the images."""
+    eval_mask_path: Optional[Path] = None
+    """Path to the evaluation mask or a directory of masks."""
 
 
 @dataclass
@@ -99,6 +101,15 @@ class RENIDataParser(DataParser):
         image_height, image_width = img_0.shape[:2]
         num_images = len(image_filenames)
 
+        mask_filenames = None
+        if split in ["val", "test"] and self.config.eval_mask_path is not None:
+            # if path is directory, assume it contains masks for each image
+            if self.config.eval_mask_path.is_dir():
+                mask_filenames = sorted(self.config.eval_mask_path.glob("*.png"))
+                assert len(mask_filenames) == num_images
+            else:
+                mask_filenames = [self.config.eval_mask_path] * num_images
+
         cx = torch.tensor(image_width // 2, dtype=torch.float32).repeat(num_images)
         cy = torch.tensor(image_height // 2, dtype=torch.float32).repeat(num_images)
         fx = torch.tensor(image_height, dtype=torch.float32).repeat(num_images)
@@ -110,6 +121,7 @@ class RENIDataParser(DataParser):
 
         dataparser_outputs = DataparserOutputs(
             image_filenames=image_filenames,
+            mask_filenames=mask_filenames,
             cameras=cameras,
             metadata={
                 "convert_to_ldr": self.config.convert_to_ldr,

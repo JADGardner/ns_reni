@@ -71,26 +71,28 @@ class RENIEquirectangularPixelSampler(PixelSampler):
     ) -> Int[Tensor, "batch_size 3"]:
         if self.full_image_per_batch:
             # Randomly select N images from the range [0, num_images)
-            random_image_indices = torch.randint(0, num_images, (self.images_per_batch,), device=device) # [N]
-            # Creating a grid for phi and theta
-            phi_values = torch.linspace(0, 1, image_height, device=device)  # Uniformly distributed values for phi
-            theta_values = torch.linspace(0, 1, image_width, device=device)  # Uniformly distributed values for theta
-            # Transforming phi values according to the PDF f(phi) = sin(phi) / 2
-            phi_values = torch.acos(1 - 2 * phi_values) / torch.pi
-            # Creating a meshgrid to combine phi and theta for all points in the image
-            phi_grid, theta_grid = torch.meshgrid(phi_values, theta_values, indexing="ij")
-            # Repeating the grid for each image in the batch
-            phi_grid = phi_grid.repeat(self.images_per_batch, 1, 1)
-            theta_grid = theta_grid.repeat(self.images_per_batch, 1, 1)
-            # Creating a tensor for the selected random image indices
-            image_indices = random_image_indices.view(-1, 1, 1)
-            image_indices = image_indices.repeat(1, image_height, image_width)
-            # Stacking the random image indices, phi, and theta to create the final indices tensor
-            indices = torch.stack((image_indices, phi_grid, theta_grid), dim=-1)
-            # Scaling by the actual dimensions, note that for the image index, we don't need to scale
-            indices = indices * torch.tensor([1, image_height - 1, image_width - 1], device=device)
+            random_image_indices = torch.randint(0, num_images, (self.images_per_batch,), device=device)  # [N]
+            # Create a grid of index values for height and width
+            phi_values = torch.arange(0, image_height, device=device)  # [H]
+            theta_values = torch.arange(0, image_width, device=device)  # [W]
+
+            # Create a meshgrid to combine phi and theta for all points in the image
+            phi_grid, theta_grid = torch.meshgrid(phi_values, theta_values)  # [H, W]
+
+            # Repeat the grid for each image in the batch
+            phi_grid = phi_grid.repeat(num_images, 1, 1)  # [N, H, W]
+            theta_grid = theta_grid.repeat(num_images, 1, 1)  # [N, H, W]
+
+            # Create a tensor for the selected random image indices
+            image_indices = random_image_indices.view(-1, 1, 1)  # [N, 1, 1]
+            image_indices = image_indices.repeat(1, image_height, image_width)  # [N, H, W]
+
+            # Stack the random image indices, phi, and theta to create the final indices tensor
+            indices = torch.stack((image_indices, phi_grid, theta_grid), dim=-1)  # [N, H, W, 3]
+
             indices = indices.view(-1, 3)
             indices = indices.long()
+
         else:
             indices = super().sample_method_equirectangular(
                 batch_size, num_images, image_height, image_width, mask=mask, device=device

@@ -24,6 +24,7 @@ from pathlib import Path
 from collections import defaultdict
 import torch
 from torch.nn import Parameter
+from torch.nn import functional as F
 import matplotlib.cm as cm
 
 from nerfstudio.field_components.spatial_distortions import SceneContraction
@@ -269,6 +270,8 @@ class NerfactoRENIModel(NerfactoModel):
 
         light_colors, light_directions = self.get_illumination(ray_samples.camera_indices)
 
+        light_colors = torch.ones_like(light_colors)
+
         rgb = self.labmertian_renderer(
             albedos=field_outputs[RENIFieldHeadNames.ALBEDO],
             normals=field_outputs[RENIFieldHeadNames.NORMALS],
@@ -332,13 +335,14 @@ class NerfactoRENIModel(NerfactoModel):
     def get_loss_dict(self, outputs, batch, metrics_dict=None):
         loss_dict = {}
         image = batch["image"].to(self.device)
-        pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
-            pred_image=outputs["rgb"],
-            pred_accumulation=outputs["accumulation"],
-            gt_image=image,
-        )
+        pred_image = outputs["rgb"]
 
-        loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
+        if "fg_mask" in batch:
+            image = image * batch["fg_mask"].to(self.device)
+            pred_image = pred_image * batch["fg_mask"].to(self.device)
+
+        loss_dict["rgb_loss"] = self.rgb_loss(image, pred_image)
+
         if self.training:
             loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
                 outputs["weights_list"], outputs["ray_samples_list"]
@@ -355,6 +359,7 @@ class NerfactoRENIModel(NerfactoModel):
                 loss_dict["pred_normal_loss"] = self.config.pred_normal_loss_mult * torch.mean(
                     outputs["rendered_pred_normal_loss"]
                 )
+
         return loss_dict
 
     @torch.no_grad()

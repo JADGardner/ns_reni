@@ -31,6 +31,7 @@ from typing import Type, Union, Tuple, Dict, List
 from nerfstudio.cameras.cameras import Cameras, CameraType
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
 from nerfstudio.data.datasets.base_dataset import InputDataset
+from nerfstudio.data.utils.data_utils import get_image_mask_tensor_from_path
 
 from reni.utils.colourspace import linear_to_sRGB
 
@@ -89,11 +90,7 @@ class RENIDataset(InputDataset):
         """
         image_filename = self._dataparser_outputs.image_filenames[image_idx]
         image = imageio.imread(image_filename).astype("float32")
-        if self.scale_factor != 1.0:
-            width, height = image.shape[1], image.shape[0]
-            newsize = (int(width * self.scale_factor), int(height * self.scale_factor))
-            # reszie
-            image = image.resize(newsize, Image.ANTIALIAS)
+
         if len(image.shape) == 2:
             image = image[:, :, None].repeat(3, axis=2)
 
@@ -132,6 +129,24 @@ class RENIDataset(InputDataset):
             # convert to between -1 and 1
             image = (image - min_val) / (max_val - min_val) * 2 - 1
         return image
+
+    def get_data(self, image_idx: int) -> Dict:
+        """Returns the ImageDataset data as a dictionary.
+
+        Args:
+            image_idx: The image index in the dataset.
+        """
+        image = self.get_image(image_idx)
+        data = {"image_idx": image_idx, "image": image}
+        if self._dataparser_outputs.mask_filenames is not None:
+            mask_filepath = self._dataparser_outputs.mask_filenames[image_idx]
+            data["mask"] = get_image_mask_tensor_from_path(filepath=mask_filepath, scale_factor=self.scale_factor)
+            assert (
+                data["mask"].shape[:2] == data["image"].shape[:2]
+            ), f"Mask and image have different shapes. Got {data['mask'].shape[:2]} and {data['image'].shape[:2]}"
+        metadata = self.get_metadata(data)
+        data.update(metadata)
+        return data
 
     def get_metadata(self, data: Dict) -> Dict:
         """Method that can be used to process any additional metadata that may be part of the model inputs.
