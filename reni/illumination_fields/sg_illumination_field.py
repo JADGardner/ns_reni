@@ -18,7 +18,7 @@ Base class for the Spherical Neural Fields.
 
 from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import Type, Union, Dict, Any, Tuple
+from typing import Type, Union, Dict, Any, Tuple, Optional
 import contextlib
 
 import numpy as np
@@ -29,7 +29,8 @@ from reni.illumination_fields.base_spherical_field import BaseRENIField, BaseREN
 from reni.field_components.field_heads import RENIFieldHeadNames
 
 from nerfstudio.cameras.rays import RaySamples
-    
+
+
 # Field related configs
 @dataclass
 class SphericalGaussianFieldConfig(BaseRENIFieldConfig):
@@ -41,11 +42,13 @@ class SphericalGaussianFieldConfig(BaseRENIFieldConfig):
     """number of gaussian components in row and column directions"""
     channel_dim: int = 3
     """number of channels in the field"""
+    eval_train_equal: bool = True
+    """whether to use the same latents for eval and train"""
 
 
 class SphericalGaussianField(BaseRENIField):
     """Spherical Gaussian Illumination Field.
-       https://github.com/lzqsd/SphericalGaussianOptimization
+    https://github.com/lzqsd/SphericalGaussianOptimization
     """
 
     def __init__(
@@ -55,8 +58,10 @@ class SphericalGaussianField(BaseRENIField):
         num_eval_data: Union[int, None],
         normalisations: Dict[str, Any],
     ) -> None:
-        super().__init__(config=config, num_train_data=num_train_data, num_eval_data=num_eval_data, normalisations=normalisations)
-        
+        super().__init__(
+            config=config, num_train_data=num_train_data, num_eval_data=num_eval_data, normalisations=normalisations
+        )
+
         self.sg_col, self.sg_row = self.config.row_col_gaussian_dims
         self.sg_num = int(self.sg_row * self.sg_col)
 
@@ -64,12 +69,8 @@ class SphericalGaussianField(BaseRENIField):
         theta_center = (np.arange(self.sg_row) + 0.5) / self.sg_row * np.pi / 2.0
 
         phi_center, theta_center = np.meshgrid(phi_center, theta_center)
-        theta_center = theta_center.reshape(1, self.sg_num, 1).astype(
-            np.float32
-        )
-        phi_center = phi_center.reshape(1, self.sg_num, 1).astype(
-            np.float32
-        )
+        theta_center = theta_center.reshape(1, self.sg_num, 1).astype(np.float32)
+        phi_center = phi_center.reshape(1, self.sg_num, 1).astype(np.float32)
 
         theta_center = torch.from_numpy(theta_center).requires_grad_(False)
         phi_center = torch.from_numpy(phi_center).requires_grad_(False)
@@ -95,7 +96,6 @@ class SphericalGaussianField(BaseRENIField):
         self.register_parameter("train_params", train_params)
         eval_params = self.setup_param(self.num_eval_data, self.sg_num, self.sg_row, self.config.channel_dim)
         self.register_parameter("eval_params", eval_params)
-
 
     @contextlib.contextmanager
     def hold_decoder_fixed(self):
@@ -124,20 +124,32 @@ class SphericalGaussianField(BaseRENIField):
         params = torch.nn.Parameter(params.view(num_latents, sg_num * 6))
 
         return params
-    
+
     def reset_eval_latents(self):
         """Resets the eval latents"""
-        eval_params = self.setup_param(self.num_eval_data, self.sg_num, self.sg_row, self.config.channel_dim).type_as(self.eval_params)
+        eval_params = self.setup_param(self.num_eval_data, self.sg_num, self.sg_row, self.config.channel_dim).type_as(
+            self.eval_params
+        )
         self.eval_params.data = eval_params.data
+
+    def copy_train_to_eval(self):
+        """Copies the train latents to eval latents"""
+        self.eval_params.data = self.train_params.data
+        self.phi_center_eval.data = self.phi_center_train.data
+        self.theta_center_eval.data = self.theta_center_train.data
 
     def deparameterize(self):
         """Get individual parameters from the concatenated parameters"""
         if self.training and not self.fixed_decoder:
-            weight, theta, phi, lamb = torch.split(self.train_params.view(self.num_train_data, self.sg_num, 6), [3, 1, 1, 1], dim=2)
+            weight, theta, phi, lamb = torch.split(
+                self.train_params.view(self.num_train_data, self.sg_num, 6), [3, 1, 1, 1], dim=2
+            )
             theta_center = self.theta_center_train
             phi_center = self.phi_center_train
         else:
-            weight, theta, phi, lamb = torch.split(self.eval_params.view(self.num_eval_data, self.sg_num, 6), [3, 1, 1, 1], dim=2)
+            weight, theta, phi, lamb = torch.split(
+                self.eval_params.view(self.num_eval_data, self.sg_num, 6), [3, 1, 1, 1], dim=2
+            )
             theta_center = self.theta_center_eval
             phi_center = self.phi_center_eval
 
@@ -146,7 +158,7 @@ class SphericalGaussianField(BaseRENIField):
         weight = torch.exp(weight)
         lamb = torch.exp(lamb)
         return theta, phi, weight, lamb
-    
+
     def renderSG(self, directions, camera_indices, theta, phi, lamb, weight):
         """Get the rendered spherical gaussian values for the given directions
 
@@ -159,47 +171,66 @@ class SphericalGaussianField(BaseRENIField):
             weight (torch.Tensor): [num_train/eval_data, sg_num, 3] tensor of Amplitude values
         """
 
-        theta_dir = torch.acos(directions[:, 2]) # [num_rays]
-        phi_dir = torch.atan2(directions[:, 0], directions[:, 1]) # [num_rays]
+        theta_dir = torch.acos(directions[:, 2])  # [num_rays]
+        phi_dir = torch.atan2(directions[:, 0], directions[:, 1])  # [num_rays]
 
         # Unsqueeze directions to match the shape of theta, phi, lamb and weight
-        theta_dir = theta_dir.unsqueeze(-1).unsqueeze(-1) # [num_rays, 1, 1]
-        phi_dir = phi_dir.unsqueeze(-1).unsqueeze(-1) # [num_rays, 1, 1]
-        
+        theta_dir = theta_dir.unsqueeze(-1).unsqueeze(-1)  # [num_rays, 1, 1]
+        phi_dir = phi_dir.unsqueeze(-1).unsqueeze(-1)  # [num_rays, 1, 1]
+
         # Computing spherical gaussian as per the formula
-        cos_angle = torch.sin(theta[camera_indices]) * torch.sin(theta_dir) * torch.cos(phi[camera_indices] - phi_dir) + torch.cos(theta[camera_indices]) * torch.cos(theta_dir) # [num_rays, sg_num, 1]
+        cos_angle = torch.sin(theta[camera_indices]) * torch.sin(theta_dir) * torch.cos(
+            phi[camera_indices] - phi_dir
+        ) + torch.cos(theta[camera_indices]) * torch.cos(
+            theta_dir
+        )  # [num_rays, sg_num, 1]
 
         # index select the weight for each ray
-        rgb = weight[camera_indices] * torch.exp(lamb[camera_indices] * (cos_angle - 1)) # [num_rays, sg_num, 3]
+        rgb = weight[camera_indices] * torch.exp(lamb[camera_indices] * (cos_angle - 1))  # [num_rays, sg_num, 3]
 
         # Sum over all spherical gaussians for each ray
         rgb = torch.sum(rgb, dim=1)
 
         return rgb
-    
+
     @abstractmethod
-    def get_outputs(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
+    def get_outputs(
+        self,
+        ray_samples: RaySamples,
+        rotation: Optional[torch.Tensor] = None,
+        latent_codes: Optional[torch.Tensor] = None,
+    ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Returns the outputs of the field.
-        
+
         Args:
             ray_samples: [num_rays]
             rotation: [3, 3]
         """
-        camera_indices = ray_samples.camera_indices.squeeze() # [num_rays]
+        camera_indices = ray_samples.camera_indices.squeeze()  # [num_rays]
 
-        directions = ray_samples.frustums.directions # [num_rays, 3] # each has unique latent code defined by camera index
+        directions = (
+            ray_samples.frustums.directions
+        )  # [num_rays, 3] # each has unique latent code defined by camera index
 
-        theta, phi, weight, lamb = self.deparameterize()
+        if latent_codes is None:
+            theta, phi, weight, lamb = self.deparameterize()
+        else:
+            raise NotImplementedError
 
-        rgb = self.renderSG(directions, camera_indices, theta, phi, lamb, weight) # [num_rays, 3]
+        rgb = self.renderSG(directions, camera_indices, theta, phi, lamb, weight)  # [num_rays, 3]
 
         return {RENIFieldHeadNames.RGB: rgb}
 
-    def forward(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None] = None) -> Dict[RENIFieldHeadNames, TensorType]:
+    def forward(
+        self,
+        ray_samples: RaySamples,
+        rotation: Optional[torch.Tensor] = None,
+        latent_codes: Optional[torch.Tensor] = None,
+    ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:
             ray_bundle: [num_rays]
             rotation: [3, 3]
         """
-        return self.get_outputs(ray_samples=ray_samples, rotation=rotation)
+        return self.get_outputs(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes)

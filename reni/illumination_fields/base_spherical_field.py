@@ -125,11 +125,6 @@ class BaseRENIField(SphericalField):
         raise NotImplementedError
 
     @abstractmethod
-    def unnormalise(self, rgb: torch.Tensor) -> torch.Tensor:
-        """Undo normalisations applied to the HDR RGB values prior to fitting"""
-        raise NotImplementedError
-
-    @abstractmethod
     def get_outputs(
         self,
         ray_samples: RaySamples,
@@ -144,6 +139,19 @@ class BaseRENIField(SphericalField):
             latent_codes: [latent_shape]
         """
         raise NotImplementedError
+
+    def unnormalise(self, x):
+        """Undo normalisation of the image"""
+        if not self.min_max.dtype == torch.bool:
+            min_val, max_val = self.min_max
+            # need to unnormalize the image from between -1 and 1
+            x = 0.5 * (x + 1) * (max_val - min_val) + min_val
+
+        if self.log_domain:
+            # undo log domain conversion
+            x = torch.exp(x)
+
+        return x
 
     def forward(
         self,

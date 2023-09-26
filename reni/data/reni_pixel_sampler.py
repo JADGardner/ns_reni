@@ -80,12 +80,12 @@ class RENIEquirectangularPixelSampler(PixelSampler):
             phi_grid, theta_grid = torch.meshgrid(phi_values, theta_values)  # [H, W]
 
             # Repeat the grid for each image in the batch
-            phi_grid = phi_grid.repeat(num_images, 1, 1)  # [N, H, W]
-            theta_grid = theta_grid.repeat(num_images, 1, 1)  # [N, H, W]
+            phi_grid = phi_grid.repeat(self.images_per_batch, 1, 1)  # [N, H, W]
+            theta_grid = theta_grid.repeat(self.images_per_batch, 1, 1)  # [N, H, W]
 
             # Create a tensor for the selected random image indices
             image_indices = random_image_indices.view(-1, 1, 1)  # [N, 1, 1]
-            image_indices = image_indices.repeat(1, image_height, image_width)  # [N, H, W]
+            image_indices = image_indices.repeat(self.images_per_batch, image_height, image_width)  # [N, H, W]
 
             # Stack the random image indices, phi, and theta to create the final indices tensor
             indices = torch.stack((image_indices, phi_grid, theta_grid), dim=-1)  # [N, H, W, 3]

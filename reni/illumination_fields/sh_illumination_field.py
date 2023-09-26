@@ -30,7 +30,7 @@ from torchtyping import TensorType
 from nerfstudio.cameras.rays import RayBundle, RaySamples, Frustums
 from nerfstudio.field_components.encodings import NeRFEncoding, SHEncoding, Encoding
 
-from reni.illumination_fields.base_spherical_field import SphericalField, SphericalFieldConfig
+from reni.illumination_fields.base_spherical_field import BaseRENIField, BaseRENIFieldConfig
 from reni.field_components.field_heads import RENIFieldHeadNames
 
 
@@ -112,12 +112,7 @@ def K(l, m, device):
     Returns:
         Tensor: Normalization constant.
     """
-    return torch.sqrt(
-        torch.tensor(
-            ((2 * l + 1) * factorial(l - m))
-            / (4 * torch.pi * factorial(l + m))
-        )
-    ).to(device)
+    return torch.sqrt(torch.tensor(((2 * l + 1) * factorial(l - m)) / (4 * torch.pi * factorial(l + m)))).to(device)
 
 
 def shIndex(l, m):
@@ -150,25 +145,11 @@ def SH(l, m, theta, phi, device):
     """
     sqrt2 = np.sqrt(2.0)
     if m == 0:
-        return (
-            K(l, m, device)
-            * P(l, m, torch.cos(theta), device)
-            * torch.ones(phi.shape).to(device)
-        )
+        return K(l, m, device) * P(l, m, torch.cos(theta), device) * torch.ones(phi.shape).to(device)
     elif m > 0:
-        return (
-            sqrt2
-            * K(l, m, device)
-            * torch.cos(m * phi)
-            * P(l, m, torch.cos(theta), device)
-        )
+        return sqrt2 * K(l, m, device) * torch.cos(m * phi) * P(l, m, torch.cos(theta), device)
     else:
-        return (
-            sqrt2
-            * K(l, -m, device)
-            * torch.sin(-m * phi)
-            * P(l, -m, torch.cos(theta), device)
-        )
+        return sqrt2 * K(l, -m, device) * torch.sin(-m * phi) * P(l, -m, torch.cos(theta), device)
 
 
 def shEvaluate(theta, phi, lmax, device):
@@ -206,6 +187,7 @@ def xy2ll(x, y, width, height):
     Returns:
         tuple: Latitude and longitude tensors.
     """
+
     def yLocToLat(yLoc, height):
         return yLoc / (float(height) / torch.pi)
 
@@ -237,7 +219,7 @@ def getCoefficientsMatrix(xres, lmax, device):
     # lat is shape [H, 1] and lon is shape [W]
     lat = lat.repeat(1, xres).reshape(-1)
     lon = lon.unsqueeze(0).repeat(yres, 1).reshape(-1)
-    
+
     # Compute spherical harmonics. Apply thetaOffset due to EXR spherical coordiantes
     Ylm = shEvaluate(lat, lon, lmax, device)
     return Ylm
@@ -269,9 +251,10 @@ def shReconstructSignal(coeffs, width, device):
         Tensor: Reconstructed signal tensor (radiance map)
     """
     lmax = sh_lmax_from_terms(torch.tensor(coeffs.shape[0]).to(device))
-    sh_basis_matrix = getCoefficientsMatrix(width, lmax, device) # (H*W, N)
-    sh_basis_matrix = sh_basis_matrix.reshape(width//2, width, -1) # (H, W, N)
+    sh_basis_matrix = getCoefficientsMatrix(width, lmax, device)  # (H*W, N)
+    sh_basis_matrix = sh_basis_matrix.reshape(width // 2, width, -1)  # (H, W, N)
     return torch.einsum("ijk,kl->ijl", sh_basis_matrix, coeffs)  # (H, W, 3)
+
 
 def calc_num_sh_coeffs(order):
     """
@@ -287,6 +270,7 @@ def calc_num_sh_coeffs(order):
     for i in range(order + 1):
         coeffs += 2 * i + 1
     return coeffs
+
 
 def get_sh_order(ndims):
     """
@@ -304,6 +288,7 @@ def get_sh_order(ndims):
         order += 1
     return order
 
+
 def getSolidAngleMap(width):
     height = int(width / 2)
     solid_angle = getSolidAngle(torch.arange(0, height).float(), width)
@@ -312,25 +297,25 @@ def getSolidAngleMap(width):
 
 def getSolidAngle(y, width, is3D=False):
     height = int(width / 2)
-    pi2OverWidth = (torch.tensor(2 * np.pi) / width)
+    pi2OverWidth = torch.tensor(2 * np.pi) / width
     piOverHeight = torch.tensor(np.pi) / height
     theta = (1.0 - ((y + 0.5) / height)) * torch.tensor(np.pi)
-    return pi2OverWidth * (
-        torch.cos(theta - (piOverHeight / 2.0)) - torch.cos(theta + (piOverHeight / 2.0))
-    )
+    return pi2OverWidth * (torch.cos(theta - (piOverHeight / 2.0)) - torch.cos(theta + (piOverHeight / 2.0)))
 
 
 def getCoefficientsFromImage(ibl, lmax=2, resizeWidth=None, filterAmount=None, device=torch.device("cpu")):
     # Resize if necessary (I recommend it for large images)
     if resizeWidth is not None:
         ibl = ibl.permute(2, 0, 1)
-        ibl = F.interpolate(ibl.unsqueeze(0), size=(resizeWidth // 2, resizeWidth), mode='bilinear', align_corners=False).squeeze(0)
+        ibl = F.interpolate(
+            ibl.unsqueeze(0), size=(resizeWidth // 2, resizeWidth), mode="bilinear", align_corners=False
+        ).squeeze(0)
         ibl = ibl.permute(1, 2, 0)
     elif ibl.shape[1] > 1000:
         ibl = ibl.permute(2, 0, 1)
-        ibl = F.interpolate(ibl.unsqueeze(0), size=(1000 // 2, 1000), mode='bilinear', align_corners=False).squeeze(0)
+        ibl = F.interpolate(ibl.unsqueeze(0), size=(1000 // 2, 1000), mode="bilinear", align_corners=False).squeeze(0)
         ibl = ibl.permute(1, 2, 0)
-        
+
     xres = ibl.shape[1]
     yres = ibl.shape[0]
 
@@ -339,13 +324,13 @@ def getCoefficientsFromImage(ibl, lmax=2, resizeWidth=None, filterAmount=None, d
         ibl = blurIBL(ibl, amount=filterAmount)
 
     # Compute sh coefficients
-    sh_basis_matrix = getCoefficientsMatrix(xres, lmax, device) # [H * W, N]
-    sh_basis_matrix = sh_basis_matrix.reshape(yres, xres, -1) # [H, W, N]
+    sh_basis_matrix = getCoefficientsMatrix(xres, lmax, device)  # [H * W, N]
+    sh_basis_matrix = sh_basis_matrix.reshape(yres, xres, -1)  # [H, W, N]
 
     # Sampling weights
     solidAngles = getSolidAngleMap(xres)
     solidAngles = solidAngles.to(device)
-    
+
     # Project IBL into SH basis
     nCoeffs = shTerms(lmax)
     iblCoeffs = torch.zeros((nCoeffs, 3), device=device)
@@ -356,18 +341,17 @@ def getCoefficientsFromImage(ibl, lmax=2, resizeWidth=None, filterAmount=None, d
 
     return iblCoeffs
 
+
 def get_spherical_harmonic_representation(img, nBands):
     # img: (H, W, 3), nBands: int
     iblCoeffs = getCoefficientsFromImage(img, nBands)
-    sh_radiance_map = shReconstructSignal(
-        iblCoeffs, width=img.shape[1]
-    )
+    sh_radiance_map = shReconstructSignal(iblCoeffs, width=img.shape[1])
     sh_radiance_map = torch.from_numpy(sh_radiance_map)
     return sh_radiance_map
 
 
 @dataclass
-class SphericalHarmonicIlluminationFieldConfig(SphericalFieldConfig):
+class SphericalHarmonicIlluminationFieldConfig(BaseRENIFieldConfig):
     """Configuration for model instantiation"""
 
     _target: Type = field(default_factory=lambda: SphericalHarmonicIlluminationField)
@@ -375,7 +359,8 @@ class SphericalHarmonicIlluminationFieldConfig(SphericalFieldConfig):
     spherical_harmonic_order: int = 2
     """Spherical harmonic order"""
 
-class SphericalHarmonicIlluminationField(SphericalField):
+
+class SphericalHarmonicIlluminationField(BaseRENIField):
     """Base class for illumination fields."""
 
     def __init__(
@@ -385,7 +370,9 @@ class SphericalHarmonicIlluminationField(SphericalField):
         num_eval_data: int,
         normalisations: Dict[str, Any],
     ) -> None:
-        super().__init__()
+        super().__init__(
+            config=config, num_train_data=num_train_data, num_eval_data=num_eval_data, normalisations=normalisations
+        )
         self.config = config
         self.num_train_data = num_train_data
         self.num_eval_data = num_eval_data
@@ -393,19 +380,16 @@ class SphericalHarmonicIlluminationField(SphericalField):
         self.num_sh_coeffs = calc_num_sh_coeffs(self.spherical_harmonic_order)
         self.fixed_decoder = False
 
-        self.min_max = normalisations["min_max"] if "min_max" in normalisations else None
-        self.log_domain = normalisations["log_domain"] if "log_domain" in normalisations else False
+        train_params = self.init_latent_codes(self.num_train_data)
+        eval_params = self.init_latent_codes(self.num_eval_data)
 
-        train_latent_codes = self.init_latent_codes(self.num_train_data)
-        eval_latent_codes = self.init_latent_codes(self.num_eval_data)
-
-        self.register_parameter("train_latent_codes", train_latent_codes)
-        self.register_parameter("eval_latent_codes", eval_latent_codes)
-
+        self.register_parameter("train_params", train_params)
+        self.register_parameter("eval_params", eval_params)
 
     @contextlib.contextmanager
     def hold_decoder_fixed(self):
         """Context manager to fix the decoder weights
+           this is just to match RENI implementation.
 
         Example usage:
         ```
@@ -431,24 +415,29 @@ class SphericalHarmonicIlluminationField(SphericalField):
         """
 
         if self.training and not self.fixed_decoder:
-            return self.train_latent_codes[idx, :, :]
+            return self.train_params[idx, :, :]
         else:
-            return self.eval_latent_codes[idx, :, :]
-
+            return self.eval_params[idx, :, :]
 
     def init_latent_codes(self, num_latents: int):
-        """Initializes the spherical harmonics coefficients
-        
-        """
+        """Initializes the spherical harmonics coefficients"""
         return torch.nn.Parameter(torch.zeros(num_latents, self.num_sh_coeffs, 3))
-        
-    
+
     def reset_eval_latents(self):
         """Resets the eval latents"""
-        eval_latent_codes = self.init_latent_codes(self.num_eval_data).type_as(self.eval_latent_codes)
-        self.eval_latent_codes.data = eval_latent_codes.data
+        eval_params = self.init_latent_codes(self.num_eval_data).type_as(self.eval_params)
+        self.eval_params.data = eval_params.data
 
-    def get_outputs(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None], latent_codes: Union[torch.Tensor, None]) -> Dict[RENIFieldHeadNames, TensorType]:
+    def copy_train_to_eval(self):
+        """Copies the train latents to eval latents"""
+        self.eval_params.data = self.train_params.data
+
+    def get_outputs(
+        self,
+        ray_samples: RaySamples,
+        rotation: Optional[torch.Tensor] = None,
+        latent_codes: Optional[torch.Tensor] = None,
+    ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Returns the outputs of the field.
 
         Args:
@@ -460,28 +449,32 @@ class SphericalHarmonicIlluminationField(SphericalField):
             Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.
         """
         # we want to batch over camera_indices as these correspond to unique latent codes
-        camera_indices = ray_samples.camera_indices.squeeze() # [num_rays]
+        camera_indices = ray_samples.camera_indices.squeeze()  # [num_rays]
 
         if latent_codes is None:
-            sh_coeffs = self.sample_latent(camera_indices) # [num_rays, num_sh_coeffs, 3]
+            sh_coeffs = self.sample_latent(camera_indices)  # [num_rays, num_sh_coeffs, 3]
         else:
-            sh_coeffs = latent_codes.repeat(ray_samples.shape[0], 1, 1) # [num_rays, num_sh_coeffs, 3]
+            sh_coeffs = latent_codes.repeat(ray_samples.shape[0], 1, 1)  # [num_rays, num_sh_coeffs, 3]
 
-        directions = ray_samples.frustums.directions # [num_rays, 3] # each has unique latent code defined by camera index
+        directions = (
+            ray_samples.frustums.directions
+        )  # [num_rays, 3] # each has unique latent code defined by camera index
 
         if rotation is not None:
             rotation = rotation.T
-            directions = torch.matmul(ray_bundle.directions, rotation) # [num_rays, 3]
+            directions = torch.matmul(ray_bundle.directions, rotation)  # [num_rays, 3]
 
         # convert from cartesian to spherical coordinates with y-up convention
-        theta = torch.acos(directions[:, 2]) # [num_rays]
-        phi = torch.atan2(directions[:, 0], directions[:, 1]) # [num_rays]
+        theta = torch.acos(directions[:, 2])  # [num_rays]
+        phi = torch.atan2(directions[:, 0], directions[:, 1])  # [num_rays]
 
         # evaluate spherical harmonics
-        sh_basis_matrix = shEvaluate(theta, phi, self.spherical_harmonic_order, device=camera_indices.device) # [num_rays, num_sh_coeffs]
+        sh_basis_matrix = shEvaluate(
+            theta, phi, self.spherical_harmonic_order, device=camera_indices.device
+        )  # [num_rays, num_sh_coeffs]
 
         # get radiance
-        radiance = torch.einsum("ij,ijk->ik", sh_basis_matrix, sh_coeffs) # [num_rays, 3]
+        radiance = torch.einsum("ij,ijk->ik", sh_basis_matrix, sh_coeffs)  # [num_rays, 3]
 
         outputs = {
             RENIFieldHeadNames.RGB: radiance,
@@ -489,9 +482,13 @@ class SphericalHarmonicIlluminationField(SphericalField):
         }
 
         return outputs
-    
 
-    def forward(self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None] = None, latent_codes: Union[torch.Tensor, None] = None) -> Dict[RENIFieldHeadNames, TensorType]:
+    def forward(
+        self,
+        ray_samples: RaySamples,
+        rotation: Optional[torch.Tensor] = None,
+        latent_codes: Optional[torch.Tensor] = None,
+    ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:

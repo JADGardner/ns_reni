@@ -82,7 +82,7 @@ class RENIFieldConfig(BaseRENIFieldConfig):
     trainable_scale: bool = False
     """Whether to train the scale parameter"""
     old_implementation: bool = False
-    """Whether to match implementation of old RENI"""
+    """Whether to match implementation of old RENI, when using old checkpoints"""
 
 
 class RENIField(BaseRENIField):
@@ -187,19 +187,6 @@ class RENIField(BaseRENIField):
                 for name, param in self.vn_invar.named_parameters():
                     param.requires_grad_(prev_state_invar[name])
             self.fixed_decoder = prev_decoder_state
-
-    def unnormalise(self, x):
-        """Undo normalisation of the image"""
-        if not self.min_max.dtype == torch.bool:
-            min_val, max_val = self.min_max
-            # need to unnormalize the image from between -1 and 1
-            x = 0.5 * (x + 1) * (max_val - min_val) + min_val
-
-        if self.log_domain:
-            # undo log domain conversion
-            x = torch.exp(x)
-
-        return x
 
     def vn_invariance(self, Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2", axis_of_invariance: int = 1):
         """Generates an invariant representation from latent code Z and direction coordinates D.
@@ -315,7 +302,7 @@ class RENIField(BaseRENIField):
                 directional_input = torch.cat((innerprod, d_invar, d_other_norm), 1)  # [num_rays, latent_dim + 2]
                 conditioning_input = torch.cat((z_other_invar, z_invar), 1)  # [num_rays, latent_dim^2 + latent_dim]
             else:
-                # this is matching the previous implementation of RENI, used for comparisons
+                # this is matching the previous implementation of RENI, needed if using old checkpoints
                 return torch.cat((innerprod, z_other_invar, d_other_norm, z_invar, d_invar), 1)
 
             return directional_input, conditioning_input

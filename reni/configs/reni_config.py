@@ -37,7 +37,11 @@ RENIField = MethodSpecification(
                     val_subset_size=None,
                     convert_to_ldr=False,
                     convert_to_log_domain=True,
-                    min_max_normalize=None,  # Tuple[float, float] | Literal['min_max', 'quantile'] | None (Tuple should be in log domain if log_domain=True)
+                    min_max_normalize=(
+                        -18.0536,
+                        11.4533,
+                    ),  # Tuple[float, float] | Literal['min_max', 'quantile'] | None (Tuple should be in log domain if log_domain=True)
+                    # min_max_normalize=None,
                     use_validation_as_train=False,
                     augment_with_mirror=True,
                 ),
@@ -52,12 +56,12 @@ RENIField = MethodSpecification(
             ),
             model=RENIModelConfig(
                 field=RENIFieldConfig(
-                    conditioning="Attention",
+                    conditioning="Concat",
                     invariant_function="VN",
                     equivariance="SO2",
                     axis_of_invariance="z",  # Nerfstudio world space is z-up # old reni was y-up
                     positional_encoding="NeRF",
-                    encoded_input="Directions",  # "InvarDirection", "Directions", "Conditioning", "Both"
+                    encoded_input="None",  # "InvarDirection", "Directions", "Conditioning", "Both", "None"
                     latent_dim=100,  # N for a latent code size of (N x 3)
                     hidden_features=128,  # ALL
                     hidden_layers=9,  # SIRENs
@@ -77,21 +81,21 @@ RENIField = MethodSpecification(
                     },
                 },
                 loss_coefficients={
-                    "log_mse_loss": 10.0,
+                    "log_mse_loss": 1.0,
                     "hdr_mse_loss": 1.0,
                     "ldr_mse_loss": 1.0,
                     "cosine_similarity_loss": 1.0,
-                    "kld_loss": 0.00001,
+                    "kld_loss": 0.000001,
                     "scale_inv_loss": 1.0,
                     "scale_inv_grad_loss": 1.0,
                 },
                 loss_inclusions={
-                    "log_mse_loss": False,
+                    "log_mse_loss": True,
                     "hdr_mse_loss": False,
                     "ldr_mse_loss": False,
                     "cosine_similarity_loss": True,
                     "kld_loss": True,
-                    "scale_inv_loss": True,
+                    "scale_inv_loss": False,
                     "scale_inv_grad_loss": False,
                     "bce_loss": False,  # For RESGAN, leave False in this config
                     "wgan_loss": False,  # For RESGAN, leave False in this config
@@ -102,7 +106,7 @@ RENIField = MethodSpecification(
         ),
         optimizers={
             "field": {
-                "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),  # 1e-3 for Attention, 1e-5 for Other
+                "optimizer": AdamOptimizerConfig(lr=1e-5, eps=1e-15),  # 1e-3 for Attention, 1e-5 for Other
                 "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
             },
             "encoder": {  # If (training_regime="vae")
