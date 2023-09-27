@@ -22,11 +22,11 @@ RENIField = MethodSpecification(
         method_name="reni",
         experiment_name="reni",
         machine=MachineConfig(),
-        steps_per_eval_image=5000,
-        steps_per_eval_batch=100000,
+        steps_per_eval_image=50000,
+        steps_per_eval_batch=10000000,
         steps_per_save=1000,
-        steps_per_eval_all_images=5000,  # set to a very large model so we don't eval with all images
-        max_num_iterations=50001,
+        steps_per_eval_all_images=50000,  # set to a very large model so we don't eval with all images
+        max_num_iterations=4015201,
         mixed_precision=False,
         pipeline=RENIPipelineConfig(
             datamanager=RENIDataManagerConfig(
@@ -37,11 +37,11 @@ RENIField = MethodSpecification(
                     val_subset_size=None,
                     convert_to_ldr=False,
                     convert_to_log_domain=True,
-                    min_max_normalize=(
-                        -18.0536,
-                        11.4533,
-                    ),  # Tuple[float, float] | Literal['min_max', 'quantile'] | None (Tuple should be in log domain if log_domain=True)
-                    # min_max_normalize=None,
+                    # min_max_normalize=(
+                    #     -18.0536,
+                    #     11.4533,
+                    # ),  # Tuple[float, float] | Literal['min_max', 'quantile'] | None (Tuple should be in log domain if log_domain=True)
+                    min_max_normalize=None,
                     use_validation_as_train=False,
                     augment_with_mirror=True,
                 ),
@@ -56,12 +56,12 @@ RENIField = MethodSpecification(
             ),
             model=RENIModelConfig(
                 field=RENIFieldConfig(
-                    conditioning="Concat",
+                    conditioning="Attention",
                     invariant_function="VN",
                     equivariance="SO2",
                     axis_of_invariance="z",  # Nerfstudio world space is z-up # old reni was y-up
                     positional_encoding="NeRF",
-                    encoded_input="None",  # "InvarDirection", "Directions", "Conditioning", "Both", "None"
+                    encoded_input="Directions",  # "InvarDirection", "Directions", "Conditioning", "Both", "None"
                     latent_dim=100,  # N for a latent code size of (N x 3)
                     hidden_features=128,  # ALL
                     hidden_layers=9,  # SIRENs
@@ -90,24 +90,24 @@ RENIField = MethodSpecification(
                     "scale_inv_grad_loss": 1.0,
                 },
                 loss_inclusions={
-                    "log_mse_loss": True,
+                    "log_mse_loss": False,
                     "hdr_mse_loss": False,
                     "ldr_mse_loss": False,
                     "cosine_similarity_loss": True,
                     "kld_loss": True,
-                    "scale_inv_loss": False,
+                    "scale_inv_loss": True,
                     "scale_inv_grad_loss": False,
                     "bce_loss": False,  # For RESGAN, leave False in this config
                     "wgan_loss": False,  # For RESGAN, leave False in this config
                 },
-                include_sine_weighting=False,  # This is already handled by the equirectangular pixel sampler
+                include_sine_weighting=False,  # This directly affects losses, not sampling method
                 training_regime="autodecoder",
             ),
         ),
         optimizers={
             "field": {
-                "optimizer": AdamOptimizerConfig(lr=1e-5, eps=1e-15),  # 1e-3 for Attention, 1e-5 for Other
-                "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
+                "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),  # 1e-3 for Attention, 1e-5 for Other
+                "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=4015201),
             },
             "encoder": {  # If (training_regime="vae")
                 "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),

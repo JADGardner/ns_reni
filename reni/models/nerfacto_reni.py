@@ -243,8 +243,20 @@ class NerfactoRENIModel(NerfactoModel):
 
         return hdr_illumination_colours, illumination_directions
 
-    def get_outputs(self, ray_bundle: RayBundle):
-        ray_samples: RaySamples
+    def forward(self, ray_bundle: RayBundle, batch: Dict) -> Dict[str, Union[torch.Tensor, List]]:
+        """Run forward starting with a ray bundle. This outputs different things depending on the configuration
+        of the model and whether or not the batch is provided (whether or not we are training basically)
+
+        Args:
+            ray_bundle: containing all the information needed to render that ray latents included
+        """
+
+        if self.collider is not None:
+            ray_bundle = self.collider(ray_bundle)
+
+        return self.get_outputs(ray_bundle, batch)
+
+    def get_outputs(self, ray_bundle: RayBundle, batch: Dict):
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
         field_outputs = self.field.forward(ray_samples, compute_normals=self.config.predict_normals)
         if self.config.use_gradient_scaling:
@@ -363,7 +375,7 @@ class NerfactoRENIModel(NerfactoModel):
         return loss_dict
 
     @torch.no_grad()
-    def get_outputs_for_camera_ray_bundle(self, camera_ray_bundle: RayBundle) -> Dict[str, torch.Tensor]:
+    def get_outputs_for_camera_ray_bundle(self, camera_ray_bundle: RayBundle, batch: Dict) -> Dict[str, torch.Tensor]:
         """Takes in camera parameters and computes the output of the model.
 
         Args:
@@ -377,7 +389,7 @@ class NerfactoRENIModel(NerfactoModel):
             start_idx = i
             end_idx = i + num_rays_per_chunk
             ray_bundle = camera_ray_bundle.get_row_major_sliced_ray_bundle(start_idx, end_idx)
-            outputs = self.forward(ray_bundle=ray_bundle)
+            outputs = self.forward(ray_bundle=ray_bundle, batch=batch)
             for output_name, output in outputs.items():  # type: ignore
                 if not torch.is_tensor(output):
                     # TODO: handle lists of tensors as well

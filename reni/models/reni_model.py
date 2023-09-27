@@ -518,9 +518,11 @@ class RENIModel(Model):
             metrics_dict["lpips_ldr"] = self.lpips(pred_image_ldr, gt_image_ldr)
 
         return metrics_dict, images_dict
-    
+
     @torch.no_grad()
-    def get_outputs_for_camera_ray_bundle(self, camera_ray_bundle: RayBundle, batch: Optional[dict] = None) -> Dict[str, torch.Tensor]:
+    def get_outputs_for_camera_ray_bundle(
+        self, camera_ray_bundle: RayBundle, batch: Optional[dict] = None
+    ) -> Dict[str, torch.Tensor]:
         """Takes in camera parameters and computes the output of the model.
 
         Args:
@@ -586,7 +588,9 @@ class RENIModel(Model):
                     ray_bundle, batch = datamanager.next_eval(step)
                     model_outputs = self(ray_bundle)
                     loss_dict = self.get_loss_dict(model_outputs, batch, ray_bundle)
-                    # add all losses together
+                    # remove KLD loss as not needed during eval latents optimisation
+                    loss_dict.pop("kld_loss")
+                    # add all remaining losses together
                     loss = functools.reduce(torch.add, loss_dict.values())
                     optimizer.zero_grad_all()
                     loss.backward()
