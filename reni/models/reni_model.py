@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from collections import defaultdict
-from typing import Any, Dict, List, Tuple, Type, Literal, Optional
+from typing import Any, Dict, List, Tuple, Type, Literal, Optional, Union
 from rich.progress import BarColumn, Console, Progress, TextColumn, TimeRemainingColumn
 import functools
 
@@ -61,7 +61,7 @@ class RENIModelConfig(ModelConfig):
     """Whether to include sine weighting in the loss"""
     training_regime: Literal["vae", "autodecoder", "gan"] = "autodecoder"
     """Type of training, either as an vae, (variational)autodecoder or generative adversarial network"""
-    loss_inclusions: Dict[str, bool] = to_immutable_dict(
+    loss_inclusions: Dict[str, Union[bool, Literal["train", "eval", "both"]]] = to_immutable_dict(
         {
             "log_mse_loss": False,
             "hdr_mse_loss": False,
@@ -107,6 +107,7 @@ class RENIModel(Model):
     ) -> None:
         self.num_eval_data = num_eval_data
         self.metadata = kwargs["metadata"]
+        self.fitting_eval_latents = False
         super().__init__(
             config=config,
             **kwargs,
@@ -142,24 +143,24 @@ class RENIModel(Model):
             )
 
         # losses
-        if self.config.loss_inclusions["log_mse_loss"]:
+        if self.config.loss_inclusions["log_mse_loss"] in [True, "train", "eval", "both"]:
             self.log_mse_loss = nn.MSELoss()
-        if self.config.loss_inclusions["hdr_mse_loss"]:
+        if self.config.loss_inclusions["hdr_mse_loss"] in [True, "train", "eval", "both"]:
             self.hdr_mse_loss = nn.MSELoss()
-        if self.config.loss_inclusions["ldr_mse_loss"]:
+        if self.config.loss_inclusions["ldr_mse_loss"] in [True, "train", "eval", "both"]:
             self.ldr_mse_loss = nn.MSELoss()
-        if self.config.loss_inclusions["kld_loss"]:
+        if self.config.loss_inclusions["kld_loss"] in [True, "train", "eval", "both"]:
             self.kld_loss = KLD(Z_dims=self.field.latent_dim)
-        if self.config.loss_inclusions["cosine_similarity_loss"]:
+        if self.config.loss_inclusions["cosine_similarity_loss"] in [True, "train", "eval", "both"]:
             self.cosine_similarity = nn.CosineSimilarity(dim=1)
-        if self.config.loss_inclusions["scale_inv_loss"]:
+        if self.config.loss_inclusions["scale_inv_loss"] in [True, "train", "eval", "both"]:
             self.scale_invariant_loss = ScaleInvariantLogLoss()
-        if self.config.loss_inclusions["scale_inv_grad_loss"]:
+        if self.config.loss_inclusions["scale_inv_grad_loss"] in [True, "train", "eval", "both"]:
             self.scale_invariant_grad_loss = ScaleInvariantGradientMatchingLoss()
-        if self.config.loss_inclusions["bce_loss"]:
+        if self.config.loss_inclusions["bce_loss"] in [True, "train", "eval", "both"]:
             self.bce_loss = nn.BCELoss()
-        if self.config.loss_inclusions["wgan_loss"]:
-            pass  # NOTE just a flag
+        if self.config.loss_inclusions["wgan_loss"] in [True, "train", "eval", "both"]:
+            pass  # NOTE just used as a flag
 
         # metrics
         self.psnr = PeakSignalNoiseRatio()
@@ -334,6 +335,7 @@ class RENIModel(Model):
         return metrics_dict
 
     def get_gan_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
+        """Returns the loss dictionary for the GAN training regime"""
         device = outputs["predictions"].device
         batch["gt_labels"] = batch["gt_labels"].to(device)
 
@@ -369,36 +371,68 @@ class RENIModel(Model):
 
         # Unlike original RENI implementation, the sineweighting
         # is implemented by the ray sampling so no need to modify losses
-        if self.config.loss_inclusions["log_mse_loss"]:
-            log_mse_loss = self.log_mse_loss(outputs["rgb"], batch["image"])
-            loss_dict["log_mse_loss"] = log_mse_loss
+        if not self.fitting_eval_latents:
+            if self.config.loss_inclusions["log_mse_loss"] in [True, "train", "both"]:
+                log_mse_loss = self.log_mse_loss(outputs["rgb"], batch["image"])
+                loss_dict["log_mse_loss"] = log_mse_loss
 
-        if self.config.loss_inclusions["hdr_mse_loss"]:
-            hdr_mse_loss = self.hdr_mse_loss(torch.exp(outputs["rgb"]), torch.exp(batch["image"]))
-            loss_dict["hdr_mse_loss"] = hdr_mse_loss
+            if self.config.loss_inclusions["hdr_mse_loss"] in [True, "train", "both"]:
+                hdr_mse_loss = self.hdr_mse_loss(torch.exp(outputs["rgb"]), torch.exp(batch["image"]))
+                loss_dict["hdr_mse_loss"] = hdr_mse_loss
 
-        if self.config.loss_inclusions["ldr_mse_loss"]:
-            ldr_mse_loss = self.ldr_mse_loss(outputs["rgb"], batch["image"])
-            loss_dict["ldr_mse_loss"] = ldr_mse_loss
+            if self.config.loss_inclusions["ldr_mse_loss"] in [True, "train", "both"]:
+                ldr_mse_loss = self.ldr_mse_loss(outputs["rgb"], batch["image"])
+                loss_dict["ldr_mse_loss"] = ldr_mse_loss
 
-        if self.config.loss_inclusions["kld_loss"]:
-            kld_loss = self.kld_loss(outputs["mu"], outputs["log_var"])
-            loss_dict["kld_loss"] = kld_loss
+            if self.config.loss_inclusions["kld_loss"] in [True, "train", "both"]:
+                kld_loss = self.kld_loss(outputs["mu"], outputs["log_var"])
+                loss_dict["kld_loss"] = kld_loss
 
-        if self.config.loss_inclusions["cosine_similarity_loss"]:
-            similarity = self.cosine_similarity(outputs["rgb"], batch["image"])
-            cosine_similarity_loss = 1.0 - similarity.mean()
-            loss_dict["cosine_similarity_loss"] = cosine_similarity_loss
+            if self.config.loss_inclusions["cosine_similarity_loss"] in [True, "train", "both"]:
+                similarity = self.cosine_similarity(outputs["rgb"], batch["image"])
+                cosine_similarity_loss = 1.0 - similarity.mean()
+                loss_dict["cosine_similarity_loss"] = cosine_similarity_loss
 
-        if self.config.loss_inclusions["scale_inv_loss"]:
-            scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], batch["image"])
-            loss_dict["scale_inv_loss"] = scale_inv_loss
+            if self.config.loss_inclusions["scale_inv_loss"] in [True, "train", "both"]:
+                scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], batch["image"])
+                loss_dict["scale_inv_loss"] = scale_inv_loss
 
-        if self.config.loss_inclusions["scale_inv_grad_loss"]:
-            scale_inv_grad_loss = self.scale_invariant_grad_loss(
-                outputs["rgb"], outputs["rgb_rolled"], batch["image"], batch_rolled["image"]
-            )
-            loss_dict["scale_inv_grad_loss"] = scale_inv_grad_loss
+            if self.config.loss_inclusions["scale_inv_grad_loss"] in [True, "train", "both"]:
+                scale_inv_grad_loss = self.scale_invariant_grad_loss(
+                    outputs["rgb"], outputs["rgb_rolled"], batch["image"], batch_rolled["image"]
+                )
+                loss_dict["scale_inv_grad_loss"] = scale_inv_grad_loss
+        else:
+            if self.config.loss_inclusions["log_mse_loss"] in [True, "eval", "both"]:
+                log_mse_loss = self.log_mse_loss(outputs["rgb"], batch["image"])
+                loss_dict["log_mse_loss"] = log_mse_loss
+
+            if self.config.loss_inclusions["hdr_mse_loss"] in [True, "eval", "both"]:
+                hdr_mse_loss = self.hdr_mse_loss(torch.exp(outputs["rgb"]), torch.exp(batch["image"]))
+                loss_dict["hdr_mse_loss"] = hdr_mse_loss
+
+            if self.config.loss_inclusions["ldr_mse_loss"] in [True, "eval", "both"]:
+                ldr_mse_loss = self.ldr_mse_loss(outputs["rgb"], batch["image"])
+                loss_dict["ldr_mse_loss"] = ldr_mse_loss
+
+            if self.config.loss_inclusions["kld_loss"] in [True, "eval", "both"]:
+                kld_loss = self.kld_loss(outputs["mu"], outputs["log_var"])
+                loss_dict["kld_loss"] = kld_loss
+
+            if self.config.loss_inclusions["cosine_similarity_loss"] in [True, "eval", "both"]:
+                similarity = self.cosine_similarity(outputs["rgb"], batch["image"])
+                cosine_similarity_loss = 1.0 - similarity.mean()
+                loss_dict["cosine_similarity_loss"] = cosine_similarity_loss
+
+            if self.config.loss_inclusions["scale_inv_loss"] in [True, "eval", "both"]:
+                scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], batch["image"])
+                loss_dict["scale_inv_loss"] = scale_inv_loss
+
+            if self.config.loss_inclusions["scale_inv_grad_loss"] in [True, "eval", "both"]:
+                scale_inv_grad_loss = self.scale_invariant_grad_loss(
+                    outputs["rgb"], outputs["rgb_rolled"], batch["image"], batch_rolled["image"]
+                )
+                loss_dict["scale_inv_grad_loss"] = scale_inv_grad_loss
 
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
         return loss_dict
@@ -417,31 +451,25 @@ class RENIModel(Model):
 
         batch["image"] = batch["image"].to(device)
 
-        gt_image = batch["image"]  # [num_rays, 3]
+        if self.metadata["fit_val_in_ldr"]:
+            gt_image = self.metadata["hdr_val_images"][batch["indices"][0, 0]].reshape(-1, 3)  # [num_rays, 3]
+            gt_image = gt_image.to(device)
+        else:
+            gt_image = batch["image"]  # [num_rays, 3]
+
         pred_image = outputs["rgb"]  # [num_rays, 3]
 
         # reshape to [H, W, 3]
         gt_image = gt_image.reshape(self.metadata["image_height"], self.metadata["image_width"], 3)
         pred_image = pred_image.reshape(self.metadata["image_height"], self.metadata["image_width"], 3)
 
-        if self.config.loss_inclusions["scale_inv_loss"]:
+        if self.config.loss_inclusions["scale_inv_loss"] in [True, "eval", "both"]:
             # estimate scale using least squares
             scale = (gt_image * pred_image).sum() / (pred_image * pred_image).sum()
             pred_image = scale * pred_image
 
         gt_image = self.field.unnormalise(gt_image)
         pred_image = self.field.unnormalise(pred_image)
-
-        # if self.metadata["min_max_normalize"] is not None:
-        #     min_val, max_val = self.metadata["min_max"]
-        #     # need to unnormalize the image from between -1 and 1
-        #     gt_image = 0.5 * (gt_image + 1) * (max_val - min_val) + min_val
-        #     pred_image = 0.5 * (pred_image + 1) * (max_val - min_val) + min_val
-
-        # if self.metadata['convert_to_log_domain']:
-        #     # undo log domain conversion
-        #     gt_image = torch.exp(gt_image)
-        #     pred_image = torch.exp(pred_image)
 
         # converting to grayscale by taking the mean across the color dimension
         gt_image_gray = torch.mean(gt_image, dim=-1)
@@ -506,6 +534,7 @@ class RENIModel(Model):
 
         metrics_dict["psnr_hdr"] = self.psnr(preds=pred_image, target=gt_image)
         metrics_dict["ssim_hdr"] = self.ssim(preds=pred_image, target=gt_image)
+
         # for lpips we need to convert to 0 to 1 using image.min() and image.max()
         gt_image = (gt_image - gt_image.min()) / (gt_image.max() - gt_image.min())
         pred_image = (pred_image - pred_image.min()) / (pred_image.max() - pred_image.min())
@@ -567,6 +596,8 @@ class RENIModel(Model):
     def fit_eval_latents(self, datamanager: VanillaDataManager):
         """Fit eval latents"""
 
+        self.fitting_eval_latents = True
+
         param_group = {"eval_latents": [self.field.eval_mu]}
         optimizer = Optimizers(self.config.eval_latent_optimizer, param_group)
         steps = optimizer.config["eval_latents"]["scheduler"].max_steps
@@ -587,10 +618,10 @@ class RENIModel(Model):
                 for step in range(steps):
                     ray_bundle, batch = datamanager.next_eval(step)
                     model_outputs = self(ray_bundle)
+                    if self.metadata["fit_val_in_ldr"]:
+                        model_outputs["rgb"] = linear_to_sRGB(self.field.unnormalise(model_outputs["rgb"]))
                     loss_dict = self.get_loss_dict(model_outputs, batch, ray_bundle)
-                    # remove KLD loss as not needed during eval latents optimisation
-                    loss_dict.pop("kld_loss")
-                    # add all remaining losses together
+                    # add losses together
                     loss = functools.reduce(torch.add, loss_dict.values())
                     optimizer.zero_grad_all()
                     loss.backward()
@@ -603,3 +634,5 @@ class RENIModel(Model):
                         loss=f"{loss.item():.4f}",
                         lr=f"{optimizer.schedulers['eval_latents'].get_last_lr()[0]:.8f}",
                     )
+
+        self.fitting_eval_latents = False

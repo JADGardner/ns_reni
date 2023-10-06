@@ -58,6 +58,8 @@ class RENIDataParserConfig(DataParserConfig):
     """Whether to min-max normalize the images."""
     eval_mask_path: Optional[Path] = None
     """Path to the evaluation mask or a directory of masks."""
+    fit_val_in_ldr: bool = False
+    """Whether to fit validation images in LDR, still includes metrics against HDR versions."""
 
 
 @dataclass
@@ -130,6 +132,7 @@ class RENIDataParser(DataParser):
                 "min_max_normalize": self.config.min_max_normalize,
                 "image_height": image_height,
                 "image_width": image_width,
+                "fit_val_in_ldr": self.config.fit_val_in_ldr,
             },
         )
 

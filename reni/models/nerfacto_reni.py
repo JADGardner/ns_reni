@@ -19,7 +19,7 @@ NeRF implementation that combines many recent advancements.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Type, Tuple
+from typing import Dict, List, Type, Tuple, Optional
 from pathlib import Path
 from collections import defaultdict
 import torch
@@ -43,7 +43,7 @@ from nerfstudio.utils import colormaps
 from reni.illumination_fields.base_spherical_field import SphericalFieldConfig
 from reni.illumination_fields.reni_illumination_field import RENIField, RENIFieldConfig
 from reni.model_components.illumination_samplers import IlluminationSamplerConfig
-from reni.model_components.shaders import LambertianShader
+from reni.model_components.shaders import LambertianShader, BlinnPhongShader
 from reni.utils.utils import find_nerfstudio_project_root
 from reni.fields.nerfacto_reni import NerfactoFieldRENI
 from reni.field_components.field_heads import RENIFieldHeadNames
@@ -63,8 +63,8 @@ class NerfactoRENIModelConfig(NerfactoModelConfig):
     """Step of pretrained illumination field"""
     illumination_sampler: IlluminationSamplerConfig = IlluminationSamplerConfig()
     """Illumination sampler to use"""
-    predict_specular: bool = False
-    """Whether to predict specular"""
+    predict_shininess: bool = False
+    """Whether to predict shininess"""
 
 
 class NerfactoRENIModel(NerfactoModel):
@@ -99,7 +99,7 @@ class NerfactoRENIModel(NerfactoModel):
             num_images=self.num_train_data,
             use_pred_normals=self.config.predict_normals,
             use_average_appearance_embedding=self.config.use_average_appearance_embedding,
-            predict_specular=self.config.predict_specular,
+            predict_shininess=self.config.predict_shininess,
         )
 
         self.illumination_sampler = self.config.illumination_sampler.setup()
@@ -139,6 +139,7 @@ class NerfactoRENIModel(NerfactoModel):
             self.illumination_field.load_state_dict(illumination_field_dict, strict=False)
 
         self.lambertian_shader = LambertianShader()
+        self.blinn_phong_shader = BlinnPhongShader()
         self.labmertian_renderer = RGBLambertianRenderer()
 
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
@@ -243,7 +244,7 @@ class NerfactoRENIModel(NerfactoModel):
 
         return hdr_illumination_colours, illumination_directions
 
-    def forward(self, ray_bundle: RayBundle, batch: Dict) -> Dict[str, Union[torch.Tensor, List]]:
+    def forward(self, ray_bundle: RayBundle, batch: Optional[Dict] = None) -> Dict[str, Union[torch.Tensor, List]]:
         """Run forward starting with a ray bundle. This outputs different things depending on the configuration
         of the model and whether or not the batch is provided (whether or not we are training basically)
 
@@ -256,9 +257,9 @@ class NerfactoRENIModel(NerfactoModel):
 
         return self.get_outputs(ray_bundle, batch)
 
-    def get_outputs(self, ray_bundle: RayBundle, batch: Dict):
+    def get_outputs(self, ray_bundle: RayBundle, batch: Optional[Dict] = None):
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
-        field_outputs = self.field.forward(ray_samples, compute_normals=self.config.predict_normals)
+        field_outputs = self.field.forward(ray_samples, compute_normals=True)
         if self.config.use_gradient_scaling:
             field_outputs = scale_gradients_by_distance_squared(field_outputs, ray_samples)
 
@@ -271,28 +272,42 @@ class NerfactoRENIModel(NerfactoModel):
             weights=weights,
             background_color=torch.tensor([1.0, 1.0, 1.0]),
         )
-        if self.config.predict_specular:
-            specular = self.renderer_rgb(rgb=field_outputs[RENIFieldHeadNames.SPECULAR], weights=weights)
-
         depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
         accumulation = self.renderer_accumulation(weights=weights)
-
         normals = self.renderer_normals(normals=field_outputs[RENIFieldHeadNames.NORMALS], weights=weights)
-        pred_normals = self.renderer_normals(field_outputs[RENIFieldHeadNames.PRED_NORMALS], weights=weights)
 
-        light_colors, light_directions = self.get_illumination(ray_samples.camera_indices)
+        if self.config.predict_shininess:
+            shininess = self.renderer_rgb(
+                rgb=field_outputs[RENIFieldHeadNames.SHININESS].repeat(1, 1, 3),
+                weights=weights,
+                background_color=torch.tensor([0.0, 0.0, 0.0]),
+            )
+            specular = torch.ones_like(albedo)  # white specular
 
-        light_colors = torch.ones_like(light_colors)
+        # light_colors, light_directions = self.get_illumination(ray_samples.camera_indices)
 
-        rgb = self.labmertian_renderer(
-            albedos=field_outputs[RENIFieldHeadNames.ALBEDO],
-            normals=field_outputs[RENIFieldHeadNames.NORMALS],
+        # light_colors = torch.ones_like(light_colors)
+
+        # rgb = self.labmertian_renderer(
+        #     albedos=field_outputs[RENIFieldHeadNames.ALBEDO],
+        #     normals=field_outputs[RENIFieldHeadNames.NORMALS],
+        #     light_directions=light_directions,
+        #     light_colors=light_colors,
+        #     weights=weights,
+        # )
+
+        light_colors, light_directions = self.get_illumination_shader(ray_bundle.camera_indices)
+
+        blinn_phong_color_sum, rgb = self.blinn_phong_shader(
+            albedo=albedo,
+            normals=normals,
             light_directions=light_directions,
             light_colors=light_colors,
-            weights=weights,
+            specular=specular,
+            shininess=shininess[..., 0],
+            view_directions=ray_samples.frustums.directions[:, 0, :],
+            detach_normals=False,
         )
-
-        # light_colors, light_directions = self.get_illumination_shader(ray_bundle.camera_indices)
 
         # lambertian_color_sum, rgb = self.lambertian_shader(
         #     albedo=albedo,
@@ -307,8 +322,11 @@ class NerfactoRENIModel(NerfactoModel):
             "accumulation": accumulation,
             "depth": depth,
             "normal": normals,
-            "pred_normal": pred_normals,
+            "albedo": albedo,
         }
+
+        if self.config.predict_shininess:
+            outputs["shininess"] = shininess
 
         # These use a lot of GPU memory, so we avoid storing them for eval.
         if self.training:
@@ -316,6 +334,8 @@ class NerfactoRENIModel(NerfactoModel):
             outputs["ray_samples_list"] = ray_samples_list
 
         if self.training and self.config.predict_normals:
+            pred_normals = self.renderer_normals(field_outputs[RENIFieldHeadNames.PRED_NORMALS], weights=weights)
+            output["pred_normal"] = pred_normals
             outputs["rendered_orientation_loss"] = orientation_loss(
                 weights.detach(),
                 field_outputs[RENIFieldHeadNames.NORMALS],
@@ -327,6 +347,29 @@ class NerfactoRENIModel(NerfactoModel):
                 field_outputs[RENIFieldHeadNames.NORMALS].detach(),
                 field_outputs[RENIFieldHeadNames.PRED_NORMALS],
             )
+
+        # if self.training and batch is not None:
+        #     if "normal" in batch and "fg_mask" in batch:
+        #         # Shapes:
+        #         # normals: [num_rays, 3]
+        #         # batch["normal"]: [num_rays, 3]
+        #         # fg_mask: [num_rays]
+        #         # convert mask to bool and expand to shape of normals
+        #         fg_mask = batch["fg_mask"].to(self.device).bool()
+        #         true_indices = fg_mask.nonzero(as_tuple=False).squeeze()
+        #         masked_normals = torch.index_select(normals, 0, true_indices[:, 0])
+        #         masked_batch_normal = torch.index_select(batch["normal"], 0, true_indices[:, 0])
+
+        #         # Ensure that fg_mask has been correctly broadcasted
+        #         assert masked_normals.shape == masked_batch_normal.shape, "Shape mismatch"
+
+        #         outputs["rendered_normal_loss"] = 1 - torch.mean(
+        #             torch.cosine_similarity(
+        #                 masked_normals,
+        #                 masked_batch_normal,
+        #                 dim=-1,
+        #             )
+        #         )
 
         for i in range(self.config.num_proposal_iterations):
             outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=weights_list[i], ray_samples=ray_samples_list[i])
@@ -349,9 +392,9 @@ class NerfactoRENIModel(NerfactoModel):
         image = batch["image"].to(self.device)
         pred_image = outputs["rgb"]
 
-        if "fg_mask" in batch:
-            image = image * batch["fg_mask"].to(self.device)
-            pred_image = pred_image * batch["fg_mask"].to(self.device)
+        # if "fg_mask" in batch:
+        #     image = image * batch["fg_mask"].to(self.device)
+        #     pred_image = pred_image * batch["fg_mask"].to(self.device)
 
         loss_dict["rgb_loss"] = self.rgb_loss(image, pred_image)
 
@@ -372,10 +415,22 @@ class NerfactoRENIModel(NerfactoModel):
                     outputs["rendered_pred_normal_loss"]
                 )
 
+            if "rendered_normal_loss" in outputs:
+                loss_dict["normal_loss"] = outputs["rendered_normal_loss"]
+
+            if "fg_mask" in batch:
+                # binary cross entropy loss for foreground mask
+                # against outputs['accumulation']
+                loss_dict["fg_mask_loss"] = F.binary_cross_entropy_with_logits(
+                    outputs["accumulation"], batch["fg_mask"].expand_as(outputs["accumulation"]).to(self.device)
+                )
+
         return loss_dict
 
     @torch.no_grad()
-    def get_outputs_for_camera_ray_bundle(self, camera_ray_bundle: RayBundle, batch: Dict) -> Dict[str, torch.Tensor]:
+    def get_outputs_for_camera_ray_bundle(
+        self, camera_ray_bundle: RayBundle, batch: Optional[Dict] = None
+    ) -> Dict[str, torch.Tensor]:
         """Takes in camera parameters and computes the output of the model.
 
         Args:
@@ -400,21 +455,6 @@ class NerfactoRENIModel(NerfactoModel):
             outputs[output_name] = torch.cat(outputs_list).view(image_height, image_width, -1)  # type: ignore
         return outputs
 
-    # def adjusted_sigmoid(self, tensor, a=15, b=0.95):
-    #     return 1 / (1 + torch.exp(-a * (tensor - b)))
-
-    # def to_rgb_tensor(self, gray_tensor, cmap="viridis"):
-    #     # Ensure the tensor is in the range [0, 1]
-    #     normalized_tensor = (gray_tensor - 0.0) / (2.0 - 0.0)
-
-    #     # Convert to numpy and use colormap to get RGB values
-    #     cmapped = cm.get_cmap(cmap)(normalized_tensor.cpu().numpy())
-
-    #     # Convert back to tensor and take only RGB channels (discard alpha)
-    #     rgb_tensor = torch.tensor(cmapped[..., :3])
-
-    #     return rgb_tensor
-
     def get_image_metrics_and_images(
         self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
     ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
@@ -429,21 +469,28 @@ class NerfactoRENIModel(NerfactoModel):
 
         normal = outputs["normal"]
         # normal = (normal + 1.0) / 2.0
-        pred_normal = outputs["pred_normal"]
         # pred_normal = (pred_normal + 1.0) / 2.0
         if "normal" in batch:
             # normal_gt = (batch["normal"].to(self.device) + 1.0) / 2.0
             normal_gt = batch["normal"].to(self.device)
-            combined_normal = torch.cat([normal_gt, pred_normal, normal], dim=1)
+            combined_normal = torch.cat([normal_gt, normal], dim=1)
         else:
-            combined_normal = torch.cat([pred_normal, normal], dim=1)
+            combined_normal = torch.cat([normal], dim=1)
+
+        if "pred_normal" in outputs:
+            pred_normal = outputs["pred_normal"]
+            combined_normal = torch.cat([combined_normal, pred_normal], dim=1)
 
         combined_normal = colormaps.apply_colormap(
             combined_normal, colormap_options=colormaps.ColormapOptions(colormap="turbo", normalize=True)
         )
 
         combined_rgb = torch.cat([gt_rgb, predicted_rgb], dim=1)
-        combined_acc = torch.cat([acc], dim=1)
+
+        if "fg_mask" in batch:
+            combined_acc = torch.cat([acc, batch["fg_mask"].to(self.device).expand_as(acc)], dim=1)
+        else:
+            combined_acc = torch.cat([acc], dim=1)
 
         if "depth" in batch:
             depth_gt = colormaps.apply_depth_colormap(
@@ -460,11 +507,11 @@ class NerfactoRENIModel(NerfactoModel):
 
         psnr = self.psnr(gt_rgb, predicted_rgb)
         ssim = self.ssim(gt_rgb, predicted_rgb)
-        lpips = self.lpips(gt_rgb, predicted_rgb)
+        # lpips = self.lpips(gt_rgb, predicted_rgb)
 
         # all of these metrics will be logged as scalars
         metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
-        metrics_dict["lpips"] = float(lpips)
+        # metrics_dict["lpips"] = float(lpips)
 
         images_dict = {
             "img": combined_rgb,
@@ -472,6 +519,12 @@ class NerfactoRENIModel(NerfactoModel):
             "depth": combined_depth,
             "normal": combined_normal,
         }
+
+        if "albedo" in outputs:
+            images_dict["albedo"] = outputs["albedo"]
+
+        if "shininess" in outputs:
+            images_dict["shininess"] = outputs["shininess"]
 
         for i in range(self.config.num_proposal_iterations):
             key = f"prop_depth_{i}"

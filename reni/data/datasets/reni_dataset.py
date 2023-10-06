@@ -78,6 +78,10 @@ class RENIDataset(InputDataset):
         self.metadata["image_height"] = self._dataparser_outputs.metadata["image_height"]
         self.metadata["image_width"] = self._dataparser_outputs.metadata["image_width"]
         self.metadata["augment_with_mirror"] = self._dataparser_outputs.metadata["augment_with_mirror"]
+        self.metadata["fit_val_in_ldr"] = self._dataparser_outputs.metadata["fit_val_in_ldr"]
+
+        if self.metadata["fit_val_in_ldr"] and self.split == "val":
+            self.store_hdr_val_in_metadata()
 
     def __len__(self):
         return len(self._dataparser_outputs.image_filenames)
@@ -137,6 +141,16 @@ class RENIDataset(InputDataset):
             image_idx: The image index in the dataset.
         """
         image = self.get_image(image_idx)
+
+        if self.metadata["fit_val_in_ldr"] and self.split == "val":
+            if self._dataparser_outputs.metadata["min_max_normalize"]:
+                # undo min max normalization
+                min_val, max_val = self.metadata["min_max"]
+                image = (image + 1) / 2 * (max_val - min_val) + min_val
+            if self._dataparser_outputs.metadata["convert_to_log_domain"]:
+                image = torch.exp(image)
+            image = linear_to_sRGB(image)
+
         data = {"image_idx": image_idx, "image": image}
         if self._dataparser_outputs.mask_filenames is not None:
             mask_filepath = self._dataparser_outputs.mask_filenames[image_idx]
@@ -159,6 +173,14 @@ class RENIDataset(InputDataset):
         # sun_mask = sun_mask > torch.quantile(sun_mask, 0.99)
         # data["sun_mask"] = sun_mask
         return data
+
+    def store_hdr_val_in_metadata(self):
+        """Stores the HDR validation images in the metadata."""
+        hdr_images = []
+        for image_idx in range(len(self)):
+            image = self.get_image(image_idx)
+            hdr_images.append(image)
+        self.metadata["hdr_val_images"] = hdr_images
 
     def get_dataset_min_max(self) -> Tuple[float, float]:
         """Returns the min and max values of the dataset."""

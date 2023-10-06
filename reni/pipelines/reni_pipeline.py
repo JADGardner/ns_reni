@@ -111,11 +111,15 @@ class RENIPipeline(VanillaPipeline):
         num_train_data = self.datamanager.num_train
         num_eval_data = self.datamanager.num_eval
 
+        metadata = self.datamanager.train_dataset.metadata
+        if "hdr_val_images" in self.datamanager.eval_dataset.metadata:
+            metadata["hdr_val_images"] = self.datamanager.eval_dataset.metadata["hdr_val_images"]
+
         self._model = config.model.setup(
             scene_box=None,
             num_train_data=num_train_data,
             num_eval_data=num_eval_data,
-            metadata=self.datamanager.train_dataset.metadata,
+            metadata=metadata,
             grad_scaler=grad_scaler,
         )
         self.model.to(device)

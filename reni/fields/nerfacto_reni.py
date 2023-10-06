@@ -63,7 +63,7 @@ class NerfactoFieldRENI(NerfactoField):
         use_pred_normals: whether to use predicted normals
         use_average_appearance_embedding: whether to use average appearance embedding or zeros for inference
         spatial_distortion: spatial distortion to apply to the scene
-        predict_specular: whether to predict specular color
+        predict_shininess: whether to predict specular color
     """
 
     aabb: Tensor
@@ -91,7 +91,7 @@ class NerfactoFieldRENI(NerfactoField):
         use_pred_normals: bool = False,
         use_average_appearance_embedding: bool = False,
         spatial_distortion: Optional[SpatialDistortion] = None,
-        predict_specular: bool = False,
+        predict_shininess: bool = False,
     ) -> None:
         super().__init__(
             aabb=aabb,
@@ -117,10 +117,10 @@ class NerfactoFieldRENI(NerfactoField):
             spatial_distortion=spatial_distortion,
         )
 
-        self.prdict_specular = predict_specular
+        self.predict_shininess = predict_shininess
 
         # modify so only takes in positions
-        output_dim = 6 if predict_specular else 3
+        output_dim = 4 if predict_shininess else 3
         self.mlp_head = tcnn.Network(
             n_input_dims=self.geo_feat_dim,
             n_output_dims=output_dim,
@@ -183,10 +183,11 @@ class NerfactoFieldRENI(NerfactoField):
 
         rgb = self.mlp_head(h).view(*outputs_shape, -1).to(directions)
 
-        if self.prdict_specular:
-            specular = rgb[..., 3:]
-            rgb = rgb[..., :3]
-            outputs.update({RENIFieldHeadNames.SPECULAR: specular})
+        if self.predict_shininess:
+            shininess = rgb[..., 3:4]  # shape (..., 1)
+            rgb = rgb[..., :3]  # shape (..., 3)
+            shininess = torch.exp(shininess)
+            outputs.update({RENIFieldHeadNames.SHININESS: shininess})
 
         outputs.update({RENIFieldHeadNames.ALBEDO: rgb})
 

@@ -1,4 +1,4 @@
-# Copyright 2022 The Nerfstudio Team. All rights reserved.
+# Copyright 2023 The University of York. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 """RENI field"""
 
-from typing import Literal, Type, Union, Dict, Any, Optional
+from typing import Literal, Type, Dict, Any, Optional, Union
 from dataclasses import dataclass, field
 import contextlib
 
@@ -79,7 +79,7 @@ class RENIFieldConfig(BaseRENIFieldConfig):
     """Omega_0 for hidden layers"""
     fixed_decoder: bool = False
     """Whether to fix the decoder weights"""
-    trainable_scale: bool = False
+    trainable_scale: Union[bool, Literal["train", "eval", "both"]] = False
     """Whether to train the scale parameter"""
     old_implementation: bool = False
     """Whether to match implementation of old RENI, when using old checkpoints"""
@@ -119,7 +119,7 @@ class RENIField(BaseRENIField):
             self.register_parameter("train_mu", train_mu)
             self.register_parameter("train_logvar", train_logvar)
 
-            if self.config.trainable_scale:
+            if self.config.trainable_scale in [True, "train", "both"]:
                 self.train_scale = nn.Parameter(torch.ones(self.num_train_data))
 
         if self.num_eval_data is not None:
@@ -127,7 +127,7 @@ class RENIField(BaseRENIField):
             self.register_parameter("eval_mu", eval_mu)
             self.register_parameter("eval_logvar", eval_logvar)
 
-            if self.config.trainable_scale:
+            if self.config.trainable_scale in [True, "eval", "both"]:
                 self.eval_scale = nn.Parameter(torch.ones(self.num_eval_data))
 
         if self.config.invariant_function == "GramMatrix":
@@ -172,6 +172,9 @@ class RENIField(BaseRENIField):
                 param.requires_grad = False
             for param in self.vn_invar.parameters():
                 param.requires_grad = False
+        if self.config.trainable_scale in [True, "train", "both"]:
+            prev_state_scale = self.train_scale.requires_grad
+            self.train_scale.requires_grad = False
 
         prev_decoder_state = self.fixed_decoder
         self.fixed_decoder = True
@@ -186,6 +189,8 @@ class RENIField(BaseRENIField):
                     param.requires_grad_(prev_state_proj_in[name])
                 for name, param in self.vn_invar.named_parameters():
                     param.requires_grad_(prev_state_invar[name])
+            if self.config.trainable_scale in [True, "train", "both"]:
+                self.train_scale.requires_grad_(prev_state_scale)
             self.fixed_decoder = prev_decoder_state
 
     def vn_invariance(self, Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2", axis_of_invariance: int = 1):
@@ -389,7 +394,7 @@ class RENIField(BaseRENIField):
                 out_activation=output_activation,
             )
         elif self.conditioning == "Attention":
-            # transformer where K, V is from conditioning input and Q is from directional input
+            # transformer where K, V is from conditioning input and Q is from pos encoded directional input
             network = Decoder(
                 in_dim=input_dims["direction"],
                 conditioning_input_dim=input_dims["conditioning"],
@@ -429,10 +434,15 @@ class RENIField(BaseRENIField):
     def select_scale(self):
         """Selects the scale to use for the network"""
 
+        scale = None
         if self.training and not self.fixed_decoder:
-            return self.train_scale
+            if self.config.trainable_scale in [True, "train", "both"]:
+                scale = self.train_scale
+        else:
+            if self.config.trainable_scale in [True, "eval", "both"]:
+                scale = self.eval_scale
 
-        return self.eval_scale
+        return scale
 
     def init_latent_codes(self, num_latents: int, mode: Literal["train", "eval"]):
         """Initializes the latent codes"""
@@ -454,6 +464,10 @@ class RENIField(BaseRENIField):
         eval_logvar = eval_logvar.type_as(self.eval_logvar)
         self.eval_mu.data = eval_mu.data
         self.eval_logvar.data = eval_logvar.data
+
+        if self.config.trainable_scale in [True, "eval", "both"]:
+            eval_scale = torch.ones(self.num_eval_data).type_as(self.eval_scale)
+            self.eval_scale.data = eval_scale.data
 
     def apply_positional_encoding(self, directional_input, conditioning_input):
         # conditioning on just invariant directional input
@@ -525,12 +539,13 @@ class RENIField(BaseRENIField):
 
         outputs = {}
 
-        if self.config.trainable_scale:
-            scale = self.select_scale()
+        scale = self.select_scale()
+        if scale is not None:
             scales = scale[camera_indices]  # [num_rays]
+            scales = torch.exp(scales)  # [num_rays] exp to ensure positive
 
             if self.log_domain:
-                model_outputs = model_outputs + scales.unsqueeze(1)  # [num_rays, 3]
+                model_outputs = model_outputs + torch.log(scales.unsqueeze(1))  # [num_rays, 3]
             else:
                 model_outputs = model_outputs * scales.unsqueeze(1)  # [num_rays, 3]
 

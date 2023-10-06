@@ -17,6 +17,7 @@ Collection of render heads
 """
 from enum import Enum
 
+
 class RENIFieldHeadNames(Enum):
     """Possible RENI field outputs"""
 
@@ -29,6 +30,7 @@ class RENIFieldHeadNames(Enum):
     SH_COEFFS = "sh_coeffs"
     ALBEDO = "albedo"
     SPECULAR = "specular"
+    SHININESS = "shininess"
     UNCERTAINTY = "uncertainty"
     TRANSIENT_RGB = "transient_rgb"
     TRANSIENT_DENSITY = "transient_density"
@@ -36,4 +38,3 @@ class RENIFieldHeadNames(Enum):
     PRED_NORMALS = "pred_normals"
     DENSITY = "density"
     NORMALS = "normals"
-    

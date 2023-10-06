@@ -21,6 +21,7 @@ from jaxtyping import Float
 import torch
 from torch import Tensor, nn
 
+
 class LambertianShader(nn.Module):
     """Calculate Lambertian shading."""
 
@@ -67,3 +68,61 @@ class LambertianShader(nn.Module):
 
         return lambertian_color_sum, shaded_albedo
 
+
+class BlinnPhongShader(nn.Module):
+    """Calculate Blinn-Phong shading."""
+
+    @classmethod
+    def forward(
+        cls,
+        albedo: torch.Tensor,  # shape: (*bs, 3)
+        normals: torch.Tensor,  # shape: (*bs, 3)
+        light_directions: torch.Tensor,  # shape: (*bs, num_light_directions, 3)
+        light_colors: torch.Tensor,  # shape: (*bs, num_light_directions, 3)
+        specular: torch.Tensor,  # shape: (*bs, 3)
+        shininess: torch.Tensor,  # shape: (*bs,)
+        view_directions: torch.Tensor,  # shape: (*bs, 3)
+        detach_normals=False,
+    ):
+        """Calculate Blinn-Phong shading.
+
+        Args:
+            ... (same as before)
+            specular: Specular reflection coefficient.
+            shininess: Shininess coefficient.
+            view_directions: Directions of the viewer [bs, 3].
+
+        Returns:
+            Textureless Blinn-Phong shading, Blinn-Phong shading
+        """
+        if detach_normals:
+            normals = normals.detach()
+
+        # Ensure normals have the same shape as light_directions for broadcasting
+        normals_expanded = normals.unsqueeze(1)
+
+        # Compute dot product along last dimension [-1], result has shape [bs, num_light_directions]
+        lambertian_per_light = torch.einsum("...i,...i->...", normals_expanded, light_directions).clamp(min=0.0)
+
+        # Compute shading for each light, result has shape [bs, num_light_directions, 3]
+        lambertian_colors = lambertian_per_light.unsqueeze(-1) * light_colors
+
+        # Compute half-way vector H
+        H = (light_directions + view_directions.unsqueeze(1)) / 2.0
+        H = H / H.norm(dim=-1, keepdim=True)  # normalize H
+
+        # Compute the specular term
+        specular_term_per_light = torch.einsum("...i,...i->...", normals_expanded, H).clamp(
+            min=0.0
+        ) ** shininess.unsqueeze(1)
+        specular_colors = specular_term_per_light.unsqueeze(-1) * light_colors * specular.unsqueeze(1)
+
+        # Sum colors from all lights, result has shape [bs, 3]
+        blinn_phong_color_sum = lambertian_colors.sum(1) + specular_colors.sum(1)
+
+        shaded_albedo = albedo * blinn_phong_color_sum
+
+        blinn_phong_color_sum = linear_to_sRGB(blinn_phong_color_sum)
+        shaded_albedo = linear_to_sRGB(shaded_albedo)
+
+        return blinn_phong_color_sum, shaded_albedo

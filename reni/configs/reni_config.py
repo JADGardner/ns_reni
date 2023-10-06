@@ -22,11 +22,11 @@ RENIField = MethodSpecification(
         method_name="reni",
         experiment_name="reni",
         machine=MachineConfig(),
-        steps_per_eval_image=50000,
+        steps_per_eval_image=5000,
         steps_per_eval_batch=10000000,
         steps_per_save=1000,
-        steps_per_eval_all_images=50000,  # set to a very large model so we don't eval with all images
-        max_num_iterations=4015201,
+        steps_per_eval_all_images=5000,
+        max_num_iterations=50001,
         mixed_precision=False,
         pipeline=RENIPipelineConfig(
             datamanager=RENIDataManagerConfig(
@@ -44,6 +44,7 @@ RENIField = MethodSpecification(
                     min_max_normalize=None,
                     use_validation_as_train=False,
                     augment_with_mirror=True,
+                    fit_val_in_ldr=True,
                 ),
                 pixel_sampler=RENIEquirectangularPixelSamplerConfig(
                     full_image_per_batch=False,
@@ -72,6 +73,7 @@ RENIField = MethodSpecification(
                     output_activation="None",  # ALL
                     last_layer_linear=False,  # SIRENs
                     fixed_decoder=False,  # ALL
+                    trainable_scale="eval",
                     old_implementation=False,
                 ),
                 eval_latent_optimizer={
@@ -92,10 +94,10 @@ RENIField = MethodSpecification(
                 loss_inclusions={
                     "log_mse_loss": False,
                     "hdr_mse_loss": False,
-                    "ldr_mse_loss": False,
+                    "ldr_mse_loss": "eval",
                     "cosine_similarity_loss": True,
-                    "kld_loss": True,
-                    "scale_inv_loss": True,
+                    "kld_loss": "train",
+                    "scale_inv_loss": "train",
                     "scale_inv_grad_loss": False,
                     "bce_loss": False,  # For RESGAN, leave False in this config
                     "wgan_loss": False,  # For RESGAN, leave False in this config
@@ -107,7 +109,7 @@ RENIField = MethodSpecification(
         optimizers={
             "field": {
                 "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),  # 1e-3 for Attention, 1e-5 for Other
-                "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=4015201),
+                "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
             },
             "encoder": {  # If (training_regime="vae")
                 "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
