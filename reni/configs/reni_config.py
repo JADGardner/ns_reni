@@ -44,11 +44,11 @@ RENIField = MethodSpecification(
                     min_max_normalize=None,
                     use_validation_as_train=False,
                     augment_with_mirror=True,
-                    fit_val_in_ldr=True,
+                    fit_val_in_ldr=False,
                 ),
                 pixel_sampler=RENIEquirectangularPixelSamplerConfig(
                     full_image_per_batch=False,
-                    images_per_batch=1,
+                    images_per_batch=1,  # if full_image_per_batch
                     is_equirectangular=True,
                 ),
                 images_on_gpu=True,
