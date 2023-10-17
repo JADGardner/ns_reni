@@ -142,6 +142,7 @@ class NeRDDataset(InputDataset):
         depth = exr_file.get("Depth")
         depth = np.array(depth).astype(np.float32)
         depth = torch.from_numpy(depth)
+        depth = self.metadata["scale_factor"] * depth
 
         return depth
 

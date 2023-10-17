@@ -26,6 +26,7 @@ import torch
 from torch.nn import Parameter
 from torch.nn import functional as F
 import matplotlib.cm as cm
+import numpy as np
 
 from nerfstudio.field_components.spatial_distortions import SceneContraction
 from nerfstudio.cameras.rays import RayBundle, RaySamples
@@ -39,15 +40,18 @@ from nerfstudio.model_components.losses import (
 )
 from nerfstudio.models.nerfacto import NerfactoModelConfig, NerfactoModel
 from nerfstudio.utils import colormaps
+from nerfstudio.model_components import losses
+from nerfstudio.model_components.losses import DepthLossType, depth_loss, depth_ranking_loss
 
 from reni.illumination_fields.base_spherical_field import SphericalFieldConfig
 from reni.illumination_fields.reni_illumination_field import RENIField, RENIFieldConfig
-from reni.model_components.illumination_samplers import IlluminationSamplerConfig
+from reni.model_components.illumination_samplers import IlluminationSamplerConfig, EquirectangularSamplerConfig
 from reni.model_components.shaders import LambertianShader, BlinnPhongShader
 from reni.utils.utils import find_nerfstudio_project_root
-from reni.fields.nerfacto_reni import NerfactoFieldRENI
+from reni.fields.nerfacto_reni_field import NerfactoFieldRENI
 from reni.field_components.field_heads import RENIFieldHeadNames
 from reni.model_components.renderers import RGBLambertianRenderer
+from reni.utils.colourspace import linear_to_sRGB
 
 
 @dataclass
@@ -65,6 +69,20 @@ class NerfactoRENIModelConfig(NerfactoModelConfig):
     """Illumination sampler to use"""
     predict_shininess: bool = False
     """Whether to predict shininess"""
+    depth_loss_mult: float = 1e-3
+    """Lambda of the depth loss."""
+    is_euclidean_depth: bool = True
+    """Whether input depth maps are Euclidean distances (or z-distances)."""
+    depth_sigma: float = 0.0001
+    """Uncertainty around depth values in meters (defaults to 1cm)."""
+    should_decay_sigma: bool = False
+    """Whether to exponentially decay sigma."""
+    starting_depth_sigma: float = 0.2
+    """Starting uncertainty around depth values in meters (defaults to 0.2m)."""
+    sigma_decay_rate: float = 0.99985
+    """Rate of exponential decay."""
+    depth_loss_type: DepthLossType = DepthLossType.DS_NERF
+    """Depth loss type."""
 
 
 class NerfactoRENIModel(NerfactoModel):
@@ -79,6 +97,11 @@ class NerfactoRENIModel(NerfactoModel):
     def populate_modules(self):
         """Set the fields and modules."""
         super().populate_modules()
+
+        if self.config.should_decay_sigma:
+            self.depth_sigma = torch.tensor([self.config.starting_depth_sigma])
+        else:
+            self.depth_sigma = torch.tensor([self.config.depth_sigma])
 
         # Overwrite nerfacto field with one that predicts albedo (and optionally specular)
 
@@ -103,6 +126,7 @@ class NerfactoRENIModel(NerfactoModel):
         )
 
         self.illumination_sampler = self.config.illumination_sampler.setup()
+        self.equirectangular_sampler = EquirectangularSamplerConfig(width=128).setup()
 
         self.illumination_field = self.config.illumination_field.setup(
             num_train_data=None,
@@ -147,58 +171,14 @@ class NerfactoRENIModel(NerfactoModel):
         param_groups["illumination_field"] = list(self.illumination_field.parameters())
         return param_groups
 
-    def get_illumination(self, camera_indices: torch.Tensor):
-        illumination_ray_samples = self.illumination_sampler()  # [num_illumination_directions, 3]
-        illumination_ray_samples = illumination_ray_samples.to(self.device)
-        # we want unique camera indices and for each one to sample illumination directions
-        unique_indices, inverse_indices = torch.unique(
-            camera_indices, return_inverse=True
-        )  # [num_unique_camera_indices], [num_rays, samples_per_ray]
-        num_unique_camera_indices = unique_indices.shape[0]
-        num_illumination_directions = illumination_ray_samples.shape[0]
-        unique_indices = unique_indices.unsqueeze(1).repeat(
-            1, num_illumination_directions
-        )  # [num_unique_camera_indices, num_illumination_directions]
-        # illumination_ray_samples.frustums.directions # shape [num_illumination_directions, 3] we need to repeat this for each unique camera index
-        directions = illumination_ray_samples.frustums.directions.unsqueeze(0).repeat(
-            num_unique_camera_indices, 1, 1
-        )  # [num_unique_camera_indices, num_illumination_directions, 3]
-        # now reshape both and put into ray_samples
-        illumination_ray_samples.camera_indices = unique_indices.reshape(
-            -1
-        )  # [num_unique_camera_indices * num_illumination_directions]
-        illumination_ray_samples.frustums.directions = directions.reshape(
-            -1, 3
-        )  # [num_unique_camera_indices * num_illumination_directions, 3]
-        illuination_field_outputs = self.illumination_field.forward(
-            illumination_ray_samples
-        )  # [num_unique_camera_indices * num_illumination_directions, 3]
-        hdr_illumination_colours = illuination_field_outputs[
-            RENIFieldHeadNames.RGB
-        ]  # [num_unique_camera_indices * num_illumination_directions, 3]
-        hdr_illumination_colours = self.illumination_field.unnormalise(
-            hdr_illumination_colours
-        )  # [num_unique_camera_indices * num_illumination_directions, 3]
-        # so now we reshape back to [num_unique_camera_indices, num_illumination_directions, 3]
-        hdr_illumination_colours = hdr_illumination_colours.reshape(
-            num_unique_camera_indices, num_illumination_directions, 3
+    def _get_sigma(self):
+        if not self.config.should_decay_sigma:
+            return self.depth_sigma
+
+        self.depth_sigma = torch.maximum(
+            self.config.sigma_decay_rate * self.depth_sigma, torch.tensor([self.config.depth_sigma])
         )
-        # and use inverse indices to get back to [num_rays, num_illumination_directions, 3]
-        hdr_illumination_colours = hdr_illumination_colours[
-            inverse_indices
-        ]  # [num_rays, samples_per_ray, num_illumination_directions, 3]
-        # and then unsqueeze, repeat and reshape to get to [num_rays * samples_per_ray, num_illumination_directions, 3]
-        hdr_illumination_colours = hdr_illumination_colours.reshape(
-            -1, num_illumination_directions, 3
-        )  # [num_rays * samples_per_ray, num_illumination_directions, 3]
-        # same for illumination directions
-        illumination_directions = directions[
-            inverse_indices
-        ]  # [num_rays, samples_per_ray, num_illumination_directions, 3]
-        illumination_directions = illumination_directions.reshape(
-            -1, num_illumination_directions, 3
-        )  # [num_rays * samples_per_ray, num_illumination_directions, 3]
-        return hdr_illumination_colours, illumination_directions
+        return self.depth_sigma
 
     def get_illumination_shader(self, camera_indices: torch.Tensor):
         """Generate samples and sample illumination field"""
@@ -284,21 +264,9 @@ class NerfactoRENIModel(NerfactoModel):
             )
             specular = torch.ones_like(albedo)  # white specular
 
-        # light_colors, light_directions = self.get_illumination(ray_samples.camera_indices)
-
-        # light_colors = torch.ones_like(light_colors)
-
-        # rgb = self.labmertian_renderer(
-        #     albedos=field_outputs[RENIFieldHeadNames.ALBEDO],
-        #     normals=field_outputs[RENIFieldHeadNames.NORMALS],
-        #     light_directions=light_directions,
-        #     light_colors=light_colors,
-        #     weights=weights,
-        # )
-
         light_colors, light_directions = self.get_illumination_shader(ray_bundle.camera_indices)
 
-        blinn_phong_color_sum, rgb = self.blinn_phong_shader(
+        _, rgb = self.blinn_phong_shader(
             albedo=albedo,
             normals=normals,
             light_directions=light_directions,
@@ -308,14 +276,6 @@ class NerfactoRENIModel(NerfactoModel):
             view_directions=ray_samples.frustums.directions[:, 0, :],
             detach_normals=False,
         )
-
-        # lambertian_color_sum, rgb = self.lambertian_shader(
-        #     albedo=albedo,
-        #     normals=pred_normals,
-        #     light_directions=light_directions,
-        #     light_colors=light_colors,
-        #     detach_normals=False,
-        # )
 
         outputs = {
             "rgb": rgb,
@@ -335,7 +295,7 @@ class NerfactoRENIModel(NerfactoModel):
 
         if self.training and self.config.predict_normals:
             pred_normals = self.renderer_normals(field_outputs[RENIFieldHeadNames.PRED_NORMALS], weights=weights)
-            output["pred_normal"] = pred_normals
+            outputs["pred_normal"] = pred_normals
             outputs["rendered_orientation_loss"] = orientation_loss(
                 weights.detach(),
                 field_outputs[RENIFieldHeadNames.NORMALS],
@@ -348,31 +308,11 @@ class NerfactoRENIModel(NerfactoModel):
                 field_outputs[RENIFieldHeadNames.PRED_NORMALS],
             )
 
-        # if self.training and batch is not None:
-        #     if "normal" in batch and "fg_mask" in batch:
-        #         # Shapes:
-        #         # normals: [num_rays, 3]
-        #         # batch["normal"]: [num_rays, 3]
-        #         # fg_mask: [num_rays]
-        #         # convert mask to bool and expand to shape of normals
-        #         fg_mask = batch["fg_mask"].to(self.device).bool()
-        #         true_indices = fg_mask.nonzero(as_tuple=False).squeeze()
-        #         masked_normals = torch.index_select(normals, 0, true_indices[:, 0])
-        #         masked_batch_normal = torch.index_select(batch["normal"], 0, true_indices[:, 0])
-
-        #         # Ensure that fg_mask has been correctly broadcasted
-        #         assert masked_normals.shape == masked_batch_normal.shape, "Shape mismatch"
-
-        #         outputs["rendered_normal_loss"] = 1 - torch.mean(
-        #             torch.cosine_similarity(
-        #                 masked_normals,
-        #                 masked_batch_normal,
-        #                 dim=-1,
-        #             )
-        #         )
-
         for i in range(self.config.num_proposal_iterations):
             outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=weights_list[i], ray_samples=ray_samples_list[i])
+
+        if ray_bundle.metadata is not None and "directions_norm" in ray_bundle.metadata:
+            outputs["directions_norm"] = ray_bundle.metadata["directions_norm"]
 
         return outputs
 
@@ -385,6 +325,45 @@ class NerfactoRENIModel(NerfactoModel):
 
         if self.training:
             metrics_dict["distortion"] = distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
+
+            if (
+                losses.FORCE_PSEUDODEPTH_LOSS
+                and self.config.depth_loss_type not in losses.PSEUDODEPTH_COMPATIBLE_LOSSES
+            ):
+                raise ValueError(
+                    f"Forcing pseudodepth loss, but depth loss type ({self.config.depth_loss_type}) must be one of {losses.PSEUDODEPTH_COMPATIBLE_LOSSES}"
+                )
+            if self.config.depth_loss_type in (DepthLossType.DS_NERF, DepthLossType.URF):
+                metrics_dict["depth_loss"] = 0.0
+                sigma = self._get_sigma().to(self.device)
+                termination_depth = batch["depth"].to(self.device)
+                for i in range(len(outputs["weights_list"])):
+                    metrics_dict["depth_loss"] += depth_loss(
+                        weights=outputs["weights_list"][i],
+                        ray_samples=outputs["ray_samples_list"][i],
+                        termination_depth=termination_depth,
+                        predicted_depth=outputs["depth"],
+                        sigma=sigma,
+                        directions_norm=outputs["directions_norm"],
+                        is_euclidean=self.config.is_euclidean_depth,
+                        depth_loss_type=self.config.depth_loss_type,
+                    ) / len(outputs["weights_list"])
+            elif self.config.depth_loss_type in (DepthLossType.SPARSENERF_RANKING,):
+                metrics_dict["depth_ranking"] = depth_ranking_loss(
+                    outputs["expected_depth"], batch["depth_image"].to(self.device)
+                )
+            else:
+                raise NotImplementedError(f"Unknown depth loss type {self.config.depth_loss_type}")
+
+        metrics_dict["shininess_min"] = torch.min(outputs["shininess"])
+        metrics_dict["shininess_max"] = torch.max(outputs["shininess"])
+        metrics_dict["shininess_mean"] = torch.mean(outputs["shininess"])
+        metrics_dict["albedo_min"] = torch.min(outputs["albedo"])
+        metrics_dict["albedo_max"] = torch.max(outputs["albedo"])
+        metrics_dict["albedo_mean"] = torch.mean(outputs["albedo"])
+        metrics_dict["depth_min"] = torch.min(outputs["depth"])
+        metrics_dict["depth_max"] = torch.max(outputs["depth"])
+
         return metrics_dict
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None):
@@ -425,6 +404,16 @@ class NerfactoRENIModel(NerfactoModel):
                     outputs["accumulation"], batch["fg_mask"].expand_as(outputs["accumulation"]).to(self.device)
                 )
 
+            assert metrics_dict is not None and ("depth_loss" in metrics_dict or "depth_ranking" in metrics_dict)
+            if "depth_ranking" in metrics_dict:
+                loss_dict["depth_ranking"] = (
+                    self.config.depth_loss_mult
+                    * np.interp(self.step, [0, 2000], [0, 0.2])
+                    * metrics_dict["depth_ranking"]
+                )
+            if "depth_loss" in metrics_dict:
+                loss_dict["depth_loss"] = self.config.depth_loss_mult * metrics_dict["depth_loss"]
+
         return loss_dict
 
     @torch.no_grad()
@@ -462,10 +451,6 @@ class NerfactoRENIModel(NerfactoModel):
         predicted_rgb = outputs["rgb"]  # Blended with background (black if random background)
         gt_rgb = self.renderer_rgb.blend_background(gt_rgb)
         acc = colormaps.apply_colormap(outputs["accumulation"])
-        depth = colormaps.apply_depth_colormap(
-            outputs["depth"],
-            accumulation=outputs["accumulation"],
-        )
 
         normal = outputs["normal"]
         # normal = (normal + 1.0) / 2.0
@@ -492,10 +477,16 @@ class NerfactoRENIModel(NerfactoModel):
         else:
             combined_acc = torch.cat([acc], dim=1)
 
+        depth = colormaps.apply_depth_colormap(
+            outputs["depth"],
+            accumulation=outputs["accumulation"],
+            colormap_options=colormaps.ColormapOptions(colormap="turbo", normalize=True),
+        )
         if "depth" in batch:
             depth_gt = colormaps.apply_depth_colormap(
                 batch["depth"].to(self.device),
                 accumulation=torch.where(batch["depth"].to(self.device) != torch.inf, 1, 0),
+                colormap_options=colormaps.ColormapOptions(colormap="turbo", normalize=True),
             )
             combined_depth = torch.cat([depth_gt, depth], dim=1)
         else:
@@ -534,4 +525,88 @@ class NerfactoRENIModel(NerfactoModel):
             )
             images_dict[key] = prop_depth_i
 
+        with torch.no_grad():
+            ray_samples = self.equirectangular_sampler.generate_direction_samples()
+            ray_samples = ray_samples.to(self.device)
+            ray_samples.camera_indices = torch.ones_like(ray_samples.camera_indices) * batch["image_idx"]
+            illumination_field_outputs = self.illumination_field(ray_samples)
+            hdr_envmap = illumination_field_outputs[RENIFieldHeadNames.RGB]
+            hdr_envmap = self.illumination_field.unnormalise(hdr_envmap)  # N, 3
+            ldr_envmap = linear_to_sRGB(hdr_envmap)  # N, 3
+            # reshape to H, W, 3
+            height = self.equirectangular_sampler.height
+            width = self.equirectangular_sampler.width
+            ldr_envmap = ldr_envmap.reshape(height, width, 3)
+
+            hdr_mean = torch.mean(hdr_envmap, dim=-1)
+            hdr_mean = hdr_mean.reshape(height, width, 1)
+            hdr_mean_log_heatmap = colormaps.apply_depth_colormap(
+                hdr_mean,
+                near_plane=hdr_mean.min(),
+                far_plane=hdr_mean.max(),
+            )
+
+            combined_reni_envmap = torch.cat([ldr_envmap, hdr_mean_log_heatmap], dim=1)
+
+            images_dict["reni_envmap"] = combined_reni_envmap
+
         return metrics_dict, images_dict
+
+    # def fit_latent_codes_for_eval(self, datamanager: RENINeuSDataManager, step: int):
+    #     """Fit evaluation latent codes to session envmaps so that illumination is correct."""
+
+    #     # Make sure we are using eval RENI inside self.forward()
+    #     self.fitting_eval_latents = True
+
+    #     # get the correct illumination field
+    #     illumination_field = self.get_illumination_field()
+
+    #     param_group = {"eval_latents": list(illumination_field.parameters())}
+    #     optimizer = Optimizers(self.config.eval_latent_optimizer, param_group)
+    #     steps = optimizer.config["eval_latents"]["scheduler"].max_steps
+
+    #     with Progress(
+    #         TextColumn("[progress.description]{task.description}"),
+    #         BarColumn(),
+    #         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+    #         TimeRemainingColumn(),
+    #         TextColumn("[blue]Loss: {task.fields[loss]}"),
+    #         TextColumn("[green]LR: {task.fields[lr]}"),
+    #     ) as progress:
+    #         task = progress.add_task("[green]Optimising eval latents... ", total=steps, loss="", lr="")
+
+    #         # this is likely already set by config, but just in case
+    #         # ensures only latents (and scale if used) are optimised
+    #         with illumination_field.hold_decoder_fixed():
+    #             # Reset latents to zeros for fitting
+    #             illumination_field.reset_eval_latents()
+
+    #             for step in range(steps):
+    #                 if self.config.eval_latent_optimise_method == "per_image":
+    #                     ray_bundle, batch = datamanager.get_eval_image_half_bundle(
+    #                         sample_region=self.config.eval_latent_sample_region
+    #                     )
+    #                 elif self.config.eval_latent_optimise_method == "nerf_osr_holdout":
+    #                     ray_bundle, batch = datamanager.get_nerfosr_lighting_eval_bundle("optimise")
+    #                 elif self.config.eval_latent_optimise_method == "nerf_osr_envmap":
+    #                     raise NotImplementedError
+    #                 else:
+    #                     raise NotImplementedError
+
+    #                 model_outputs = self.forward(ray_bundle=ray_bundle, step=step)
+    #                 loss_dict = self.get_loss_dict(model_outputs, batch)
+    #                 loss = functools.reduce(torch.add, loss_dict.values())
+    #                 optimizer.zero_grad_all()
+    #                 loss.backward()
+    #                 optimizer.optimizer_step("eval_latents")
+    #                 optimizer.scheduler_step("eval_latents")
+
+    #                 progress.update(
+    #                     task,
+    #                     advance=1,
+    #                     loss=f"{loss.item():.4f}",
+    #                     lr=f"{optimizer.schedulers['eval_latents'].get_last_lr()[0]:.8f}",
+    #                 )
+
+    #     # No longer using eval RENI
+    #     self.fitting_eval_latents = False

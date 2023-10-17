@@ -342,11 +342,11 @@ def getCoefficientsFromImage(ibl, lmax=2, resizeWidth=None, filterAmount=None, d
     return iblCoeffs
 
 
-def get_spherical_harmonic_representation(img, nBands):
+def get_spherical_harmonic_representation(img, nBands, device=torch.device("cpu")):
     # img: (H, W, 3), nBands: int
     iblCoeffs = getCoefficientsFromImage(img, nBands)
-    sh_radiance_map = shReconstructSignal(iblCoeffs, width=img.shape[1])
-    sh_radiance_map = torch.from_numpy(sh_radiance_map)
+    sh_radiance_map = shReconstructSignal(iblCoeffs, width=img.shape[1], device=device)
+    # sh_radiance_map = torch.from_numpy(sh_radiance_map)
     return sh_radiance_map
 
 

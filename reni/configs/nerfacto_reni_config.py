@@ -16,7 +16,7 @@ from nerfstudio.models.nerfacto import NerfactoModelConfig
 
 from reni.data.dataparsers.nerd_dataparser import NeRDDataParserConfig
 from reni.data.datamanagers.nerd_datamanager import NeRDDataManagerConfig
-from reni.models.nerfacto_reni import NerfactoRENIModelConfig
+from reni.models.nerfacto_reni_model import NerfactoRENIModelConfig
 from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
 from reni.model_components.illumination_samplers import IcosahedronSamplerConfig
 from reni.pipelines.nerfacto_reni_pipeline import NerfactoRENIPipelineConfig
@@ -25,7 +25,7 @@ NeRFactoRENI = MethodSpecification(
     config=TrainerConfig(
         method_name="nerfacto-reni",
         steps_per_eval_batch=2500,
-        steps_per_eval_image=2500,
+        steps_per_eval_image=200,
         steps_per_save=2000,
         max_num_iterations=30000,
         mixed_precision=False,
@@ -50,7 +50,7 @@ NeRFactoRENI = MethodSpecification(
                 eval_num_rays_per_chunk=256,
                 background_color="white",  # should match background_color in NeRDDataParserConfig
                 disable_scene_contraction=True,
-                predict_normals=False,
+                predict_normals=True,
                 predict_shininess=True,
                 illumination_field=RENIFieldConfig(
                     conditioning="Attention",

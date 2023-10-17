@@ -25,6 +25,7 @@ RENIField = MethodSpecification(
         steps_per_eval_image=5000,
         steps_per_eval_batch=10000000,
         steps_per_save=1000,
+        save_only_latest_checkpoint=False,
         steps_per_eval_all_images=5000,
         max_num_iterations=50001,
         mixed_precision=False,
@@ -63,7 +64,7 @@ RENIField = MethodSpecification(
                     axis_of_invariance="z",  # Nerfstudio world space is z-up # old reni was y-up
                     positional_encoding="NeRF",
                     encoded_input="Directions",  # "InvarDirection", "Directions", "Conditioning", "Both", "None"
-                    latent_dim=100,  # N for a latent code size of (N x 3)
+                    latent_dim=20,  # N for a latent code size of (N x 3)
                     hidden_features=128,  # ALL
                     hidden_layers=9,  # SIRENs
                     mapping_layers=5,  # FiLM MAPPING NETWORK
@@ -73,7 +74,7 @@ RENIField = MethodSpecification(
                     output_activation="None",  # ALL
                     last_layer_linear=False,  # SIRENs
                     fixed_decoder=False,  # ALL
-                    trainable_scale="eval",
+                    trainable_scale=False,
                     old_implementation=False,
                 ),
                 eval_latent_optimizer={
@@ -94,10 +95,10 @@ RENIField = MethodSpecification(
                 loss_inclusions={
                     "log_mse_loss": False,
                     "hdr_mse_loss": False,
-                    "ldr_mse_loss": "eval",
+                    "ldr_mse_loss": False,
                     "cosine_similarity_loss": True,
                     "kld_loss": "train",
-                    "scale_inv_loss": "train",
+                    "scale_inv_loss": True,
                     "scale_inv_grad_loss": False,
                     "bce_loss": False,  # For RESGAN, leave False in this config
                     "wgan_loss": False,  # For RESGAN, leave False in this config
