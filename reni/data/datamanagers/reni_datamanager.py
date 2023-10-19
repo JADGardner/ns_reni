@@ -131,9 +131,9 @@ class RENIDataManager(VanillaDataManager):
         self.eval_dataset = self.create_eval_dataset()
 
         self.exclude_batch_keys_from_device = self.train_dataset.exclude_batch_keys_from_device
-        if self.config.masks_on_gpu is True:
+        if self.config.masks_on_gpu is True and "mask" in self.exclude_batch_keys_from_device:
             self.exclude_batch_keys_from_device.remove("mask")
-        if self.config.images_on_gpu is True:
+        if self.config.images_on_gpu is True and "image" in self.exclude_batch_keys_from_device:
             self.exclude_batch_keys_from_device.remove("image")
 
         self.num_train = len(self.train_dataset)

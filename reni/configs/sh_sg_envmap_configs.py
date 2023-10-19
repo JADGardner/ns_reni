@@ -56,12 +56,6 @@ SHField = MethodSpecification(
                 field=SphericalHarmonicIlluminationFieldConfig(
                     spherical_harmonic_order=5,
                 ),
-                eval_latent_optimizer={
-                    "eval_latents": {
-                        "optimizer": AdamOptimizerConfig(lr=1e-1, eps=1e-15),
-                        "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-7, max_steps=2500),
-                    },
-                },
                 loss_coefficients={
                     "log_mse_loss": 1.0,
                     "hdr_mse_loss": 1.0,
@@ -83,7 +77,6 @@ SHField = MethodSpecification(
                     "wgan_loss": False,  # For RESGAN, leave False in this config
                 },
                 include_sine_weighting=False,  # This is already handled by the equirectangular pixel sampler
-                training_regime="autodecoder",
             ),
         ),
         optimizers={
@@ -132,12 +125,6 @@ SGField = MethodSpecification(
             ),
             model=RENIModelConfig(
                 field=SphericalGaussianFieldConfig(row_col_gaussian_dims=(2, 1), channel_dim=3),
-                eval_latent_optimizer={
-                    "eval_latents": {
-                        "optimizer": AdamOptimizerConfig(lr=1e-1, eps=1e-15),
-                        "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-7, max_steps=2500),
-                    },
-                },
                 loss_coefficients={
                     "log_mse_loss": 1.0,
                     "hdr_mse_loss": 1.0,
@@ -159,7 +146,6 @@ SGField = MethodSpecification(
                     "wgan_loss": False,  # For RESGAN, leave False in this config
                 },
                 include_sine_weighting=False,  # This is already handled by the equirectangular pixel sampler
-                training_regime="autodecoder",
             ),
         ),
         optimizers={

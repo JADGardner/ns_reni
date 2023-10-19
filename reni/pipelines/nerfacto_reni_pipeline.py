@@ -36,9 +36,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from typing_extensions import Literal
 from torch.cuda.amp.grad_scaler import GradScaler
 
-from nerfstudio.data.datamanagers.base_datamanager import (
-    DataManagerConfig,
-)
+from nerfstudio.data.datamanagers.base_datamanager import DataManagerConfig, DataManager
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import profiler
 from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig, VanillaPipeline
@@ -82,7 +80,30 @@ class NerfactoRENIPipeline(VanillaPipeline):
         local_rank: int = 0,
         grad_scaler: Optional[GradScaler] = None,
     ):
-        super().__init__(config, device, test_mode, world_size, local_rank, grad_scaler)
+        super(VanillaPipeline, self).__init__()  # Call grandparent class constructor ignoring parent class
+        self.config = config
+        self.test_mode = test_mode
+        self.datamanager: DataManager = config.datamanager.setup(
+            device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank
+        )
+        self.datamanager.to(device)
+        # TODO(ethan): get rid of scene_bounds from the model
+        assert self.datamanager.train_dataset is not None, "Missing input dataset"
+
+        self._model = config.model.setup(
+            scene_box=self.datamanager.train_dataset.scene_box,
+            num_train_data=len(self.datamanager.train_dataset),
+            num_eval_data=len(self.datamanager.eval_dataset),
+            metadata=self.datamanager.train_dataset.metadata,
+            device=device,
+            grad_scaler=grad_scaler,
+        )
+        self.model.to(device)
+
+        self.world_size = world_size
+        if world_size > 1:
+            self._model = typing.cast(Model, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
+            dist.barrier(device_ids=[local_rank])
 
     @property
     def device(self):
@@ -124,6 +145,11 @@ class NerfactoRENIPipeline(VanillaPipeline):
         we do not need a forward() method"""
         raise NotImplementedError
 
+    def _optimise_evaluation_latents(self):
+        self.model.fit_latent_codes_for_eval(
+            datamanager=self.datamanager,
+        )
+
     @profiler.time_function
     def get_eval_loss_dict(self, step: int) -> Tuple[Any, Dict[str, Any], Dict[str, Any]]:
         """This function gets your evaluation loss dict. It needs to get the data
@@ -132,6 +158,7 @@ class NerfactoRENIPipeline(VanillaPipeline):
         Args:
             step: current iteration step
         """
+        self._optimise_evaluation_latents()
         self.eval()
         ray_bundle, batch = self.datamanager.next_eval(step)
         model_outputs = self.model(ray_bundle, batch)
@@ -148,6 +175,7 @@ class NerfactoRENIPipeline(VanillaPipeline):
         Args:
             step: current iteration step
         """
+        self._optimise_evaluation_latents()
         self.eval()
         image_idx, camera_ray_bundle, batch = self.datamanager.next_eval_image(step)
         outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle, batch)
@@ -173,6 +201,7 @@ class NerfactoRENIPipeline(VanillaPipeline):
         Returns:
             metrics_dict: dictionary of metrics
         """
+        self._optimise_evaluation_latents()
         self.eval()
         metrics_dict_list = []
         assert isinstance(self.datamanager, VanillaDataManager)

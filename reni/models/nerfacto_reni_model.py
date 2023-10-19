@@ -19,14 +19,17 @@ NeRF implementation that combines many recent advancements.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Type, Tuple, Optional
+from typing import Any, Dict, List, Type, Tuple, Optional
 from pathlib import Path
 from collections import defaultdict
 import torch
+import torch.nn as nn
 from torch.nn import Parameter
 from torch.nn import functional as F
 import matplotlib.cm as cm
 import numpy as np
+import functools
+from rich.progress import BarColumn, Console, Progress, TextColumn, TimeRemainingColumn
 
 from nerfstudio.field_components.spatial_distortions import SceneContraction
 from nerfstudio.cameras.rays import RayBundle, RaySamples
@@ -42,6 +45,10 @@ from nerfstudio.models.nerfacto import NerfactoModelConfig, NerfactoModel
 from nerfstudio.utils import colormaps
 from nerfstudio.model_components import losses
 from nerfstudio.model_components.losses import DepthLossType, depth_loss, depth_ranking_loss
+from nerfstudio.engine.optimizers import OptimizerConfig, Optimizers
+from nerfstudio.engine.schedulers import SchedulerConfig
+from nerfstudio.configs.config_utils import to_immutable_dict
+from nerfstudio.data.datamanagers.base_datamanager import DataManager
 
 from reni.illumination_fields.base_spherical_field import SphericalFieldConfig
 from reni.illumination_fields.reni_illumination_field import RENIField, RENIFieldConfig
@@ -52,6 +59,8 @@ from reni.fields.nerfacto_reni_field import NerfactoFieldRENI
 from reni.field_components.field_heads import RENIFieldHeadNames
 from reni.model_components.renderers import RGBLambertianRenderer
 from reni.utils.colourspace import linear_to_sRGB
+
+CONSOLE = Console(width=120)
 
 
 @dataclass
@@ -83,6 +92,15 @@ class NerfactoRENIModelConfig(NerfactoModelConfig):
     """Rate of exponential decay."""
     depth_loss_type: DepthLossType = DepthLossType.DS_NERF
     """Depth loss type."""
+    eval_latent_optimizer: Dict[str, Any] = to_immutable_dict(
+        {
+            "eval_latents": {
+                "optimizer": OptimizerConfig(),
+                "scheduler": SchedulerConfig(),
+            }
+        }
+    )
+    """Optimizer and scheduler for latent code optimisation"""
 
 
 class NerfactoRENIModel(NerfactoModel):
@@ -97,6 +115,8 @@ class NerfactoRENIModel(NerfactoModel):
     def populate_modules(self):
         """Set the fields and modules."""
         super().populate_modules()
+        self.num_eval_data = self.kwargs["num_eval_data"]
+        self.fitting_eval_latents = False
 
         if self.config.should_decay_sigma:
             self.depth_sigma = torch.tensor([self.config.starting_depth_sigma])
@@ -126,12 +146,23 @@ class NerfactoRENIModel(NerfactoModel):
         )
 
         self.illumination_sampler = self.config.illumination_sampler.setup()
-        self.equirectangular_sampler = EquirectangularSamplerConfig(width=128).setup()
+        self.equirectangular_sampler = EquirectangularSamplerConfig(width=128).setup()  # for displaying environment map
 
         self.illumination_field = self.config.illumination_field.setup(
             num_train_data=None,
-            num_eval_data=self.num_train_data,
+            num_eval_data=None,
         )
+
+        # use local latents as illumination field is just for decoder
+        self.train_illumination_latents = torch.nn.Parameter(
+            torch.zeros((self.num_train_data, self.illumination_field.latent_dim, 3))
+        )
+        self.train_scale = nn.Parameter(torch.ones(self.num_train_data))
+
+        self.eval_illumination_latents = torch.nn.Parameter(
+            torch.zeros((self.num_eval_data, self.illumination_field.latent_dim, 3))
+        )
+        self.eval_scale = nn.Parameter(torch.ones(self.num_eval_data))
 
         if isinstance(self.config.illumination_field, RENIFieldConfig):
             # # Now you can use this to construct paths:
@@ -168,7 +199,7 @@ class NerfactoRENIModel(NerfactoModel):
 
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
         param_groups = super().get_param_groups()
-        param_groups["illumination_field"] = list(self.illumination_field.parameters())
+        param_groups["illumination_field"] = [self.train_illumination_latents, self.train_scale]
         return param_groups
 
     def _get_sigma(self):
@@ -179,6 +210,17 @@ class NerfactoRENIModel(NerfactoModel):
             self.config.sigma_decay_rate * self.depth_sigma, torch.tensor([self.config.depth_sigma])
         )
         return self.depth_sigma
+
+    def get_illumination_field_latents(self):
+        """Return the illumination field latents for the current mode."""
+        if self.training and not self.fitting_eval_latents:
+            illumination_field_latents = self.train_illumination_latents
+            scale = self.train_scale
+        else:
+            illumination_field_latents = self.eval_illumination_latents
+            scale = self.eval_scale
+
+        return illumination_field_latents, scale
 
     def get_illumination_shader(self, camera_indices: torch.Tensor):
         """Generate samples and sample illumination field"""
@@ -205,8 +247,16 @@ class NerfactoRENIModel(NerfactoModel):
         illumination_ray_samples.frustums.directions = directions.reshape(
             -1, 3
         )  # [num_unique_camera_indices * num_illumination_directions, 3]
+
+        # get RENI latent codes for either train or eval
+        illumination_latents, scale = self.get_illumination_field_latents()  # [num_latents, latent_dim, 3]
+        illumination_latents = illumination_latents[
+            illumination_ray_samples.camera_indices
+        ]  # [num_rays, latent_dim, 3]
+        scale = scale[illumination_ray_samples.camera_indices]  # [num_rays]
+
         illuination_field_outputs = self.illumination_field.forward(
-            illumination_ray_samples
+            ray_samples=illumination_ray_samples, latent_codes=illumination_latents, scale=scale
         )  # [num_unique_camera_indices * num_illumination_directions, 3]
         hdr_illumination_colours = illuination_field_outputs[
             RENIFieldHeadNames.RGB
@@ -529,7 +579,9 @@ class NerfactoRENIModel(NerfactoModel):
             ray_samples = self.equirectangular_sampler.generate_direction_samples()
             ray_samples = ray_samples.to(self.device)
             ray_samples.camera_indices = torch.ones_like(ray_samples.camera_indices) * batch["image_idx"]
-            illumination_field_outputs = self.illumination_field(ray_samples)
+            latents = self.eval_illumination_latents[ray_samples.camera_indices.squeeze()]
+            scale = self.eval_scale[ray_samples.camera_indices.squeeze()]
+            illumination_field_outputs = self.illumination_field(ray_samples, latent_codes=latents, scale=scale)
             hdr_envmap = illumination_field_outputs[RENIFieldHeadNames.RGB]
             hdr_envmap = self.illumination_field.unnormalise(hdr_envmap)  # N, 3
             ldr_envmap = linear_to_sRGB(hdr_envmap)  # N, 3
@@ -552,61 +604,52 @@ class NerfactoRENIModel(NerfactoModel):
 
         return metrics_dict, images_dict
 
-    # def fit_latent_codes_for_eval(self, datamanager: RENINeuSDataManager, step: int):
-    #     """Fit evaluation latent codes to session envmaps so that illumination is correct."""
+    def fit_latent_codes_for_eval(self, datamanager: DataManager):
+        """Fit evaluation latent codes to session envmaps so that illumination is correct."""
 
-    #     # Make sure we are using eval RENI inside self.forward()
-    #     self.fitting_eval_latents = True
+        # Make sure we are using eval RENI inside self.forward()
+        self.fitting_eval_latents = True
 
-    #     # get the correct illumination field
-    #     illumination_field = self.get_illumination_field()
+        param_group = {"eval_latents": [self.eval_illumination_latents, self.eval_scale]}
+        optimizer = Optimizers(self.config.eval_latent_optimizer, param_group)
+        steps = optimizer.config["eval_latents"]["scheduler"].max_steps
 
-    #     param_group = {"eval_latents": list(illumination_field.parameters())}
-    #     optimizer = Optimizers(self.config.eval_latent_optimizer, param_group)
-    #     steps = optimizer.config["eval_latents"]["scheduler"].max_steps
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeRemainingColumn(),
+            TextColumn("[blue]Loss: {task.fields[loss]}"),
+            TextColumn("[green]LR: {task.fields[lr]}"),
+        ) as progress:
+            task = progress.add_task("[green]Optimising eval latents... ", total=steps, loss="", lr="")
 
-    #     with Progress(
-    #         TextColumn("[progress.description]{task.description}"),
-    #         BarColumn(),
-    #         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-    #         TimeRemainingColumn(),
-    #         TextColumn("[blue]Loss: {task.fields[loss]}"),
-    #         TextColumn("[green]LR: {task.fields[lr]}"),
-    #     ) as progress:
-    #         task = progress.add_task("[green]Optimising eval latents... ", total=steps, loss="", lr="")
+            # this is likely already set by config, but just in case
+            # ensures only latents (and scale if used) are optimised
+            with self.illumination_field.hold_decoder_fixed():
+                # Reset latents to zeros for fitting
+                self.eval_illumination_latents.data.zero_()
+                # Reset scale to 1.0 for fitting
+                self.eval_scale.data.fill_(1.0)
 
-    #         # this is likely already set by config, but just in case
-    #         # ensures only latents (and scale if used) are optimised
-    #         with illumination_field.hold_decoder_fixed():
-    #             # Reset latents to zeros for fitting
-    #             illumination_field.reset_eval_latents()
+                for step in range(steps):
+                    ray_bundle, batch = datamanager.next_eval(step)
 
-    #             for step in range(steps):
-    #                 if self.config.eval_latent_optimise_method == "per_image":
-    #                     ray_bundle, batch = datamanager.get_eval_image_half_bundle(
-    #                         sample_region=self.config.eval_latent_sample_region
-    #                     )
-    #                 elif self.config.eval_latent_optimise_method == "nerf_osr_holdout":
-    #                     ray_bundle, batch = datamanager.get_nerfosr_lighting_eval_bundle("optimise")
-    #                 elif self.config.eval_latent_optimise_method == "nerf_osr_envmap":
-    #                     raise NotImplementedError
-    #                 else:
-    #                     raise NotImplementedError
+                    model_outputs = self.forward(ray_bundle=ray_bundle)
+                    metrics_dict = self.get_metrics_dict(model_outputs, batch)
+                    loss_dict = self.get_loss_dict(model_outputs, batch, metrics_dict)
+                    loss = functools.reduce(torch.add, loss_dict.values())
+                    optimizer.zero_grad_all()
+                    loss.backward()
+                    optimizer.optimizer_step("eval_latents")
+                    optimizer.scheduler_step("eval_latents")
 
-    #                 model_outputs = self.forward(ray_bundle=ray_bundle, step=step)
-    #                 loss_dict = self.get_loss_dict(model_outputs, batch)
-    #                 loss = functools.reduce(torch.add, loss_dict.values())
-    #                 optimizer.zero_grad_all()
-    #                 loss.backward()
-    #                 optimizer.optimizer_step("eval_latents")
-    #                 optimizer.scheduler_step("eval_latents")
+                    progress.update(
+                        task,
+                        advance=1,
+                        loss=f"{loss.item():.4f}",
+                        lr=f"{optimizer.schedulers['eval_latents'].get_last_lr()[0]:.8f}",
+                    )
 
-    #                 progress.update(
-    #                     task,
-    #                     advance=1,
-    #                     loss=f"{loss.item():.4f}",
-    #                     lr=f"{optimizer.schedulers['eval_latents'].get_last_lr()[0]:.8f}",
-    #                 )
-
-    #     # No longer using eval RENI
-    #     self.fitting_eval_latents = False
+        # No longer using eval RENI
+        self.fitting_eval_latents = False

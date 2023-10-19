@@ -9,9 +9,7 @@ from nerfstudio.configs.base_config import ViewerConfig
 from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.plugins.types import MethodSpecification
 from nerfstudio.engine.optimizers import AdamOptimizerConfig
-from nerfstudio.engine.schedulers import (
-    ExponentialDecaySchedulerConfig,
-)
+from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig, CosineDecaySchedulerConfig
 from nerfstudio.models.nerfacto import NerfactoModelConfig
 
 from reni.data.dataparsers.nerd_dataparser import NeRDDataParserConfig
@@ -78,6 +76,15 @@ NeRFactoRENI = MethodSpecification(
                 ),
                 illumination_field_ckpt_path=Path("outputs/reni/reni/2023-08-23_075123/"),
                 illumination_field_ckpt_step=50000,
+                eval_latent_optimizer={
+                    "eval_latents": {
+                        "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
+                        # "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-7, max_steps=250),
+                        "scheduler": CosineDecaySchedulerConfig(
+                            warm_up_end=50, learning_rate_alpha=0.05, max_steps=250
+                        ),
+                    },
+                },
             ),
         ),
         optimizers={

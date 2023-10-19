@@ -127,7 +127,7 @@ class NerfactoFieldRENI(NerfactoField):
             network_config={
                 "otype": "FullyFusedMLP",
                 "activation": "ReLU",
-                "output_activation": "Sigmoid",
+                "output_activation": "None",
                 "n_neurons": hidden_dim_color,
                 "n_hidden_layers": num_layers_color - 1,
             },
@@ -181,15 +181,16 @@ class NerfactoFieldRENI(NerfactoField):
 
         h = density_embedding.view(-1, self.geo_feat_dim)
 
-        rgb = self.mlp_head(h).view(*outputs_shape, -1).to(directions)
+        model_output = self.mlp_head(h).view(*outputs_shape, -1).to(directions)
 
         if self.predict_shininess:
-            shininess = rgb[..., 3:4]  # shape (..., 1)
-            rgb = rgb[..., :3]  # shape (..., 3)
+            rgb = torch.sigmoid(model_output[..., :3])  # shape (..., 3)
+            shininess = model_output[..., 3:4]  # shape (..., 1)
             shininess = torch.exp(shininess)
+            outputs.update({RENIFieldHeadNames.ALBEDO: rgb})
             outputs.update({RENIFieldHeadNames.SHININESS: shininess})
-
-        outputs.update({RENIFieldHeadNames.ALBEDO: rgb})
+        else:
+            outputs.update({RENIFieldHeadNames.ALBEDO: torch.sigmoid(model_output)})
 
         return outputs
 

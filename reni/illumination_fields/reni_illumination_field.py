@@ -172,7 +172,7 @@ class RENIField(BaseRENIField):
                 param.requires_grad = False
             for param in self.vn_invar.parameters():
                 param.requires_grad = False
-        if self.config.trainable_scale in [True, "train", "both"]:
+        if self.config.trainable_scale in [True, "train", "both"] and self.num_train_data is not None:
             prev_state_scale = self.train_scale.requires_grad
             self.train_scale.requires_grad = False
 
@@ -189,7 +189,7 @@ class RENIField(BaseRENIField):
                     param.requires_grad_(prev_state_proj_in[name])
                 for name, param in self.vn_invar.named_parameters():
                     param.requires_grad_(prev_state_invar[name])
-            if self.config.trainable_scale in [True, "train", "both"]:
+            if self.config.trainable_scale in [True, "train", "both"] and self.num_train_data is not None:
                 self.train_scale.requires_grad_(prev_state_scale)
             self.fixed_decoder = prev_decoder_state
 
@@ -486,6 +486,7 @@ class RENIField(BaseRENIField):
         ray_samples: RaySamples,
         rotation: Optional[torch.Tensor] = None,
         latent_codes: Optional[torch.Tensor] = None,
+        scale: Optional[torch.Tensor] = None,
     ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Returns the outputs of the field.
 
@@ -493,6 +494,7 @@ class RENIField(BaseRENIField):
             ray_samples: [num_rays]
             rotation: [3, 3]
             latent_codes: [num_rays, latent_dim, 3]
+            scale: [num_rays]
         """
         # we want to batch over camera_indices as these correspond to unique latent codes
         camera_indices = ray_samples.camera_indices.squeeze()  # [num_rays]
@@ -539,7 +541,9 @@ class RENIField(BaseRENIField):
 
         outputs = {}
 
-        scale = self.select_scale()
+        if scale is None:
+            scale = self.select_scale()
+
         if scale is not None:
             scales = scale[camera_indices]  # [num_rays]
             scales = torch.exp(scales)  # [num_rays] exp to ensure positive
@@ -560,6 +564,7 @@ class RENIField(BaseRENIField):
         ray_samples: RaySamples,
         rotation: Optional[torch.Tensor] = None,
         latent_codes: Optional[torch.Tensor] = None,
+        scale: Optional[torch.Tensor] = None,
     ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
@@ -567,8 +572,9 @@ class RENIField(BaseRENIField):
             ray_samples: [num_rays]
             rotation: [3, 3]
             latent_codes: [num_rays, latent_dim, 3]
+            scale: [num_rays]
 
         Returns:
             Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.
         """
-        return self.get_outputs(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes)
+        return self.get_outputs(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes, scale=scale)
