@@ -18,16 +18,10 @@ Datamanager.
 
 from __future__ import annotations
 
-import functools
-from abc import abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
-    Any,
-    Callable,
     Dict,
-    Generic,
-    List,
     Literal,
     Optional,
     Tuple,
@@ -35,21 +29,10 @@ from typing import (
     Union,
 )
 
-import numpy as np
 import torch
-from torch import nn
-from torch.nn import Parameter
-from torch.utils.data.distributed import DistributedSampler
-from typing_extensions import TypeVar
 
-from nerfstudio.cameras.camera_optimizers import CameraOptimizerConfig
-from nerfstudio.cameras.cameras import CameraType
 from nerfstudio.cameras.rays import RayBundle
-from nerfstudio.configs.base_config import InstantiateConfig
-from nerfstudio.configs.dataparser_configs import AnnotatedDataParserUnion
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
-from nerfstudio.data.dataparsers.blender_dataparser import BlenderDataParserConfig
-from nerfstudio.data.datasets.base_dataset import InputDataset
 from nerfstudio.data.pixel_samplers import (
     PixelSampler,
 )
@@ -58,10 +41,7 @@ from nerfstudio.data.utils.dataloaders import (
     FixedIndicesEvalDataloader,
     RandIndicesEvalDataloader,
 )
-from nerfstudio.data.utils.nerfstudio_collate import nerfstudio_collate
-from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes
 from nerfstudio.model_components.ray_generators import RayGenerator
-from nerfstudio.utils.misc import IterableWrapper
 from nerfstudio.data.datamanagers.base_datamanager import (
     VanillaDataManager,
     VanillaDataManagerConfig,
@@ -156,6 +136,13 @@ class RENIDataManager(VanillaDataManager):
 
         super(VanillaDataManager, self).__init__()  # Call grandparent class constructor ignoring parent class
 
+    def forward(self):
+        """Blank forward method
+
+        This is an nn.Module, and so requires a forward() method normally, although in our case
+        we do not need a forward() method"""
+        raise NotImplementedError
+    
     def _get_pixel_sampler(self, dataset: TDataset, num_rays_per_batch: int, **kwargs) -> PixelSampler:
         """Infer pixel sampler to use."""
         return self.config.pixel_sampler.setup(is_equirectangular=True, num_rays_per_batch=num_rays_per_batch, **kwargs)
@@ -177,13 +164,7 @@ class RENIDataManager(VanillaDataManager):
         self.iter_train_image_dataloader = iter(self.train_image_dataloader)
         # NOTE: Updated to RENI sampler where full image per batch is possible
         self.train_pixel_sampler = self._get_pixel_sampler(self.train_dataset, self.config.train_num_rays_per_batch)
-        self.train_camera_optimizer = self.config.camera_optimizer.setup(
-            num_cameras=self.train_dataset.cameras.size, device=self.device
-        )
-        self.train_ray_generator = RayGenerator(
-            self.train_dataset.cameras.to(self.device),
-            self.train_camera_optimizer,
-        )
+        self.train_ray_generator = RayGenerator(self.train_dataset.cameras.to(self.device))
 
     def setup_eval(self):
         """Sets up the data loader for evaluation"""
@@ -207,14 +188,8 @@ class RENIDataManager(VanillaDataManager):
             full_image_per_batch=True,
             images_per_batch=1,
         )
+        self.eval_ray_generator = RayGenerator(self.eval_dataset.cameras.to(self.device))
 
-        self.eval_camera_optimizer = self.config.camera_optimizer.setup(
-            num_cameras=self.eval_dataset.cameras.size, device=self.device
-        )
-        self.eval_ray_generator = RayGenerator(
-            self.eval_dataset.cameras.to(self.device),
-            self.eval_camera_optimizer,
-        )
         # for loading full images
         self.fixed_indices_eval_dataloader = FixedIndicesEvalDataloader(
             input_dataset=self.eval_dataset,

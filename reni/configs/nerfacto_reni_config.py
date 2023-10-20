@@ -3,14 +3,11 @@ RENI + NeRF configuration file.
 """
 from pathlib import Path
 
-from nerfstudio.cameras.camera_optimizers import CameraOptimizerConfig
-from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig
 from nerfstudio.configs.base_config import ViewerConfig
 from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.plugins.types import MethodSpecification
 from nerfstudio.engine.optimizers import AdamOptimizerConfig
 from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig, CosineDecaySchedulerConfig
-from nerfstudio.models.nerfacto import NerfactoModelConfig
 
 from reni.data.dataparsers.nerd_dataparser import NeRDDataParserConfig
 from reni.data.datamanagers.nerd_datamanager import NeRDDataManagerConfig
