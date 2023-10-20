@@ -501,7 +501,12 @@ class RENIModel(Model):
             gt_image_ldr = gt_image
             pred_image_ldr = pred_image
 
-        combined_rgb = torch.cat([gt_image_ldr, pred_image_ldr], dim=1)
+        if "mask" in batch:
+            # we should mask gt_image_ldr to show only the pixels that were used in the loss
+            masked_gt_image_ldr = gt_image_ldr * batch["mask"].unsqueeze(-1)
+            combined_rgb = torch.cat([gt_image_ldr, masked_gt_image_ldr, pred_image_ldr], dim=1)
+        else:
+            combined_rgb = torch.cat([gt_image_ldr, pred_image_ldr], dim=1)
 
         images_dict = {}
 

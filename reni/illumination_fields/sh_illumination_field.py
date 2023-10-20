@@ -12,23 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RENI field"""
+"""Spherical Harmonic Lighting"""
 
-from typing import Literal, Type, Union, Optional, Dict, Union, Tuple, Any
+from typing import Type, Optional, Dict, Any
 from dataclasses import dataclass, field
-import wget
-import zipfile
-import os
 import contextlib
-import torch.nn.functional as F
 
 import numpy as np
 import torch
-from torch import nn
+import torch.nn.functional as F
 from torchtyping import TensorType
 
-from nerfstudio.cameras.rays import RayBundle, RaySamples, Frustums
-from nerfstudio.field_components.encodings import NeRFEncoding, SHEncoding, Encoding
+from nerfstudio.cameras.rays import RaySamples
 
 from reni.illumination_fields.base_spherical_field import BaseRENIField, BaseRENIFieldConfig
 from reni.field_components.field_heads import RENIFieldHeadNames
@@ -464,7 +459,7 @@ class SphericalHarmonicIlluminationField(BaseRENIField):
             rotation = rotation.T
             directions = torch.matmul(ray_bundle.directions, rotation)  # [num_rays, 3]
 
-        # convert from cartesian to spherical coordinates with y-up convention
+        # convert from cartesian to spherical coordinates with z-up convention
         theta = torch.acos(directions[:, 2])  # [num_rays]
         phi = torch.atan2(directions[:, 0], directions[:, 1])  # [num_rays]
 

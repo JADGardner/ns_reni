@@ -193,7 +193,7 @@ class SHSGPipeline(VanillaPipeline):
         return metrics_dict, images_dict
 
     @profiler.time_function
-    def get_average_eval_image_metrics(self, step: Optional[int] = None, optimise_latents: bool = True):
+    def get_average_eval_image_metrics(self, step: Optional[int] = None):
         """Iterate over all the images in the eval dataset and get the average.
 
         Returns:

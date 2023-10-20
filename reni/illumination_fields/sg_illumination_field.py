@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Base class for the Spherical Neural Fields.
+Spherical Guassians Envrionement Illumination.
 """
 
 from abc import abstractmethod
@@ -190,6 +190,9 @@ class SphericalGaussianField(BaseRENIField):
 
         # Sum over all spherical gaussians for each ray
         rgb = torch.sum(rgb, dim=1)
+
+        if self.log_domain:
+            rgb = torch.log(rgb)
 
         return rgb
 

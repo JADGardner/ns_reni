@@ -1,5 +1,5 @@
 """
-RENI configuration file.
+RESGAN configuration file.
 """
 from pathlib import Path
 
@@ -10,10 +10,10 @@ from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
 from reni.engine.resgan_trainer import RESGANTrainerConfig
 from reni.pipelines.resgan_pipeline import RESGANPipelineConfig
 from reni.data.reni_pixel_sampler import RENIEquirectangularPixelSamplerConfig
-from reni.discriminators.discriminators import (
+from reni.discriminators.discriminators import (  # pylint: disable=unused-import
     CNNDiscriminatorConfig,
     VNTransformerDiscriminatorConfig,
-)  # pylint: disable=unused-import
+)
 
 from nerfstudio.configs.base_config import ViewerConfig, MachineConfig
 from nerfstudio.plugins.types import MethodSpecification

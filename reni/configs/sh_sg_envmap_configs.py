@@ -18,7 +18,7 @@ from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.plugins.types import MethodSpecification
 
 from nerfstudio.engine.optimizers import AdamOptimizerConfig
-from nerfstudio.engine.schedulers import CosineDecaySchedulerConfig, ExponentialDecaySchedulerConfig
+from nerfstudio.engine.schedulers import CosineDecaySchedulerConfig
 
 
 SHField = MethodSpecification(
@@ -54,7 +54,7 @@ SHField = MethodSpecification(
             ),
             model=RENIModelConfig(
                 field=SphericalHarmonicIlluminationFieldConfig(
-                    spherical_harmonic_order=5,
+                    spherical_harmonic_order=9,
                 ),
                 loss_coefficients={
                     "log_mse_loss": 1.0,
@@ -124,7 +124,7 @@ SGField = MethodSpecification(
                 eval_num_rays_per_batch=8192,  # if not full_image_per_batch
             ),
             model=RENIModelConfig(
-                field=SphericalGaussianFieldConfig(row_col_gaussian_dims=(2, 1), channel_dim=3),
+                field=SphericalGaussianFieldConfig(row_col_gaussian_dims=(5, 10), channel_dim=3),
                 loss_coefficients={
                     "log_mse_loss": 1.0,
                     "hdr_mse_loss": 1.0,
