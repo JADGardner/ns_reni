@@ -154,7 +154,16 @@ class RENIDataset(InputDataset):
         data = {"image_idx": image_idx, "image": image}
         if self._dataparser_outputs.mask_filenames is not None:
             mask_filepath = self._dataparser_outputs.mask_filenames[image_idx]
-            data["mask"] = get_image_mask_tensor_from_path(filepath=mask_filepath, scale_factor=self.scale_factor)
+            pil_mask = Image.open(mask_filepath)
+            # if different size to data resize
+            if pil_mask.size != (self.metadata["image_width"], self.metadata["image_height"]):
+                pil_mask = pil_mask.resize(
+                    (self.metadata["image_width"], self.metadata["image_height"]), resample=Image.NEAREST
+                )
+            mask_tensor = torch.from_numpy(np.array(pil_mask)).bool()
+            # ensure only 1 channel
+            mask_tensor = mask_tensor[:, :, :1]
+            data["mask"] = mask_tensor
             assert (
                 data["mask"].shape[:2] == data["image"].shape[:2]
             ), f"Mask and image have different shapes. Got {data['mask'].shape[:2]} and {data['image'].shape[:2]}"

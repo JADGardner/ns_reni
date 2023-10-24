@@ -270,6 +270,8 @@ class RENIDataManager(VanillaDataManager):
         image_batch = self.eval_image_dataloader[idx]  # [H, W, 3]
         image_batch["image_idx"] = torch.tensor([image_batch["image_idx"]])
         image_batch["image"] = image_batch["image"].unsqueeze(0)
+        if 'mask' in image_batch:
+            image_batch["mask"] = image_batch["mask"].unsqueeze(0)
         assert self.eval_image_pixel_sampler is not None
         assert isinstance(image_batch, dict)
         batch = self.eval_image_pixel_sampler.sample(image_batch)
