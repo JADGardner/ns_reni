@@ -71,7 +71,7 @@ NeRFactoRENI = MethodSpecification(
                     apply_random_rotation=False,
                     remove_lower_hemisphere=False,
                 ),
-                illumination_field_ckpt_path=Path("outputs/reni/reni/2023-08-23_075123/"),
+                illumination_field_ckpt_path=Path("outputs/reni/reni_plus_plus_models/latent_dim_100/"),
                 illumination_field_ckpt_step=50000,
                 eval_latent_optimizer={
                     "eval_latents": {

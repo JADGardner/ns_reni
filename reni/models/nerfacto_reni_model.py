@@ -312,7 +312,7 @@ class NerfactoRENIModel(NerfactoModel):
                 weights=weights,
                 background_color=torch.tensor([0.0, 0.0, 0.0]),
             )
-            specular = torch.ones_like(albedo)  # white specular
+            specular = 1.0 - albedo
 
         light_colors, light_directions = self.get_illumination_shader(ray_bundle.camera_indices)
 

@@ -24,6 +24,7 @@ import torch
 import wget
 import zipfile
 
+from nerfstudio.utils.io import load_from_json
 from nerfstudio.cameras.cameras import Cameras, CameraType
 from nerfstudio.data.dataparsers.base_dataparser import (
     DataParser,
@@ -44,10 +45,12 @@ class RENIInverseDataParserConfig(DataParserConfig):
     """Whether to download data."""
     val_subset_size: Union[int, None] = None
     """Size of validation subset."""
-    use_validation_as_train: bool = False
-    """Whether to use validation set as training set."""
     specular_terms = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
     """Specular terms to use for training."""
+    normal_map_resolution: int = 128
+    """Resize res of normal map."""
+    shininess: float = 500.0
+    """Shininess of the object."""
 
 
 @dataclass
@@ -61,7 +64,7 @@ class RENIInverseDataParser(DataParser):
         self.data: Path = config.data
 
     def _generate_dataparser_outputs(self, split="train"):
-        if self.config.use_validation_as_train:
+        if split == "train":
             split = "val"
 
         path = self.data / split
@@ -79,6 +82,11 @@ class RENIInverseDataParser(DataParser):
 
         object_path = self.data / "3d_models"
         model_filenames = sorted(object_path.glob("*.obj"))
+
+        normals_path = self.data / "3d_models" / "normal_maps"
+        normal_filenames = sorted(normals_path.glob("*.exr"))
+
+        normal_cam_transforms = load_from_json(Path(normals_path / "normal_cam_transforms.json"))
 
         if self.config.val_subset_size and split == "val":
             image_filenames = image_filenames[: self.config.val_subset_size]
@@ -103,6 +111,11 @@ class RENIInverseDataParser(DataParser):
                 "image_height": image_height,
                 "image_width": image_width,
                 "model_filenames": model_filenames,
+                "normal_filenames": normal_filenames,
+                "normal_cam_transforms": normal_cam_transforms,
+                "normal_map_resolution": self.config.normal_map_resolution,
+                "specular_terms": self.config.specular_terms,
+                "shininess": self.config.shininess,
             },
         )
 
