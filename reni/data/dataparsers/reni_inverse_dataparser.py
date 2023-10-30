@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import numpy as np
 from typing import Type, Union, Literal, Tuple, Optional
 
 import imageio
@@ -78,44 +79,71 @@ class RENIInverseDataParser(DataParser):
             Path(str(self.data) + ".zip").unlink()
 
         # get paths for all images in the directory
-        image_filenames = sorted(path.glob("*.exr"))
+        environment_maps_filenames = sorted(path.glob("*.exr"))
 
         object_path = self.data / "3d_models"
         model_filenames = sorted(object_path.glob("*.obj"))
 
         normals_path = self.data / "3d_models" / "normal_maps"
-        normal_filenames = sorted(normals_path.glob("*.exr"))
 
         normal_cam_transforms = load_from_json(Path(normals_path / "normal_cam_transforms.json"))
 
+        render_paths = self.data / "3d_models" / "image"
+        render_filenames = sorted(render_paths.glob("*.png"))
+
         if self.config.val_subset_size and split == "val":
-            image_filenames = image_filenames[: self.config.val_subset_size]
+            environment_maps_filenames = environment_maps_filenames[: self.config.val_subset_size]
 
-        img_0 = imageio.v2.imread(image_filenames[0])
-        image_height, image_width = img_0.shape[:2]
-        num_images = len(image_filenames)
+        img_0 = imageio.v2.imread(environment_maps_filenames[0])
+        env_height, env_width = img_0.shape[:2]
 
-        cx = torch.tensor(image_width // 2, dtype=torch.float32).repeat(num_images)
-        cy = torch.tensor(image_height // 2, dtype=torch.float32).repeat(num_images)
-        fx = torch.tensor(image_height, dtype=torch.float32).repeat(num_images)
-        fy = torch.tensor(image_height, dtype=torch.float32).repeat(num_images)
+        # create render metadata for each image
+        render_metadata = []
+        normal_filenames = []
+        poses = []
+        for frame in normal_cam_transforms["frames"]:
+            normal_map_path = normals_path / Path(frame["file_path"])
+            for env_idx, environment_map_path in enumerate(environment_maps_filenames):
+                for specular_term in self.config.specular_terms:
+                    poses.append(np.array(frame["transform_matrix"])) # each same normal map has same pose
+                    normal_filenames.append(normal_map_path)
+                    render_metadata.append({
+                        "normal_map_path": normal_map_path,
+                        "environment_map_path": environment_map_path,
+                        "specular_term": specular_term,
+                        "environment_map_idx": env_idx
+                    })
 
-        c2w = torch.tensor([[[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0]]], dtype=torch.float32).repeat(num_images, 1, 1)
-
-        cameras = Cameras(fx=fx, fy=fy, cx=cx, cy=cy, camera_to_worlds=c2w, camera_type=CameraType.EQUIRECTANGULAR)
+        poses = np.array(poses).astype(np.float32)
+        image_dim = self.config.normal_map_resolution
+        camera_angle_x = float(normal_cam_transforms["camera_angle_x"])
+        focal_length = 0.5 * image_dim / np.tan(0.5 * camera_angle_x)
+        cx = image_dim / 2.0
+        cy = image_dim / 2.0
+        camera_to_world = torch.from_numpy(poses[:, :3])  # camera to world transform
+        cameras = Cameras(
+            camera_to_worlds=camera_to_world,
+            fx=focal_length,
+            fy=focal_length,
+            cx=cx,
+            cy=cy,
+            camera_type=CameraType.PERSPECTIVE,
+        )
 
         dataparser_outputs = DataparserOutputs(
-            image_filenames=image_filenames,
+            image_filenames=normal_filenames,
             cameras=cameras,
             metadata={
-                "image_height": image_height,
-                "image_width": image_width,
+                "env_height": env_height,
+                "env_width": env_width,
                 "model_filenames": model_filenames,
-                "normal_filenames": normal_filenames,
+                "environment_maps_filenames": environment_maps_filenames,
                 "normal_cam_transforms": normal_cam_transforms,
                 "normal_map_resolution": self.config.normal_map_resolution,
                 "specular_terms": self.config.specular_terms,
                 "shininess": self.config.shininess,
+                "render_metadata": render_metadata,
+                "render_filenames": render_filenames,
             },
         )
 

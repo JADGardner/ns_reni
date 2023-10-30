@@ -27,31 +27,29 @@ from pathlib import Path
 import torch
 from torch import nn
 from torch.nn import Parameter
+from torchmetrics.image import PeakSignalNoiseRatio
+from torchmetrics.functional import structural_similarity_index_measure
+from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 from nerfstudio.cameras.rays import RayBundle
-from nerfstudio.configs.base_config import InstantiateConfig
-from nerfstudio.configs.config_utils import to_immutable_dict
-from nerfstudio.data.scene_box import SceneBox
-from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes
-from nerfstudio.model_components.scene_colliders import NearFarCollider
 from nerfstudio.models.base_model import ModelConfig, Model
+
 
 from reni.illumination_fields.base_spherical_field import SphericalFieldConfig
 from reni.illumination_fields.reni_illumination_field import RENIField, RENIFieldConfig
-from reni.model_components.illumination_samplers import IlluminationSamplerConfig
-from reni.model_components.shaders import LambertianShader
+from reni.model_components.illumination_samplers import IlluminationSamplerConfig, EquirectangularSamplerConfig
 from reni.utils.utils import find_nerfstudio_project_root
-from reni.fields.nerfacto_reni import NerfactoFieldRENI
 from reni.field_components.field_heads import RENIFieldHeadNames
-from reni.model_components.renderers import RGBLambertianRenderer
+from reni.model_components.shaders import BlinnPhongShader
+from reni.utils.colourspace import linear_to_sRGB
 
 
 # Model related configs
 @dataclass
-class InverseRENIConfig(ModelConfig):
+class RENIInverseModelConfig(ModelConfig):
     """Configuration for model instantiation"""
 
-    _target: Type = field(default_factory=lambda: InverseRENI)
+    _target: Type = field(default_factory=lambda: RENIInverseModel)
     """target class to instantiate"""
     illumination_field: SphericalFieldConfig = SphericalFieldConfig()
     """Illumination Field"""
@@ -63,7 +61,7 @@ class InverseRENIConfig(ModelConfig):
     """Illumination sampler to use"""
 
 
-class InverseRENI(Model):
+class RENIInverseModel(Model):
     """Model class
     Where everything (Fields, Optimizers, Samplers, Visualization, etc) is linked together. This should be
     subclassed for custom NeRF model.
@@ -73,11 +71,11 @@ class InverseRENI(Model):
         scene_box: dataset scene box
     """
 
-    config: InverseRENIConfig
+    config: RENIInverseModelConfig
 
     def __init__(
         self,
-        config: InverseRENIConfig,
+        config: RENIInverseModelConfig,
         scene_box: SceneBox,
         num_train_data: int,
         **kwargs,
@@ -89,11 +87,18 @@ class InverseRENI(Model):
         super().populate_modules()
 
         self.illumination_sampler = self.config.illumination_sampler.setup()
+        self.equirectangular_sampler = EquirectangularSamplerConfig(width=128).setup()  # for displaying environment map
 
         self.illumination_field = self.config.illumination_field.setup(
             num_train_data=None,
-            num_eval_data=self.num_train_data,
+            num_eval_data=None,
         )
+
+        # use local latents as illumination field is just for decoder
+        self.illumination_latents = torch.nn.Parameter(
+            torch.zeros((self.num_train_data, self.illumination_field.latent_dim, 3))
+        )
+        self.scale = nn.Parameter(torch.ones(self.num_train_data))
 
         if isinstance(self.config.illumination_field, RENIFieldConfig):
             # # Now you can use this to construct paths:
@@ -124,18 +129,24 @@ class InverseRENI(Model):
             # load weights of the decoder
             self.illumination_field.load_state_dict(illumination_field_dict, strict=False)
 
-        self.lambertian_shader = LambertianShader()
-        self.labmertian_renderer = RGBLambertianRenderer()
+        self.blinn_phong_shader = BlinnPhongShader()
 
-    @abstractmethod
+        self.mse_loss = nn.MSELoss()
+        self.cosine_similarity = nn.CosineSimilarity(dim=1)
+
+        # metrics
+        self.psnr = PeakSignalNoiseRatio()
+        self.ssim = structural_similarity_index_measure
+        self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
+
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
         """Obtain the parameter groups for the optimizers
 
         Returns:
             Mapping of different parameter groups
         """
-        param_groups = super().get_param_groups()
-        param_groups["illumination_field"] = list(self.illumination_field.parameters())
+        param_groups = {}
+        param_groups["illumination_latents"] = [self.illumination_latents, self.scale]
         return param_groups
 
     def get_illumination_shader(self, camera_indices: torch.Tensor):
@@ -163,8 +174,16 @@ class InverseRENI(Model):
         illumination_ray_samples.frustums.directions = directions.reshape(
             -1, 3
         )  # [num_unique_camera_indices * num_illumination_directions, 3]
+
+        # get RENI latent codes for either train or eval
+        illumination_latents, scale = self.illumination_latents, self.scale
+        illumination_latents = illumination_latents[
+            illumination_ray_samples.camera_indices
+        ]  # [num_rays, latent_dim, 3]
+        scale = scale[illumination_ray_samples.camera_indices]  # [num_rays]
+
         illuination_field_outputs = self.illumination_field.forward(
-            illumination_ray_samples
+            ray_samples=illumination_ray_samples, latent_codes=illumination_latents, scale=scale
         )  # [num_unique_camera_indices * num_illumination_directions, 3]
         hdr_illumination_colours = illuination_field_outputs[
             RENIFieldHeadNames.RGB
@@ -182,7 +201,6 @@ class InverseRENI(Model):
 
         return hdr_illumination_colours, illumination_directions
 
-    @abstractmethod
     def get_outputs(self, ray_bundle: RayBundle, batch: Dict) -> Dict[str, Union[torch.Tensor, List]]:
         """Takes in a Ray Bundle and returns a dictionary of outputs.
 
@@ -193,16 +211,32 @@ class InverseRENI(Model):
         Returns:
             Outputs of model. (ie. rendered colors)
         """
-        
-        light_colors, light_directions = self.get_illumination_shader(ray_bundle.camera_indices)
 
-        lambertian_color_sum, rgb = self.lambertian_shader(
-            albedo=albedo,
-            normals=pred_normals,
-            light_directions=light_directions,
-            light_colors=light_colors,
-            detach_normals=False,
-        )
+        normals = batch["normal"].to(self.device) # [num_rays, 3]
+        albedo = batch["albedo"].to(self.device) # [num_rays, 3]
+        specular = batch["specular"].to(self.device) # [num_rays, 3]
+        shininess = batch["shininess"].to(self.device) # [num_rays]
+
+        view_directions = ray_bundle.directions.reshape(-1, 3) # N x 3
+        
+        light_colours, light_directions = self.get_illumination_shader(ray_bundle.camera_indices)
+
+        rendered_pixels = self.blinn_phong_shader(albedo=albedo,
+                                                  normals=normals,
+                                                  light_directions=light_directions,
+                                                  light_colors=light_colours,
+                                                  specular=specular,
+                                                  shininess=shininess,
+                                                  view_directions=view_directions,
+                                                  detach_normals=True)
+        
+        rendered_pixels = linear_to_sRGB(rendered_pixels)
+        
+        outputs = {
+            "rgb": rendered_pixels
+        }
+
+        return outputs
 
     def forward(self, ray_bundle: RayBundle, batch: Dict) -> Dict[str, Union[torch.Tensor, List]]:
         """Run forward starting with a ray bundle. This outputs different things depending on the configuration
@@ -236,6 +270,19 @@ class InverseRENI(Model):
             batch: ground truth batch corresponding to outputs
             metrics_dict: dictionary of metrics, some of which we can use for loss
         """
+        rgb = outputs["rgb"]
+        image = batch["image"].to(self.device)
+
+        mse_loss = self.mse_loss(rgb, image)
+        similarity = self.cosine_similarity(rgb, image)
+        cosine_similarity_loss = 1.0 - similarity.mean()
+
+        loss_dict = {
+            "mse_loss": mse_loss,
+            "cosine_similarity_loss": cosine_similarity_loss,
+        }
+
+        return loss_dict
 
     @torch.no_grad()
     def get_outputs_for_camera_ray_bundle(self, camera_ray_bundle: RayBundle, batch: Dict) -> Dict[str, torch.Tensor]:
@@ -252,7 +299,7 @@ class InverseRENI(Model):
             start_idx = i
             end_idx = i + num_rays_per_chunk
             ray_bundle = camera_ray_bundle.get_row_major_sliced_ray_bundle(start_idx, end_idx)
-            outputs = self.forward(ray_bundle=ray_bundle, batch)
+            outputs = self.forward(ray_bundle=ray_bundle, batch=batch)
             for output_name, output in outputs.items():  # type: ignore
                 if not torch.is_tensor(output):
                     # TODO: handle lists of tensors as well
@@ -263,60 +310,34 @@ class InverseRENI(Model):
             outputs[output_name] = torch.cat(outputs_list).view(image_height, image_width, -1)  # type: ignore
         return outputs
 
-    def get_rgba_image(self, outputs: Dict[str, torch.Tensor], output_name: str = "rgb") -> torch.Tensor:
-        """Returns the RGBA image from the outputs of the model.
-
-        Args:
-            outputs: Outputs of the model.
-
-        Returns:
-            RGBA image.
-        """
-        accumulation_name = output_name.replace("rgb", "accumulation")
-        if (
-            not hasattr(self, "renderer_rgb")
-            or not hasattr(self.renderer_rgb, "background_color")
-            or accumulation_name not in outputs
-        ):
-            raise NotImplementedError(f"get_rgba_image is not implemented for model {self.__class__.__name__}")
-        rgb = outputs[output_name]
-        if self.renderer_rgb.background_color == "random":  # type: ignore
-            acc = outputs[accumulation_name]
-            if acc.dim() < rgb.dim():
-                acc = acc.unsqueeze(-1)
-            return torch.cat((rgb / acc.clamp(min=1e-10), acc), dim=-1)
-        return torch.cat((rgb, torch.ones_like(rgb[..., :1])), dim=-1)
-
-    @abstractmethod
     def get_image_metrics_and_images(
         self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
     ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
-        """Writes the test image outputs.
-        TODO: This shouldn't return a loss
+        gt_rgb = batch["image"].to(self.device)
+        predicted_rgb = outputs["rgb"]  # Blended with background (black if random background)
 
-        Args:
-            image_idx: Index of the image.
-            step: Current step.
-            batch: Batch of data.
-            outputs: Outputs of the model.
+        combined_rgb = torch.cat([gt_rgb, predicted_rgb], dim=1)
 
-        Returns:
-            A dictionary of metrics.
-        """
+        # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
+        gt_rgb = torch.moveaxis(gt_rgb, -1, 0)[None, ...]
+        predicted_rgb = torch.moveaxis(predicted_rgb, -1, 0)[None, ...]
 
-    def load_model(self, loaded_state: Dict[str, Any]) -> None:
-        """Load the checkpoint from the given path
+        psnr = self.psnr(gt_rgb, predicted_rgb)
+        ssim = self.ssim(gt_rgb, predicted_rgb)
+        lpips = self.lpips(gt_rgb, predicted_rgb)
 
-        Args:
-            loaded_state: dictionary of pre-trained model states
-        """
-        state = {key.replace("module.", ""): value for key, value in loaded_state["model"].items()}
-        self.load_state_dict(state)  # type: ignore
+        # all of these metrics will be logged as scalars
+        metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
+        metrics_dict["lpips"] = float(lpips)
 
-    def update_to_step(self, step: int) -> None:
-        """Called when loading a model from a checkpoint. Sets any model parameters that change over
-        training to the correct value, based on the training step of the checkpoint.
+        images_dict = {"img": combined_rgb}
 
-        Args:
-            step: training step of the loaded checkpoint
-        """
+        for i in range(self.config.num_proposal_iterations):
+            key = f"prop_depth_{i}"
+            prop_depth_i = colormaps.apply_depth_colormap(
+                outputs[key],
+                accumulation=outputs["accumulation"],
+            )
+            images_dict[key] = prop_depth_i
+
+        return metrics_dict, images_dict
