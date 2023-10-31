@@ -48,6 +48,10 @@ class RENIDataParserConfig(DataParserConfig):
     """Whether to convert images to log domain."""
     augment_with_mirror: bool = False
     """Whether to augment training dataset with mirror images."""
+    augment_with_rotation: Union[bool, int] = False
+    """Whether to augment training dataset images rotated around vertical axis, angle (int) in degrees."""
+    apply_eval_rotation: Union[bool, int] = False
+    """Whether to apply rotation around vertical axis to images, angle (int) in degrees."""
     train_subset_size: Union[int, None] = None
     """Size of training subset."""
     val_subset_size: Union[int, None] = None
@@ -98,6 +102,9 @@ class RENIDataParser(DataParser):
         if self.config.augment_with_mirror and split == "train":
             # just double the number of images and dataset will handle the mirroring
             image_filenames = image_filenames + image_filenames
+        
+        if self.config.augment_with_rotation and split == "train":
+            raise NotImplementedError("Rotation augmentation not implemented yet.")
 
         img_0 = imageio.v2.imread(image_filenames[0])
         image_height, image_width = img_0.shape[:2]
@@ -129,6 +136,8 @@ class RENIDataParser(DataParser):
                 "convert_to_ldr": self.config.convert_to_ldr,
                 "convert_to_log_domain": self.config.convert_to_log_domain,
                 "augment_with_mirror": self.config.augment_with_mirror,
+                "augment_with_rotation": self.config.augment_with_rotation,
+                "apply_eval_rotation": self.config.apply_eval_rotation,
                 "min_max_normalize": self.config.min_max_normalize,
                 "image_height": image_height,
                 "image_width": image_width,

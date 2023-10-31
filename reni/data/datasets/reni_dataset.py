@@ -78,6 +78,8 @@ class RENIDataset(InputDataset):
         self.metadata["image_height"] = self._dataparser_outputs.metadata["image_height"]
         self.metadata["image_width"] = self._dataparser_outputs.metadata["image_width"]
         self.metadata["augment_with_mirror"] = self._dataparser_outputs.metadata["augment_with_mirror"]
+        self.metadata["augment_with_rotation"] = self._dataparser_outputs.metadata["augment_with_rotation"]
+        self.metadata["apply_eval_rotation"] = self._dataparser_outputs.metadata["apply_eval_rotation"]
         self.metadata["fit_val_in_ldr"] = self._dataparser_outputs.metadata["fit_val_in_ldr"]
 
         if self.metadata["fit_val_in_ldr"] and self.split == "val":
@@ -108,6 +110,15 @@ class RENIDataset(InputDataset):
             # we need to reverse the order of the columns
             if image_idx >= len(self) // 2:
                 image = image[:, ::-1, :]
+        
+        if self.metadata["apply_eval_rotation"] is not False and self.split in ["val", "test"]:
+            # eval rotation will be angle in degrees but we just want to use that to roll the columns of the image
+            # so convert to number of columns to roll
+            img_width = image.shape[1]
+            angle_rad = np.deg2rad(self.metadata["apply_eval_rotation"])
+            num_cols_to_roll = int(np.round(img_width * angle_rad / (2 * np.pi)))
+            image = np.roll(image, num_cols_to_roll, axis=1)
+
 
         assert np.all(np.isfinite(image)), "Image contains non finite values."
         assert np.all(image >= 0), "Image contains negative values."
