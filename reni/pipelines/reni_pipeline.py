@@ -20,7 +20,7 @@ from __future__ import annotations
 import typing
 from dataclasses import dataclass, field
 from time import time
-from typing import Optional, Type
+from typing import Optional, Type, Union
 
 import torch
 import torch.distributed as dist
@@ -60,6 +60,8 @@ class RENIPipelineConfig(VanillaPipelineConfig):
     """Number of epochs to optimise latent during eval"""
     eval_latent_optimisation_lr: float = 0.1
     """Learning rate for latent optimisation during eval"""
+    test_mode: Union[Literal["test", "val", "inference"], None] = None
+    """overwrite test mode"""
 
 
 class RENIPipeline(VanillaPipeline):
@@ -91,7 +93,7 @@ class RENIPipeline(VanillaPipeline):
     ):
         super(VanillaPipeline, self).__init__()  # Call grandparent class constructor ignoring parent class
         self.config = config
-        self.test_mode = test_mode
+        self.test_mode = test_mode if self.config.test_mode is None else self.config.test_mode
 
         self.using_scale_inv_grad_loss = self.config.model.loss_inclusions["scale_inv_grad_loss"]
 

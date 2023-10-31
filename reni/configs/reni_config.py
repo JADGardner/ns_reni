@@ -30,6 +30,7 @@ RENIField = MethodSpecification(
         max_num_iterations=50001,
         mixed_precision=False,
         pipeline=RENIPipelineConfig(
+          test_mode='test',
             datamanager=RENIDataManagerConfig(
                 dataparser=RENIDataParserConfig(
                     data=Path("data/RENI_HDR"),

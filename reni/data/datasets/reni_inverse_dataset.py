@@ -155,7 +155,6 @@ class RENIInverseDataset(InputDataset):
                                                 detach_normals=True)
         
             rendered_image = rendered_image.reshape(self.image_dim, self.image_dim, 3)
-            rendered_image = linear_to_sRGB(rendered_image, use_quantile=True)
         
         data['image_idx'] = image_idx
         data['image'] = rendered_image

@@ -7,6 +7,7 @@ dependencies=[
     "einops",
     "openexr==1.3.8",
     "pyexr",
+    "wget",
 ]
 
 [tool.setuptools.packages.find]

@@ -94,8 +94,12 @@ class RENIInverseDataManager(VanillaDataManager):
         if test_mode == "inference":
             self.dataparser.downscale_factor = 1  # Avoid opening images
         self.includes_time = self.dataparser.includes_time
-        self.train_dataparser_outputs: DataparserOutputs = self.dataparser.get_dataparser_outputs(split="train")
 
+        
+        # Training and eval are the same as RENI is pre-trained and we are optimising latents only
+        self.train_dataparser_outputs: DataparserOutputs = self.dataparser.get_dataparser_outputs(split=test_mode)
+
+        # Training and eval are the same as RENI is pre-trained and we are optimising latents only
         self.train_dataset = self.create_dataset()
         self.eval_dataset = self.train_dataset
         self.exclude_batch_keys_from_device = self.train_dataset.exclude_batch_keys_from_device

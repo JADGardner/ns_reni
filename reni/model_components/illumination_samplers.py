@@ -414,7 +414,7 @@ class EquirectangularSampler(IlluminationSampler):
         self.camera.fx = fx
         self.camera.fy = fy
 
-    def generate_direction_samples(self, apply_random_rotation=None) -> RaySamples:
+    def generate_direction_samples(self, num_directions=None, apply_random_rotation=None) -> RaySamples:
         # generate N random rotations
         ray_bundle = self.camera.generate_rays(camera_indices=0, keep_shape=False)
 

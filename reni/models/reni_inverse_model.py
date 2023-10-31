@@ -33,7 +33,9 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.models.base_model import ModelConfig, Model
-
+from nerfstudio.configs.config_utils import to_immutable_dict
+from nerfstudio.utils import misc
+from nerfstudio.data.scene_box import SceneBox
 
 from reni.illumination_fields.base_spherical_field import SphericalFieldConfig
 from reni.illumination_fields.reni_illumination_field import RENIField, RENIFieldConfig
@@ -59,6 +61,22 @@ class RENIInverseModelConfig(ModelConfig):
     """Step of pretrained illumination field"""
     illumination_sampler: IlluminationSamplerConfig = IlluminationSamplerConfig()
     """Illumination sampler to use"""
+    loss_inclusions: Dict[str, Any] = to_immutable_dict(
+        {
+            "rgb_l1_loss": True,
+            "rgb_l2_loss": False,
+            "cosine_similarity_loss": True,
+        }
+    )
+    """Losses to include in the loss dict"""
+    loss_coefficients: Dict[str, float] = to_immutable_dict(
+        {
+            "rgb_l1_loss": 1.0,
+            "rgb_l2_loss": 1.0,
+            "cosine_similarity_loss": 1.0,
+        }
+    )
+    """Loss coefficients for each loss"""
 
 
 class RENIInverseModel(Model):
@@ -131,8 +149,13 @@ class RENIInverseModel(Model):
 
         self.blinn_phong_shader = BlinnPhongShader()
 
-        self.mse_loss = nn.MSELoss()
-        self.cosine_similarity = nn.CosineSimilarity(dim=1)
+        # losses
+        if self.config.loss_inclusions["rgb_l1_loss"]:
+            self.l1_loss = nn.L1Loss()
+        if self.config.loss_inclusions["rgb_l2_loss"]:
+            self.l2_loss = nn.MSELoss()
+        if self.config.loss_inclusions["cosine_similarity_loss"]:
+            self.cosine_similarity = nn.CosineSimilarity(dim=1)
 
         # metrics
         self.psnr = PeakSignalNoiseRatio()
@@ -201,7 +224,7 @@ class RENIInverseModel(Model):
 
         return hdr_illumination_colours, illumination_directions
 
-    def get_outputs(self, ray_bundle: RayBundle, batch: Dict) -> Dict[str, Union[torch.Tensor, List]]:
+    def get_outputs(self, ray_bundle: RayBundle, batch: Union[Dict, None] = None) -> Dict[str, Union[torch.Tensor, List]]:
         """Takes in a Ray Bundle and returns a dictionary of outputs.
 
         Args:
@@ -212,42 +235,43 @@ class RENIInverseModel(Model):
             Outputs of model. (ie. rendered colors)
         """
 
-        normals = batch["normal"].to(self.device) # [num_rays, 3]
-        albedo = batch["albedo"].to(self.device) # [num_rays, 3]
-        specular = batch["specular"].to(self.device) # [num_rays, 3]
-        shininess = batch["shininess"].to(self.device) # [num_rays]
+        # TODO in eval ray bundle is subset from one camera and we need to choose the pixels from tha batch
+        if batch is not None:
+            normals = batch["normal"].to(self.device) # [num_rays, 3]
+            albedo = batch["albedo"].to(self.device) # [num_rays, 3]
+            specular = batch["specular"].to(self.device) # [num_rays, 3]
+            shininess = batch["shininess"].to(self.device) # [num_rays]
 
-        view_directions = ray_bundle.directions.reshape(-1, 3) # N x 3
-        
-        light_colours, light_directions = self.get_illumination_shader(ray_bundle.camera_indices)
+            view_directions = ray_bundle.directions.reshape(-1, 3) # num_rays x 3
+            
+            light_colours, light_directions = self.get_illumination_shader(ray_bundle.camera_indices) # [num_rays, num_illumination_directions, 3]
 
-        rendered_pixels = self.blinn_phong_shader(albedo=albedo,
-                                                  normals=normals,
-                                                  light_directions=light_directions,
-                                                  light_colors=light_colours,
-                                                  specular=specular,
-                                                  shininess=shininess,
-                                                  view_directions=view_directions,
-                                                  detach_normals=True)
+            rendered_pixels = self.blinn_phong_shader(albedo=albedo,
+                                                      normals=normals,
+                                                      light_directions=light_directions,
+                                                      light_colors=light_colours,
+                                                      specular=specular,
+                                                      shininess=shininess,
+                                                      view_directions=view_directions,
+                                                      detach_normals=True)
         
-        rendered_pixels = linear_to_sRGB(rendered_pixels)
-        
-        outputs = {
-            "rgb": rendered_pixels
-        }
+            outputs = {
+                "rgb": rendered_pixels
+            }
+        else:
+            outputs = {
+                "rgb": torch.ones((ray_bundle.origins.shape[0], 3)).to(self.device)
+            }
 
         return outputs
 
-    def forward(self, ray_bundle: RayBundle, batch: Dict) -> Dict[str, Union[torch.Tensor, List]]:
+    def forward(self, ray_bundle: RayBundle, batch: Union[Dict, None] = None) -> Dict[str, Union[torch.Tensor, List]]:
         """Run forward starting with a ray bundle. This outputs different things depending on the configuration
         of the model and whether or not the batch is provided (whether or not we are training basically)
 
         Args:
             ray_bundle: containing all the information needed to render that ray latents included
         """
-
-        if self.collider is not None:
-            ray_bundle = self.collider(ray_bundle)
 
         return self.get_outputs(ray_bundle, batch)
 
@@ -273,19 +297,21 @@ class RENIInverseModel(Model):
         rgb = outputs["rgb"]
         image = batch["image"].to(self.device)
 
-        mse_loss = self.mse_loss(rgb, image)
-        similarity = self.cosine_similarity(rgb, image)
-        cosine_similarity_loss = 1.0 - similarity.mean()
+        loss_dict = {}
+        if self.config.loss_inclusions["rgb_l1_loss"]:
+            loss_dict["rgb_l1_loss"] = self.l1_loss(rgb, image)
+        if self.config.loss_inclusions["rgb_l2_loss"]:
+            loss_dict["rgb_l2_loss"] = self.l2_loss(rgb, image)
+        if self.config.loss_inclusions["cosine_similarity_loss"]:
+            similarity = self.cosine_similarity(rgb, image)
+            loss_dict["cosine_similarity_loss"] = 1.0 - similarity.mean()
 
-        loss_dict = {
-            "mse_loss": mse_loss,
-            "cosine_similarity_loss": cosine_similarity_loss,
-        }
+        loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
 
         return loss_dict
 
     @torch.no_grad()
-    def get_outputs_for_camera_ray_bundle(self, camera_ray_bundle: RayBundle, batch: Dict) -> Dict[str, torch.Tensor]:
+    def get_outputs_for_camera_ray_bundle(self, camera_ray_bundle: RayBundle, batch: Union[Dict, None] = None) -> Dict[str, torch.Tensor]:
         """Takes in camera parameters and computes the output of the model.
 
         Args:
@@ -298,8 +324,15 @@ class RENIInverseModel(Model):
         for i in range(0, num_rays, num_rays_per_chunk):
             start_idx = i
             end_idx = i + num_rays_per_chunk
+            new_batch = None
+            if batch is not None:
+                new_batch = {}
+                new_batch["normal"] = batch["normal"].reshape(-1, 3)[start_idx:end_idx]
+                new_batch["albedo"] = batch["albedo"].reshape(-1, 3)[start_idx:end_idx]
+                new_batch["specular"] = batch["specular"].reshape(-1, 3)[start_idx:end_idx]
+                new_batch["shininess"] = batch["shininess"].reshape(-1)[start_idx:end_idx]
             ray_bundle = camera_ray_bundle.get_row_major_sliced_ray_bundle(start_idx, end_idx)
-            outputs = self.forward(ray_bundle=ray_bundle, batch=batch)
+            outputs = self.forward(ray_bundle=ray_bundle, batch=new_batch)
             for output_name, output in outputs.items():  # type: ignore
                 if not torch.is_tensor(output):
                     # TODO: handle lists of tensors as well
@@ -316,6 +349,9 @@ class RENIInverseModel(Model):
         gt_rgb = batch["image"].to(self.device)
         predicted_rgb = outputs["rgb"]  # Blended with background (black if random background)
 
+        gt_rgb = linear_to_sRGB(gt_rgb)
+        predicted_rgb = linear_to_sRGB(predicted_rgb)
+
         combined_rgb = torch.cat([gt_rgb, predicted_rgb], dim=1)
 
         # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
@@ -331,13 +367,5 @@ class RENIInverseModel(Model):
         metrics_dict["lpips"] = float(lpips)
 
         images_dict = {"img": combined_rgb}
-
-        for i in range(self.config.num_proposal_iterations):
-            key = f"prop_depth_{i}"
-            prop_depth_i = colormaps.apply_depth_colormap(
-                outputs[key],
-                accumulation=outputs["accumulation"],
-            )
-            images_dict[key] = prop_depth_i
 
         return metrics_dict, images_dict

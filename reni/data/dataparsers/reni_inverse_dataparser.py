@@ -65,9 +65,6 @@ class RENIInverseDataParser(DataParser):
         self.data: Path = config.data
 
     def _generate_dataparser_outputs(self, split="train"):
-        if split == "train":
-            split = "val"
-
         path = self.data / split
 
         # if it doesn't exist, download the data
@@ -89,7 +86,7 @@ class RENIInverseDataParser(DataParser):
         normal_cam_transforms = load_from_json(Path(normals_path / "normal_cam_transforms.json"))
 
         render_paths = self.data / "3d_models" / "image"
-        render_filenames = sorted(render_paths.glob("*.png"))
+        render_filenames = sorted(render_paths.glob("*.exr"))
 
         if self.config.val_subset_size and split == "val":
             environment_maps_filenames = environment_maps_filenames[: self.config.val_subset_size]
