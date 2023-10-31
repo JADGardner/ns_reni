@@ -349,8 +349,8 @@ class RENIInverseModel(Model):
         gt_rgb = batch["image"].to(self.device)
         predicted_rgb = outputs["rgb"]  # Blended with background (black if random background)
 
-        gt_rgb = linear_to_sRGB(gt_rgb)
-        predicted_rgb = linear_to_sRGB(predicted_rgb)
+        gt_rgb = linear_to_sRGB(gt_rgb, use_quantile=True)
+        predicted_rgb = linear_to_sRGB(predicted_rgb, use_quantile=True)
 
         combined_rgb = torch.cat([gt_rgb, predicted_rgb], dim=1)
 
