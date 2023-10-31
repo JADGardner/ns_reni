@@ -60,6 +60,8 @@ class RENIDataParserConfig(DataParserConfig):
     """Whether to use validation set as training set."""
     min_max_normalize: Union[Literal["min_max", "quantile"], Tuple[float, float], None] = "min_max"
     """Whether to min-max normalize the images."""
+    train_mask_path: Optional[Path] = None
+    """Path to the training mask or a directory of masks."""
     eval_mask_path: Optional[Path] = None
     """Path to the evaluation mask or a directory of masks."""
     fit_val_in_ldr: bool = False
@@ -111,6 +113,8 @@ class RENIDataParser(DataParser):
         num_images = len(image_filenames)
 
         mask_filenames = None
+        if split == "train" and self.config.train_mask_path is not None:
+            mask_filenames = sorted(self.config.train_mask_path.glob("*.png"))
         if split in ["val", "test"] and self.config.eval_mask_path is not None:
             # if path is directory, assume it contains masks for each image
             if self.config.eval_mask_path.is_dir():
