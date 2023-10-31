@@ -26,7 +26,9 @@ RENIInverse = MethodSpecification(
         mixed_precision=False,
         pipeline=RENIInvesePipelineConfig(
             datamanager=RENIInverseDataManagerConfig(
-                dataparser=RENIInverseDataParserConfig(),
+                dataparser=RENIInverseDataParserConfig(
+                  shininess=500.0,
+                ),
                 images_on_gpu=True,
                 masks_on_gpu=True,
                 normals_on_gpu=True,

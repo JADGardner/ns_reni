@@ -26,6 +26,7 @@ from PIL import Image
 from torch import Tensor
 import scipy
 import torch.nn.functional as F
+import pyexr
 
 from typing import Type, Union, Tuple, Dict, List
 
@@ -76,12 +77,18 @@ class RENIInverseDataset(InputDataset):
         # load all the environment maps
         self.metadata["environment_maps"] = []
         for environment_map_path in self.metadata["environment_maps_filenames"]:
-            environment_map = imageio.v2.imread(environment_map_path)
+            # environment_map = imageio.v2.imread(environment_map_path)
+            environment_map = imageio.imread(environment_map_path).astype("float32")
+            # make any inf values equal to max non inf
+            environment_map[environment_map == np.inf] = np.nanmax(environment_map[environment_map != np.inf])
+            # make any values less than zero equal to min non negative
+            environment_map[environment_map <= 0] = np.nanmin(environment_map[environment_map > 0])
             environment_map = torch.tensor(environment_map).float()
             self.metadata["environment_maps"].append(environment_map)
 
         camera_rays = dataparser_outputs.cameras.generate_rays(0) # TODO currently same for all images, this might not be the case
         self.view_directions = camera_rays.directions.reshape(-1, 3) # N x 3
+        self.view_directions = self.view_directions / torch.norm(self.view_directions, dim=-1, keepdim=True)
 
         ray_sampler_config = EquirectangularSamplerConfig(width=self.metadata["env_width"], apply_random_rotation=False, remove_lower_hemisphere=False)
         ray_sampler = ray_sampler_config.setup()
@@ -130,14 +137,14 @@ class RENIInverseDataset(InputDataset):
 
         specular = torch.ones_like(normals) * specular_term # N x 3
         albedo = 1 - specular # N x 3
-        shiniess = torch.ones_like(normals[:, 0]).squeeze() * self.metadata['shininess'] # N
+        shininess = torch.ones_like(normals[:, 0]).squeeze() * self.metadata['shininess'] # N
         albedo[~mask] = 0
         specular[~mask] = 0
-        shiniess[~mask] = 0
+        shininess[~mask] = 0
 
         if len(self.metadata["render_filenames"]) > 0:
             rendered_image_path = self.metadata["render_filenames"][image_idx]
-            rendered_image = imageio.v2.imread(rendered_image_path)
+            rendered_image = pyexr.read(str(rendered_image_path))
             rendered_image = torch.tensor(rendered_image).float()
             # only use rgb not rgba
             rendered_image = rendered_image[:, :, :3]
@@ -150,11 +157,17 @@ class RENIInverseDataset(InputDataset):
                                                 light_directions=self.light_directions,
                                                 light_colors=light_colours,
                                                 specular=specular,
-                                                shininess=shiniess,
+                                                shininess=shininess,
                                                 view_directions=self.view_directions,
                                                 detach_normals=True)
         
             rendered_image = rendered_image.reshape(self.image_dim, self.image_dim, 3)
+        
+        # rendered_image = np.array(rendered_image)
+        # rendered_image[rendered_image == np.inf] = np.nanmax(rendered_image[rendered_image != np.inf])
+        # # make any values less than zero equal to min non negative
+        # rendered_image[rendered_image <= 0] = np.nanmin(rendered_image[rendered_image > 0])
+        # rendered_image = torch.tensor(rendered_image).float()
         
         data['image_idx'] = image_idx
         data['image'] = rendered_image
@@ -162,6 +175,6 @@ class RENIInverseDataset(InputDataset):
         data['mask'] = (mask.reshape(self.image_dim, self.image_dim, 1))
         data['albedo'] = albedo.reshape(self.image_dim, self.image_dim, 3)
         data['specular'] = specular.reshape(self.image_dim, self.image_dim, 3)
-        data['shininess'] = shiniess.reshape(self.image_dim, self.image_dim)
+        data['shininess'] = shininess.reshape(self.image_dim, self.image_dim)
                     
         return data
