@@ -248,7 +248,7 @@ class RENIField(BaseRENIField):
             z_invar = self.vn_invar(z)  # [num_rays, latent_dim, 3]
             conditioning_input = z_invar.flatten(1)  # [num_rays, latent_dim * 3]
             innerprod = torch.sum(Z * D.unsqueeze(1), dim=-1)  # [num_rays, latent_dim]
-            return innerprod, z_invar
+            return innerprod, conditioning_input
 
     def gram_matrix_invariance(
         self,
