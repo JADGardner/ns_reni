@@ -89,6 +89,9 @@ class BlinnPhongShader(nn.Module):
 
         if detach_normals:
             normals = normals.detach()
+        
+        # ensure light directions, normals are both normalised
+        light_directions = light_directions / light_directions.norm(dim=-1, keepdim=True)
 
         normals_expanded = normals.unsqueeze(1)
 
@@ -116,6 +119,9 @@ class BlinnPhongShader(nn.Module):
         shaded_specular = specular * bp_specular_normalisation_factor.unsqueeze(-1) * specular_colors.sum(1)
 
         final_color = shaded_lambertian + shaded_specular
+
+        # set minimum to 1e-3
+        final_color = final_color.clamp(min=1e-3)
 
         return final_color
 

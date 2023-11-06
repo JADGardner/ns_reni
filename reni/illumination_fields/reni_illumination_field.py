@@ -543,15 +543,16 @@ class RENIField(BaseRENIField):
 
         if scale is None:
             scale = self.select_scale()
+            if scale is not None:
+                scale = scale[camera_indices] # [num_rays]
 
         if scale is not None:
-            scales = scale[camera_indices]  # [num_rays]
-            scales = torch.exp(scales)  # [num_rays] exp to ensure positive
+            scale = torch.exp(scale)  # [num_rays] exp to ensure positive
 
             if self.log_domain:
-                model_outputs = model_outputs + torch.log(scales.unsqueeze(1))  # [num_rays, 3]
+                model_outputs = model_outputs + torch.log(scale.unsqueeze(1))  # [num_rays, 3]
             else:
-                model_outputs = model_outputs * scales.unsqueeze(1)  # [num_rays, 3]
+                model_outputs = model_outputs * scale.unsqueeze(1)  # [num_rays, 3]
 
         outputs[RENIFieldHeadNames.RGB] = model_outputs
         outputs[RENIFieldHeadNames.MU] = mu

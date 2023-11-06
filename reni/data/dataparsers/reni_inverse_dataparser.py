@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
-from typing import Type, Union, Literal, Tuple, Optional
+from typing import Type, Union, Literal, Tuple, Optional, Union
 
 import imageio
 import torch
@@ -44,15 +44,16 @@ class RENIInverseDataParserConfig(DataParserConfig):
     """Directory specifying location of data."""
     download_data: bool = False
     """Whether to download data."""
-    val_subset_size: Union[int, None] = None
-    """Size of validation subset."""
+    envmap_remove_indicies: Optional[list] = None
+    """Indicies of environment maps to remove."""
     specular_terms = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
     """Specular terms to use for training."""
     normal_map_resolution: int = 128
     """Resize res of normal map."""
     shininess: float = 500.0
     """Shininess of the object."""
-
+    subset_index: Optional[list] = None
+    """Index of subset to use for training."""
 
 @dataclass
 class RENIInverseDataParser(DataParser):
@@ -88,8 +89,12 @@ class RENIInverseDataParser(DataParser):
         render_paths = self.data / "3d_models" / "image"
         render_filenames = sorted(render_paths.glob("*.exr"))
 
-        if self.config.val_subset_size and split == "val":
-            environment_maps_filenames = environment_maps_filenames[: self.config.val_subset_size]
+        if self.config.subset_index is not None:
+            render_filenames = [render_filenames[i] for i in self.config.subset_index]
+
+        if self.config.envmap_remove_indicies is not None and split == "val":
+            indices_to_keep = [i for i in range(len(environment_maps_filenames)) if i not in self.config.envmap_remove_indicies]
+            environment_maps_filenames = [environment_maps_filenames[i] for i in indices_to_keep]           
 
         img_0 = imageio.v2.imread(environment_maps_filenames[0])
         env_height, env_width = img_0.shape[:2]
@@ -98,10 +103,14 @@ class RENIInverseDataParser(DataParser):
         render_metadata = []
         normal_filenames = []
         poses = []
+        idx = 0
         for frame in normal_cam_transforms["frames"]:
             normal_map_path = normals_path / Path(frame["file_path"])
             for env_idx, environment_map_path in enumerate(environment_maps_filenames):
                 for specular_term in self.config.specular_terms:
+                    if self.config.subset_index is not None and idx not in self.config.subset_index:
+                        idx += 1
+                        continue
                     poses.append(np.array(frame["transform_matrix"])) # each same normal map has same pose
                     normal_filenames.append(normal_map_path)
                     render_metadata.append({
@@ -110,8 +119,11 @@ class RENIInverseDataParser(DataParser):
                         "specular_term": specular_term,
                         "environment_map_idx": env_idx
                     })
+                    idx += 1
 
         poses = np.array(poses).astype(np.float32)
+        if len(poses.shape) == 2:
+            poses = np.expand_dims(poses, axis=0)
         image_dim = self.config.normal_map_resolution
         camera_angle_x = float(normal_cam_transforms["camera_angle_x"])
         focal_length = 0.5 * image_dim / np.tan(0.5 * camera_angle_x)

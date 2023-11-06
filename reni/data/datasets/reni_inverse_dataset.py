@@ -148,6 +148,7 @@ class RENIInverseDataset(InputDataset):
             rendered_image = torch.tensor(rendered_image).float()
             # only use rgb not rgba
             rendered_image = rendered_image[:, :, :3]
+            q = torch.quantile(rendered_image.flatten(), 0.98)
         else:
             environment_map = self.metadata["environment_maps"][self.metadata["render_metadata"][image_idx]["environment_map_idx"]]
             environment_map = environment_map.reshape(-1, 3).float() # M x 3
@@ -162,6 +163,7 @@ class RENIInverseDataset(InputDataset):
                                                 detach_normals=True)
         
             rendered_image = rendered_image.reshape(self.image_dim, self.image_dim, 3)
+            q = torch.quantile(rendered_image.flatten(), 0.98)
         
         # rendered_image = np.array(rendered_image)
         # rendered_image[rendered_image == np.inf] = np.nanmax(rendered_image[rendered_image != np.inf])
@@ -176,5 +178,6 @@ class RENIInverseDataset(InputDataset):
         data['albedo'] = albedo.reshape(self.image_dim, self.image_dim, 3)
         data['specular'] = specular.reshape(self.image_dim, self.image_dim, 3)
         data['shininess'] = shininess.reshape(self.image_dim, self.image_dim)
+        data['q'] = torch.ones_like(data['shininess']) * q
                     
         return data

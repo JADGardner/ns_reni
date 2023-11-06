@@ -1,6 +1,7 @@
 import torch
+from typing import Optional
 
-def linear_to_sRGB(color, use_quantile=False):
+def linear_to_sRGB(color, use_quantile=False, q: Optional[torch.Tensor] = None, clamp=True):
     """Convert linear RGB to sRGB.
     
     Args:
@@ -10,8 +11,9 @@ def linear_to_sRGB(color, use_quantile=False):
         Returns:
             color: [..., 3]
     """
-    if use_quantile:
-        q = torch.quantile(color.flatten(), 0.98)
+    if use_quantile or q is not None:
+        if q is None:
+            q = torch.quantile(color.flatten(), 0.98)
         color = color / q.expand_as(color)
 
     color = torch.where(
@@ -19,5 +21,6 @@ def linear_to_sRGB(color, use_quantile=False):
         12.92 * color,
         1.055 * torch.pow(torch.abs(color), 1 / 2.4) - 0.055,
     )
-    color = torch.clamp(color, 0.0, 1.0)
+    if clamp:
+        color = torch.clamp(color, 0.0, 1.0)
     return color

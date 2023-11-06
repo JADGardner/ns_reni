@@ -8,6 +8,7 @@ dependencies=[
     "openexr==1.3.8",
     "pyexr",
     "wget",
+    "roma",
 ]
 
 [tool.setuptools.packages.find]

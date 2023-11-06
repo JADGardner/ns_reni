@@ -374,7 +374,7 @@ class SphericalHarmonicIlluminationField(BaseRENIField):
         self.spherical_harmonic_order = config.spherical_harmonic_order
         self.num_sh_coeffs = calc_num_sh_coeffs(self.spherical_harmonic_order)
         self.fixed_decoder = False
-
+        
         train_params = self.init_latent_codes(self.num_train_data)
         eval_params = self.init_latent_codes(self.num_eval_data)
 
@@ -438,7 +438,7 @@ class SphericalHarmonicIlluminationField(BaseRENIField):
         Args:
             ray_samples: [num_rays]
             rotation: [3, 3]
-            latent_codes: [1, latent_dim, 3]
+            latent_codes: [num_rays, latent_dim, 3]
 
         Returns:
             Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.
@@ -449,7 +449,7 @@ class SphericalHarmonicIlluminationField(BaseRENIField):
         if latent_codes is None:
             sh_coeffs = self.sample_latent(camera_indices)  # [num_rays, num_sh_coeffs, 3]
         else:
-            sh_coeffs = latent_codes.repeat(ray_samples.shape[0], 1, 1)  # [num_rays, num_sh_coeffs, 3]
+            sh_coeffs = latent_codes
 
         directions = (
             ray_samples.frustums.directions
@@ -489,7 +489,7 @@ class SphericalHarmonicIlluminationField(BaseRENIField):
         Args:
             ray_samples: [num_rays]
             rotation: [3, 3]
-            latent_codes: [1, latent_dim, 3]
+            latent_codes: [num_rays, latent_dim, 3]
 
         Returns:
             Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.

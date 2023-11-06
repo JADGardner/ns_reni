@@ -1,5 +1,5 @@
 """
-A Very Simple Inverse Setting for RENI configuration file.
+A Very Simple Inverse Setting for RENI, configuration file.
 """
 from pathlib import Path
 
@@ -11,23 +11,28 @@ from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
 
 from reni.data.dataparsers.reni_inverse_dataparser import RENIInverseDataParserConfig
 from reni.data.datamanagers.reni_inverse_datamanager import RENIInverseDataManagerConfig
+from reni.illumination_fields.sg_illumination_field import SphericalGaussianFieldConfig
+from reni.illumination_fields.sh_illumination_field import SphericalHarmonicIlluminationFieldConfig
 from reni.models.reni_inverse_model import RENIInverseModelConfig
 from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
-from reni.model_components.illumination_samplers import IcosahedronSamplerConfig, EquirectangularSamplerConfig
+from reni.model_components.illumination_samplers import EquirectangularSamplerConfig
 from reni.pipelines.reni_inverse_pipeline import RENIInvesePipelineConfig
 
 RENIInverse = MethodSpecification(
     config=TrainerConfig(
         method_name="reni-inverse",
-        steps_per_eval_batch=2500,
-        steps_per_eval_image=500,
+        steps_per_eval_batch=50002,
+        steps_per_eval_image=200,
         steps_per_save=2000,
-        max_num_iterations=20001,
+        max_num_iterations=50001,
         mixed_precision=False,
+        log_gradients=True,
         pipeline=RENIInvesePipelineConfig(
             datamanager=RENIInverseDataManagerConfig(
                 dataparser=RENIInverseDataParserConfig(
                   shininess=500.0,
+                  subset_index=None,
+                  envmap_remove_indicies=None,
                 ),
                 images_on_gpu=True,
                 masks_on_gpu=True,
@@ -35,19 +40,13 @@ RENIInverse = MethodSpecification(
                 albedo_on_gpu=True,
                 specular_on_gpu=True,
                 shininess_on_gpu=True,
-                train_num_images_to_sample_from=40,
-                train_num_times_to_repeat_images=50,
-                train_num_rays_per_batch=512,
-                eval_num_rays_per_batch=512,
+                train_num_images_to_sample_from=1,
+                train_num_times_to_repeat_images=200,
+                train_num_rays_per_batch=4096,
+                eval_num_rays_per_batch=32,
             ),
-            # model=NerfactoModelConfig(),
             model=RENIInverseModelConfig(
                 eval_num_rays_per_chunk=512,
-                # illumination_sampler=IcosahedronSamplerConfig(
-                #     num_directions=256,
-                #     apply_random_rotation=False,
-                #     remove_lower_hemisphere=False,
-                # ),
                 illumination_sampler=EquirectangularSamplerConfig(
                     width=128,
                 ),
@@ -68,26 +67,36 @@ RENIInverse = MethodSpecification(
                     output_activation="None",
                     last_layer_linear=True,
                     fixed_decoder=True,
-                    trainable_scale=True,
+                    trainable_scale=False,
                 ),
+                # illumination_field=SphericalHarmonicIlluminationFieldConfig(
+                #     spherical_harmonic_order=9,
+                # ),
+                # illumination_field=SphericalGaussianFieldConfig(
+                #   row_col_gaussian_dims=(5, 10),
+                #   channel_dim=3
+                # ),
                 illumination_field_ckpt_path=Path("outputs/reni/reni_plus_plus_models/latent_dim_100/"),
                 illumination_field_ckpt_step=50000,
                 loss_inclusions={
-                  'rgb_l1_loss': True,
-                  'rgb_l2_loss': False,
+                  'rgb_l1_loss': False,
+                  'rgb_l2_loss': True,
                   'cosine_similarity_loss': True,
+                  'prior_loss': True,
                 },
                 loss_coefficients={
-                  'rgb_l1_loss': 1.0,
-                  'rgb_l2_loss': 0.01,
+                  'rgb_l1_loss': 0.1,
+                  'rgb_l2_loss': 1e2,
                   'cosine_similarity_loss': 1.0,
+                  'prior_loss': 0.001
                 },
+                print_nan=True,
             ),
         ),
         optimizers={
             "illumination_latents": {
-                "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
-                "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.000001, max_steps=20001),
+                "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
+                "scheduler": ExponentialDecaySchedulerConfig(warmup_steps=0, lr_final=1e-2, max_steps=50001),
             },
         },
         viewer=ViewerConfig(num_rays_per_chunk=1 << 15),

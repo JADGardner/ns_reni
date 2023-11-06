@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Type, Union
+from typing import Literal, Type, Union, Tuple, Optional, Dict
 
 import torch
 
@@ -37,9 +37,10 @@ from nerfstudio.data.utils.dataloaders import (
     RandIndicesEvalDataloader,
 )
 from nerfstudio.model_components.ray_generators import RayGenerator
+from nerfstudio.cameras.rays import RayBundle
 
 from reni.data.datasets.reni_inverse_dataset import RENIInverseDataset
-
+from reni.data.utils.dataloaders import RENIInverseCacheDataloader
 
 @dataclass
 class RENIInverseDataManagerConfig(VanillaDataManagerConfig):
@@ -142,3 +143,35 @@ class RENIInverseDataManager(VanillaDataManager):
             scale_factor=self.config.camera_res_scale_factor,
             split='val'
         )
+
+    def setup_train(self):
+        """Sets up the data loaders for training"""
+        assert self.train_dataset is not None
+        CONSOLE.print("Setting up training dataset...")
+        self.train_image_dataloader = RENIInverseCacheDataloader(
+            self.train_dataset,
+            num_images_to_sample_from=self.config.train_num_images_to_sample_from,
+            num_times_to_repeat_images=self.config.train_num_times_to_repeat_images,
+            device=self.device,
+            num_workers=self.world_size * 4,
+            pin_memory=True,
+            collate_fn=self.config.collate_fn,
+            exclude_batch_keys_from_device=self.exclude_batch_keys_from_device,
+        )
+        self.iter_train_image_dataloader = iter(self.train_image_dataloader)
+        self.train_pixel_sampler = self._get_pixel_sampler(self.train_dataset, self.config.train_num_rays_per_batch)
+        self.train_ray_generator = RayGenerator(self.train_dataset.cameras.to(self.device))
+
+    def next_eval_image(self, step: int) -> Tuple[int, RayBundle, Dict]:
+        fixed_indices_eval_dataloader = FixedIndicesEvalDataloader(
+            input_dataset=self.eval_dataset,
+            image_indices=[self.train_image_dataloader.current_start_idx],
+            device=self.device,
+            num_workers=self.world_size * 4,
+        )
+        camera_ray_bundle, batch = next(iter(fixed_indices_eval_dataloader))
+        # for camera_ray_bundle, batch in self.eval_dataloader:
+        assert camera_ray_bundle.camera_indices is not None
+        image_idx = int(camera_ray_bundle.camera_indices[0, 0, 0])
+        return image_idx, camera_ray_bundle, batch
+        raise ValueError("No more eval images")

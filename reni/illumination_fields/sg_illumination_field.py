@@ -208,6 +208,7 @@ class SphericalGaussianField(BaseRENIField):
         Args:
             ray_samples: [num_rays]
             rotation: [3, 3]
+            latent_codes: [num_rays, sg_num, 6]
         """
         camera_indices = ray_samples.camera_indices.squeeze()  # [num_rays]
 
@@ -218,7 +219,7 @@ class SphericalGaussianField(BaseRENIField):
         if latent_codes is None:
             theta, phi, weight, lamb = self.deparameterize()
         else:
-            raise NotImplementedError
+            weight, theta, phi, lamb = torch.split(latent_codes, [3, 1, 1, 1], dim=2)
 
         rgb = self.renderSG(directions, camera_indices, theta, phi, lamb, weight)  # [num_rays, 3]
 
@@ -235,5 +236,6 @@ class SphericalGaussianField(BaseRENIField):
         Args:
             ray_bundle: [num_rays]
             rotation: [3, 3]
+            latent_codes: [num_rays, sg_num, 6]
         """
         return self.get_outputs(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes)

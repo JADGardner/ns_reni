@@ -35,10 +35,13 @@ from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.models.base_model import ModelConfig, Model
 from nerfstudio.configs.config_utils import to_immutable_dict
 from nerfstudio.utils import misc
+from nerfstudio.utils import colormaps
 from nerfstudio.data.scene_box import SceneBox
 
 from reni.illumination_fields.base_spherical_field import SphericalFieldConfig
 from reni.illumination_fields.reni_illumination_field import RENIField, RENIFieldConfig
+from reni.illumination_fields.sg_illumination_field import SphericalGaussianFieldConfig
+from reni.illumination_fields.sh_illumination_field import SphericalHarmonicIlluminationFieldConfig
 from reni.model_components.illumination_samplers import IlluminationSamplerConfig, EquirectangularSamplerConfig
 from reni.utils.utils import find_nerfstudio_project_root
 from reni.field_components.field_heads import RENIFieldHeadNames
@@ -77,6 +80,8 @@ class RENIInverseModelConfig(ModelConfig):
         }
     )
     """Loss coefficients for each loss"""
+    print_nan: bool = False
+    """Whether to print nan values in loss dict"""
 
 
 class RENIInverseModel(Model):
@@ -100,25 +105,27 @@ class RENIInverseModel(Model):
     ) -> None:
         super().__init__(config=config, scene_box=scene_box, num_train_data=num_train_data, **kwargs)
 
+        self.metadata = kwargs["metadata"]
+
     def populate_modules(self):
         """Set the necessary modules to get the network working."""
         super().populate_modules()
 
+      
         self.illumination_sampler = self.config.illumination_sampler.setup()
         self.equirectangular_sampler = EquirectangularSamplerConfig(width=128).setup()  # for displaying environment map
 
-        self.illumination_field = self.config.illumination_field.setup(
-            num_train_data=None,
-            num_eval_data=None,
-        )
-
-        # use local latents as illumination field is just for decoder
-        self.illumination_latents = torch.nn.Parameter(
-            torch.zeros((self.num_train_data, self.illumination_field.latent_dim, 3))
-        )
-        self.scale = nn.Parameter(torch.ones(self.num_train_data))
-
         if isinstance(self.config.illumination_field, RENIFieldConfig):
+            self.illumination_field = self.config.illumination_field.setup(
+                num_train_data=None,
+                num_eval_data=None,
+            )
+            # use local latents as illumination field is just for decoder
+            self.illumination_latents = torch.nn.Parameter(
+                torch.zeros((self.num_train_data, self.illumination_field.latent_dim, 3))
+            )
+            self.scale = nn.Parameter(torch.ones(self.num_train_data))
+
             # # Now you can use this to construct paths:
             project_root = find_nerfstudio_project_root(Path(__file__))
             relative_path = (
@@ -146,6 +153,26 @@ class RENIInverseModel(Model):
 
             # load weights of the decoder
             self.illumination_field.load_state_dict(illumination_field_dict, strict=False)
+        elif isinstance(self.config.illumination_field, SphericalHarmonicIlluminationFieldConfig):
+            self.illumination_field = self.config.illumination_field.setup(
+                num_train_data=1,
+                num_eval_data=1,
+                normalisations={"min_max": None, "log_domain": True}
+            )
+            self.illumination_latents = torch.nn.Parameter(
+                torch.zeros((self.num_train_data, self.illumination_field.num_sh_coeffs, 3))
+            )
+            self.scale = None
+        elif isinstance(self.config.illumination_field, SphericalGaussianFieldConfig):
+            self.illumination_field = self.config.illumination_field.setup(
+                num_train_data=1,
+                num_eval_data=1,
+                normalisations={"min_max": None, "log_domain": True}
+            )
+            self.illumination_latents = torch.nn.Parameter(
+                torch.zeros((self.num_train_data, self.illumination_field.sg_num, 6))
+            )
+            self.scale = None
 
         self.blinn_phong_shader = BlinnPhongShader()
 
@@ -169,7 +196,10 @@ class RENIInverseModel(Model):
             Mapping of different parameter groups
         """
         param_groups = {}
-        param_groups["illumination_latents"] = [self.illumination_latents, self.scale]
+        if self.scale is not None:
+            param_groups["illumination_latents"] = [self.illumination_latents, self.scale]
+        else:
+            param_groups["illumination_latents"] = [self.illumination_latents]
         return param_groups
 
     def get_illumination_shader(self, camera_indices: torch.Tensor):
@@ -203,12 +233,19 @@ class RENIInverseModel(Model):
         illumination_latents = illumination_latents[
             illumination_ray_samples.camera_indices
         ]  # [num_rays, latent_dim, 3]
-        scale = scale[illumination_ray_samples.camera_indices]  # [num_rays]
 
-        illuination_field_outputs = self.illumination_field.forward(
-            ray_samples=illumination_ray_samples, latent_codes=illumination_latents, scale=scale
-        )  # [num_unique_camera_indices * num_illumination_directions, 3]
-        hdr_illumination_colours = illuination_field_outputs[
+        # if illumiantion field is RENI
+        if isinstance(self.illumination_field, RENIField):
+            scale = scale[illumination_ray_samples.camera_indices]  # [num_rays]
+
+            illumination_field_outputs = self.illumination_field.forward(
+                ray_samples=illumination_ray_samples, latent_codes=illumination_latents, scale=scale
+            )  # [num_unique_camera_indices * num_illumination_directions, 3]
+        else:
+            illumination_field_outputs = self.illumination_field.forward(
+                ray_samples=illumination_ray_samples, latent_codes=illumination_latents
+            )
+        hdr_illumination_colours = illumination_field_outputs[
             RENIFieldHeadNames.RGB
         ]  # [num_unique_camera_indices * num_illumination_directions, 3]
         hdr_illumination_colours = self.illumination_field.unnormalise(
@@ -222,7 +259,7 @@ class RENIInverseModel(Model):
         ]  # [num_rays, num_illumination_directions, 3]
         illumination_directions = directions[inverse_indices]  # [num_rays, num_illumination_directions, 3
 
-        return hdr_illumination_colours, illumination_directions
+        return hdr_illumination_colours, illumination_directions, unique_indices
 
     def get_outputs(self, ray_bundle: RayBundle, batch: Union[Dict, None] = None) -> Dict[str, Union[torch.Tensor, List]]:
         """Takes in a Ray Bundle and returns a dictionary of outputs.
@@ -236,15 +273,26 @@ class RENIInverseModel(Model):
         """
 
         # TODO in eval ray bundle is subset from one camera and we need to choose the pixels from tha batch
+        q = None
         if batch is not None:
             normals = batch["normal"].to(self.device) # [num_rays, 3]
             albedo = batch["albedo"].to(self.device) # [num_rays, 3]
             specular = batch["specular"].to(self.device) # [num_rays, 3]
             shininess = batch["shininess"].to(self.device) # [num_rays]
 
+            # if self.config.print_nan:
+            #     print(batch['image'].min(), batch['image'].max())
+
             view_directions = ray_bundle.directions.reshape(-1, 3) # num_rays x 3
             
-            light_colours, light_directions = self.get_illumination_shader(ray_bundle.camera_indices) # [num_rays, num_illumination_directions, 3]
+            light_colours, light_directions, unique_indices = self.get_illumination_shader(ray_bundle.camera_indices) # [num_rays, num_illumination_directions, 3]
+
+            # check if nan in illumination_latent and scale using unique_indices
+            if torch.isnan(self.illumination_latents[unique_indices]).any() and self.config.print_nan:
+                print("Illumination latents has nan values")
+            if torch.isnan(self.scale[unique_indices]).any() and self.config.print_nan:
+                print("Scale has nan values")
+
 
             rendered_pixels = self.blinn_phong_shader(albedo=albedo,
                                                       normals=normals,
@@ -254,13 +302,18 @@ class RENIInverseModel(Model):
                                                       shininess=shininess,
                                                       view_directions=view_directions,
                                                       detach_normals=True)
+            
+            # check if nan values in rendered pixels
+            if torch.isnan(rendered_pixels).any() and self.config.print_nan:
+                print("Rendered pixels has nan values")
         
             outputs = {
-                "rgb": rendered_pixels
+                "rgb": rendered_pixels,
+                "unique_indices": unique_indices,
             }
         else:
             outputs = {
-                "rgb": torch.ones((ray_bundle.origins.shape[0], 3)).to(self.device)
+                "rgb": torch.ones((ray_bundle.origins.shape[0], 3)).to(self.device),
             }
 
         return outputs
@@ -283,7 +336,14 @@ class RENIInverseModel(Model):
             batch: ground truth batch corresponding to outputs
         """
 
-        return {}
+        # add the min max and mean of self.scale
+        metrics_dict = {}
+
+        metrics_dict["scale_min"] = torch.exp(self.scale).min()
+        metrics_dict["scale_max"] = torch.exp(self.scale).max()
+        metrics_dict["scale_mean"] = torch.exp(self.scale).mean()
+
+        return metrics_dict
 
     @abstractmethod
     def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
@@ -296,17 +356,38 @@ class RENIInverseModel(Model):
         """
         rgb = outputs["rgb"]
         image = batch["image"].to(self.device)
+        q = batch["q"].unsqueeze(-1).to(self.device)
+
+        if torch.isnan(image).any() and self.config.print_nan:
+            print("Image has nan values")
+
+        # image = torch.clamp(image, min=0.0, max=1000)
+
+        rgb = linear_to_sRGB(rgb, q=q, clamp=False)
+        image = linear_to_sRGB(image, q=q, clamp=False)
 
         loss_dict = {}
+        epsilon = 1e-6
         if self.config.loss_inclusions["rgb_l1_loss"]:
-            loss_dict["rgb_l1_loss"] = self.l1_loss(rgb, image)
+            loss_dict["rgb_l1_loss"] = self.l1_loss(torch.log(rgb), torch.log(image))
+            # loss_dict["rgb_l1_loss"] = self.l1_loss(torch.log(torch.clamp(rgb, min=epsilon)), torch.log(torch.clamp(image, min=epsilon)))
+            # loss_dict["rgb_l1_loss"] = self.l1_loss(rgb, image)
         if self.config.loss_inclusions["rgb_l2_loss"]:
+            # loss_dict["rgb_l2_loss"] = self.l2_loss(torch.log(rgb), torch.log(image))
+            # loss_dict["rgb_l2_loss"] = self.l2_loss(torch.log(torch.clamp(rgb, min=epsilon)), torch.log(torch.clamp(image, min=epsilon)))
             loss_dict["rgb_l2_loss"] = self.l2_loss(rgb, image)
         if self.config.loss_inclusions["cosine_similarity_loss"]:
             similarity = self.cosine_similarity(rgb, image)
             loss_dict["cosine_similarity_loss"] = 1.0 - similarity.mean()
+        if self.config.loss_inclusions["prior_loss"]:
+            loss_dict["prior_loss"] = torch.mean(torch.square(self.illumination_latents[outputs['unique_indices']]))
 
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
+
+        # check if any nan values in loss dict
+        for key, value in loss_dict.items():
+            if torch.isnan(value) and self.config.print_nan:
+                print(f"Loss {key} is nan")
 
         return loss_dict
 
@@ -327,6 +408,7 @@ class RENIInverseModel(Model):
             new_batch = None
             if batch is not None:
                 new_batch = {}
+                new_batch["image"] = batch["image"].reshape(-1, 3)[start_idx:end_idx]
                 new_batch["normal"] = batch["normal"].reshape(-1, 3)[start_idx:end_idx]
                 new_batch["albedo"] = batch["albedo"].reshape(-1, 3)[start_idx:end_idx]
                 new_batch["specular"] = batch["specular"].reshape(-1, 3)[start_idx:end_idx]
@@ -367,5 +449,49 @@ class RENIInverseModel(Model):
         metrics_dict["lpips"] = float(lpips)
 
         images_dict = {"img": combined_rgb}
+
+        gt_envmap = self.metadata["environment_maps"][self.metadata["render_metadata"][batch["image_idx"]]["environment_map_idx"]] # H, W, 3
+        gt_envmap = gt_envmap.to(self.device)
+        gt_envmap = linear_to_sRGB(gt_envmap, use_quantile=True)  # N, 3
+
+        with torch.no_grad():
+            ray_samples = self.equirectangular_sampler.generate_direction_samples()
+            ray_samples = ray_samples.to(self.device)
+            ray_samples.camera_indices = torch.ones_like(ray_samples.camera_indices) * batch["image_idx"]
+            # get RENI latent codes for either train or eval
+            illumination_latents, scale = self.illumination_latents, self.scale
+            illumination_latents = illumination_latents[
+                ray_samples.camera_indices.squeeze()
+            ]  # [num_rays, latent_dim, 3]
+            # if illumiantion field is RENI
+            if isinstance(self.illumination_field, RENIField):
+                scale = scale[ray_samples.camera_indices.squeeze()]  # [num_rays]
+
+                illumination_field_outputs = self.illumination_field.forward(
+                    ray_samples=ray_samples, latent_codes=illumination_latents, scale=scale
+                )  # [num_unique_camera_indices * num_illumination_directions, 3]
+            else:
+                illumination_field_outputs = self.illumination_field.forward(
+                    ray_samples=ray_samples, latent_codes=illumination_latents
+                )
+            hdr_envmap = illumination_field_outputs[RENIFieldHeadNames.RGB]
+            hdr_envmap = self.illumination_field.unnormalise(hdr_envmap)  # N, 3
+            ldr_envmap = linear_to_sRGB(hdr_envmap, use_quantile=True)  # N, 3
+            # reshape to H, W, 3
+            height = self.equirectangular_sampler.height
+            width = self.equirectangular_sampler.width
+            ldr_envmap = ldr_envmap.reshape(height, width, 3)
+
+            hdr_mean = torch.mean(hdr_envmap, dim=-1)
+            hdr_mean = hdr_mean.reshape(height, width, 1)
+            hdr_mean_log_heatmap = colormaps.apply_depth_colormap(
+                hdr_mean,
+                near_plane=hdr_mean.min(),
+                far_plane=hdr_mean.max(),
+            )
+
+            combined_reni_envmap = torch.cat([gt_envmap, ldr_envmap, hdr_mean_log_heatmap], dim=1)
+
+            images_dict["reni_envmap"] = combined_reni_envmap
 
         return metrics_dict, images_dict
