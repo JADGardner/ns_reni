@@ -280,19 +280,9 @@ class RENIInverseModel(Model):
             specular = batch["specular"].to(self.device) # [num_rays, 3]
             shininess = batch["shininess"].to(self.device) # [num_rays]
 
-            # if self.config.print_nan:
-            #     print(batch['image'].min(), batch['image'].max())
-
             view_directions = ray_bundle.directions.reshape(-1, 3) # num_rays x 3
             
             light_colours, light_directions, unique_indices = self.get_illumination_shader(ray_bundle.camera_indices) # [num_rays, num_illumination_directions, 3]
-
-            # check if nan in illumination_latent and scale using unique_indices
-            if torch.isnan(self.illumination_latents[unique_indices]).any() and self.config.print_nan:
-                print("Illumination latents has nan values")
-            if torch.isnan(self.scale[unique_indices]).any() and self.config.print_nan:
-                print("Scale has nan values")
-
 
             rendered_pixels = self.blinn_phong_shader(albedo=albedo,
                                                       normals=normals,
@@ -302,11 +292,7 @@ class RENIInverseModel(Model):
                                                       shininess=shininess,
                                                       view_directions=view_directions,
                                                       detach_normals=True)
-            
-            # check if nan values in rendered pixels
-            if torch.isnan(rendered_pixels).any() and self.config.print_nan:
-                print("Rendered pixels has nan values")
-        
+                    
             outputs = {
                 "rgb": rendered_pixels,
                 "unique_indices": unique_indices,
@@ -339,9 +325,10 @@ class RENIInverseModel(Model):
         # add the min max and mean of self.scale
         metrics_dict = {}
 
-        metrics_dict["scale_min"] = torch.exp(self.scale).min()
-        metrics_dict["scale_max"] = torch.exp(self.scale).max()
-        metrics_dict["scale_mean"] = torch.exp(self.scale).mean()
+        if self.scale is not None:
+            metrics_dict["scale_min"] = torch.exp(self.scale).min()
+            metrics_dict["scale_max"] = torch.exp(self.scale).max()
+            metrics_dict["scale_mean"] = torch.exp(self.scale).mean()
 
         return metrics_dict
 
@@ -358,23 +345,13 @@ class RENIInverseModel(Model):
         image = batch["image"].to(self.device)
         q = batch["q"].unsqueeze(-1).to(self.device)
 
-        if torch.isnan(image).any() and self.config.print_nan:
-            print("Image has nan values")
-
-        # image = torch.clamp(image, min=0.0, max=1000)
-
         rgb = linear_to_sRGB(rgb, q=q, clamp=False)
         image = linear_to_sRGB(image, q=q, clamp=False)
 
         loss_dict = {}
-        epsilon = 1e-6
         if self.config.loss_inclusions["rgb_l1_loss"]:
-            loss_dict["rgb_l1_loss"] = self.l1_loss(torch.log(rgb), torch.log(image))
-            # loss_dict["rgb_l1_loss"] = self.l1_loss(torch.log(torch.clamp(rgb, min=epsilon)), torch.log(torch.clamp(image, min=epsilon)))
-            # loss_dict["rgb_l1_loss"] = self.l1_loss(rgb, image)
+            loss_dict["rgb_l1_loss"] = self.l1_loss(rgb, image)
         if self.config.loss_inclusions["rgb_l2_loss"]:
-            # loss_dict["rgb_l2_loss"] = self.l2_loss(torch.log(rgb), torch.log(image))
-            # loss_dict["rgb_l2_loss"] = self.l2_loss(torch.log(torch.clamp(rgb, min=epsilon)), torch.log(torch.clamp(image, min=epsilon)))
             loss_dict["rgb_l2_loss"] = self.l2_loss(rgb, image)
         if self.config.loss_inclusions["cosine_similarity_loss"]:
             similarity = self.cosine_similarity(rgb, image)
@@ -383,11 +360,6 @@ class RENIInverseModel(Model):
             loss_dict["prior_loss"] = torch.mean(torch.square(self.illumination_latents[outputs['unique_indices']]))
 
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
-
-        # check if any nan values in loss dict
-        for key, value in loss_dict.items():
-            if torch.isnan(value) and self.config.print_nan:
-                print(f"Loss {key} is nan")
 
         return loss_dict
 

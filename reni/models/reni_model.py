@@ -88,6 +88,8 @@ class RENIModelConfig(ModelConfig):
         }
     )
     """Optimizer and scheduler for latent code optimisation"""
+    eval_latent_batch_type: Literal['full_image', 'ray_samples'] = 'ray_samples'
+    """Whether to use full images or ray samples from all images for eval latent optimisation"""
 
 
 class RENIModel(Model):
@@ -624,7 +626,10 @@ class RENIModel(Model):
                 self.field.reset_eval_latents()
 
                 for step in range(steps):
-                    ray_bundle, batch = datamanager.next_eval(step)
+                    if self.config.eval_latent_batch_type == 'ray_samples':
+                        ray_bundle, batch = datamanager.next_eval(step)
+                    else:
+                        _, ray_bundle, batch = datamanager.next_eval_image(step)
                     model_outputs = self(ray_bundle)
                     if self.metadata["fit_val_in_ldr"]:
                         model_outputs["rgb"] = linear_to_sRGB(self.field.unnormalise(model_outputs["rgb"]))

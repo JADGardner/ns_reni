@@ -60,6 +60,8 @@ class RENIInverseCacheDataloader(CacheDataloader):
         **kwargs,
     ):
         # call super
+        self.current_start_idx = 0
+        self.current_end_idx = self.current_start_idx + num_images_to_sample_from if num_images_to_sample_from != -1 else len(dataset)
         super().__init__(
             dataset=dataset,
             num_images_to_sample_from=num_images_to_sample_from,
@@ -69,14 +71,15 @@ class RENIInverseCacheDataloader(CacheDataloader):
             exclude_batch_keys_from_device=exclude_batch_keys_from_device,
             **kwargs,
         )
-        self.current_start_idx = 0
-        self.current_end_idx = self.current_start_idx + self.num_images_to_sample_from if self.num_images_to_sample_from != -1 else len(self.dataset)
 
     def _get_batch_list(self):
         """Returns a list of batches from the dataset attribute."""
 
         assert isinstance(self.dataset, Sized)
         # indices = random.sample(range(len(self.dataset)), k=self.num_images_to_sample_from)
+        if self.current_start_idx >= len(self.dataset):
+            self.current_start_idx = 0
+            self.current_end_idx = self.current_start_idx + self.num_images_to_sample_from if self.num_images_to_sample_from != -1 else len(self.dataset)
         indices = list(range(self.current_start_idx, self.current_end_idx))
         batch_list = []
         results = []
@@ -104,8 +107,9 @@ class RENIInverseCacheDataloader(CacheDataloader):
             ):
                 # trigger a reset
                 self.num_repeated = 0
-                self.current_start_idx += self.num_images_to_sample_from
-                self.current_end_idx += self.num_images_to_sample_from
+                if not self.first_time:
+                    self.current_start_idx += self.num_images_to_sample_from
+                    self.current_end_idx += self.num_images_to_sample_from
                 collated_batch = self._get_collated_batch()
                 # possibly save a cached item
                 self.cached_collated_batch = collated_batch if self.num_times_to_repeat_images != 0 else None

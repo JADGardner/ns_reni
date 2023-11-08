@@ -117,7 +117,7 @@ class RENIDataset(InputDataset):
             img_width = image.shape[1]
             angle_rad = np.deg2rad(self.metadata["apply_eval_rotation"])
             num_cols_to_roll = int(np.round(img_width * angle_rad / (2 * np.pi)))
-            image = np.roll(image, num_cols_to_roll, axis=1)
+            image = np.roll(image, -num_cols_to_roll, axis=1)
 
 
         assert np.all(np.isfinite(image)), "Image contains non finite values."

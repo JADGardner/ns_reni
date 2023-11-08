@@ -105,17 +105,17 @@ class RENIInverseDataManager(VanillaDataManager):
         self.eval_dataset = self.train_dataset
         self.exclude_batch_keys_from_device = self.train_dataset.exclude_batch_keys_from_device
 
-        if self.config.masks_on_gpu is True:
+        if self.config.masks_on_gpu is True and 'mask' in self.exclude_batch_keys_from_device:
             self.exclude_batch_keys_from_device.remove("mask")
-        if self.config.images_on_gpu is True:
+        if self.config.images_on_gpu is True and 'image' in self.exclude_batch_keys_from_device:
             self.exclude_batch_keys_from_device.remove("image")
-        if self.config.normals_on_gpu is True:
+        if self.config.normals_on_gpu is True and 'normal' in self.exclude_batch_keys_from_device:
             self.exclude_batch_keys_from_device.remove("normal")
-        if self.config.albedo_on_gpu is True:
+        if self.config.albedo_on_gpu is True and 'albedo' in self.exclude_batch_keys_from_device:
             self.exclude_batch_keys_from_device.remove("albedo")
-        if self.config.specular_on_gpu is True:
+        if self.config.specular_on_gpu is True and 'specular' in self.exclude_batch_keys_from_device:
             self.exclude_batch_keys_from_device.remove("specular")
-        if self.config.shininess_on_gpu is True:
+        if self.config.shininess_on_gpu is True and 'shininess' in self.exclude_batch_keys_from_device:
             self.exclude_batch_keys_from_device.remove("shininess")
 
         if self.train_dataparser_outputs is not None:
@@ -175,3 +175,13 @@ class RENIInverseDataManager(VanillaDataManager):
         image_idx = int(camera_ray_bundle.camera_indices[0, 0, 0])
         return image_idx, camera_ray_bundle, batch
         raise ValueError("No more eval images")
+    
+    def eval_image_at_idx(self, idx) -> Tuple[RayBundle, Dict]:
+        fixed_indices_eval_dataloader = FixedIndicesEvalDataloader(
+            input_dataset=self.eval_dataset,
+            image_indices=[idx],
+            device=self.device,
+            num_workers=self.world_size * 4,
+        )
+        camera_ray_bundle, batch = next(iter(fixed_indices_eval_dataloader))
+        return camera_ray_bundle, batch

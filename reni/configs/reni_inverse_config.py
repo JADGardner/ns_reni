@@ -21,10 +21,11 @@ from reni.pipelines.reni_inverse_pipeline import RENIInvesePipelineConfig
 RENIInverse = MethodSpecification(
     config=TrainerConfig(
         method_name="reni-inverse",
-        steps_per_eval_batch=50002,
+        steps_per_eval_batch=50401,
         steps_per_eval_image=200,
-        steps_per_save=2000,
-        max_num_iterations=50001,
+        steps_per_save=200,
+        steps_per_eval_all_images=50401,
+        max_num_iterations=50400,
         mixed_precision=False,
         log_gradients=True,
         pipeline=RENIInvesePipelineConfig(
@@ -96,7 +97,7 @@ RENIInverse = MethodSpecification(
         optimizers={
             "illumination_latents": {
                 "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
-                "scheduler": ExponentialDecaySchedulerConfig(warmup_steps=0, lr_final=1e-2, max_steps=50001),
+                "scheduler": ExponentialDecaySchedulerConfig(warmup_steps=0, lr_final=1e-2, max_steps=50401),
             },
         },
         viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
