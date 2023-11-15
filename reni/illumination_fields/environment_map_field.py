@@ -14,7 +14,7 @@
 
 """Environment Map"""
 
-from typing import Type, Union, Dict, Union, Tuple
+from typing import Type, Union, Dict, Union, Tuple, Optional, Any
 from dataclasses import dataclass, field
 import contextlib
 from pathlib import Path
@@ -29,12 +29,12 @@ from torchtyping import TensorType
 
 from nerfstudio.cameras.rays import RaySamples
 
-from reni.illumination_fields.base_spherical_field import SphericalField, SphericalFieldConfig
+from reni.illumination_fields.base_spherical_field import SphericalField, SphericalFieldConfig, BaseRENIFieldConfig, BaseRENIField
 from reni.field_components.field_heads import RENIFieldHeadNames
 
 
 @dataclass
-class EnvironmentMapFieldConfig(SphericalFieldConfig):
+class EnvironmentMapFieldConfig(BaseRENIFieldConfig):
     """Configuration for model instantiation"""
 
     _target: Type = field(default_factory=lambda: EnvironmentMapField)
@@ -47,21 +47,21 @@ class EnvironmentMapFieldConfig(SphericalFieldConfig):
     """whether to train the environment map or not"""
     apply_padding: bool = True
     """whether to apply padding to the environment map or not"""
-    fixed_decoder: bool = False
-    """Required to match the interface of the other illumination fields."""
 
 
-class EnvironmentMapField(SphericalField):
+class EnvironmentMapField(BaseRENIField):
     """A representation of distant illumination as an environment map."""
 
     def __init__(
         self,
         config: EnvironmentMapFieldConfig,
-        num_train_data: int,
-        num_eval_data: int,
-        min_max: Union[Tuple[float, float], None] = None,
+        num_train_data: Union[int, None],
+        num_eval_data: Union[int, None],
+        normalisations: Dict[str, Any],
     ) -> None:
-        super().__init__()
+        super().__init__(
+            config=config, num_train_data=num_train_data, num_eval_data=num_eval_data, normalisations=normalisations
+        )
         self.config = config
         self.num_train_data = num_train_data
         self.num_eval_data = num_eval_data
@@ -70,7 +70,6 @@ class EnvironmentMapField(SphericalField):
         self.trainable = config.trainable
         self.apply_padding = config.apply_padding
         self.fixed_decoder = config.fixed_decoder
-        self.min_max = min_max  # needed for parity of implementation with RENI
 
         assert self.resolution[0] == self.resolution[1] // 2, "Environment map must have a 2:1 aspect ratio."
 
@@ -204,7 +203,7 @@ class EnvironmentMapField(SphericalField):
         return wa[..., None] * Ia + wb[..., None] * Ib + wc[..., None] * Ic + wd[..., None] * Id
 
     def get_outputs(
-        self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None]
+        self, ray_samples: RaySamples, rotation: Optional[torch.Tensor]= None, envmaps: Optional[torch.Tensor] = None
     ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Returns the outputs of the field.
 
@@ -217,15 +216,19 @@ class EnvironmentMapField(SphericalField):
         if not self.trainable:
             camera_indices = torch.zeros_like(camera_indices)  # [num_rays]
 
-        if self.trainable:
-            # we are optimising envmap pixels for each camera
-            if self.training and not self.fixed_decoder:
-                envmaps = self.train_envmaps
-            else:
-                envmaps = self.eval_envmaps
-        else:
+        if envmaps is not None:
             # we are using a single pre-provided environment map for all cameras
-            envmaps = self.eval_envmaps  # [1, 3, H, W]
+            envmaps = envmaps
+        else:
+            if self.trainable:
+                # we are optimising envmap pixels for each camera
+                if self.training and not self.fixed_decoder:
+                    envmaps = self.train_envmaps
+                else:
+                    envmaps = self.eval_envmaps
+            else:
+                # we are using a single pre-provided environment map for all cameras
+                envmaps = self.eval_envmaps  # [1, 3, H, W]
 
         directions = (
             ray_samples.frustums.directions
@@ -247,15 +250,16 @@ class EnvironmentMapField(SphericalField):
         return outputs
 
     def forward(
-        self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None] = None
+        self, ray_samples: RaySamples, rotation: Optional[torch.Tensor]= None, envmaps: Optional[torch.Tensor] = None
     ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:
             ray_samples: [num_rays]
             rotation: [3, 3]
+            envmaps: [num_envmaps, 3, H, W]
 
         Returns:
             Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.
         """
-        return self.get_outputs(ray_samples=ray_samples, rotation=rotation)
+        return self.get_outputs(ray_samples=ray_samples, rotation=rotation, envmaps=envmaps)
