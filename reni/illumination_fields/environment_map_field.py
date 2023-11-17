@@ -201,6 +201,31 @@ class EnvironmentMapField(BaseRENIField):
         wd = (x - x0.type_as(x)) * (y - y0.type_as(y))
 
         return wa[..., None] * Ia + wb[..., None] * Ib + wc[..., None] * Ic + wd[..., None] * Id
+    
+    def nearest_neighbor_interpolate(self, envmaps, camera_indices, x, y):
+        """
+        Performs nearest neighbor interpolation on the image.
+
+        Args:
+            envmaps: [num_envmaps, 3, H, W]
+            camera_indices: [num_rays]
+            x: [num_rays]
+            y: [num_rays]
+        """
+        H, W = envmaps.shape[-2:]
+        # Round the coordinates to the nearest integer
+        x_nearest = torch.round(x).long()
+        y_nearest = torch.round(y).long()
+
+        # Clamp the coordinates to be within the image dimensions
+        x_nearest = torch.clamp(x_nearest, 0, W - 1)
+        y_nearest = torch.clamp(y_nearest, 0, H - 1)
+
+        # Select the nearest pixel for each ray
+        nearest_pixel = envmaps[camera_indices, :, y_nearest, x_nearest]
+
+        return nearest_pixel
+
 
     def get_outputs(
         self, ray_samples: RaySamples, rotation: Optional[torch.Tensor]= None, envmaps: Optional[torch.Tensor] = None
@@ -242,7 +267,7 @@ class EnvironmentMapField(BaseRENIField):
 
         theta, phi = self.cart_to_spherical(directions)  # [num_rays], [num_rays]
         x, y = self.angles_to_map_coords(theta, phi, envmaps.shape[-2], envmaps.shape[-1])  # [num_rays], [num_rays]
-        samples = self.bilinear_interpolate(envmaps, camera_indices, x, y)  # [num_rays, 3]
+        samples = self.nearest_neighbor_interpolate(envmaps, camera_indices, x, y)  # [num_rays, 3]
 
         outputs = {
             RENIFieldHeadNames.RGB: samples,
