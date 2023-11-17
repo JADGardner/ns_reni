@@ -66,6 +66,8 @@ class RENIDataParserConfig(DataParserConfig):
     """Path to the evaluation mask or a directory of masks."""
     fit_val_in_ldr: bool = False
     """Whether to fit validation images in LDR, still includes metrics against HDR versions."""
+    custom_val_folder: Optional[str] = None
+    """Path to a custom validation folder, if None, uses the default validation folder."""
 
 
 @dataclass
@@ -82,7 +84,10 @@ class RENIDataParser(DataParser):
         if self.config.use_validation_as_train:
             split = "val"
 
-        path = self.data / split
+        if split == "test" and self.config.custom_val_folder is not None:
+            path = self.data / self.config.custom_val_folder
+        else:
+            path = self.data / split
 
         # if it doesn't exist, download the data
         url = "https://www.dropbox.com/s/15gn7zlzgua7s8n/RENI_HDR.zip?dl=1"

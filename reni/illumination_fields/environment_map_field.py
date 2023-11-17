@@ -210,6 +210,7 @@ class EnvironmentMapField(BaseRENIField):
         Args:
             ray_samples: [num_rays]
             rotation: [3, 3]
+            envmaps: [num_envmaps, 3, H, W]
         """
         # we want to batch over camera_indices as these correspond to unique latent codes
         camera_indices = ray_samples.camera_indices.squeeze()  # [num_rays]
@@ -250,7 +251,7 @@ class EnvironmentMapField(BaseRENIField):
         return outputs
 
     def forward(
-        self, ray_samples: RaySamples, rotation: Optional[torch.Tensor]= None, envmaps: Optional[torch.Tensor] = None
+        self, ray_samples: RaySamples, rotation: Optional[torch.Tensor]= None, latent_codes: Optional[torch.Tensor] = None
     ) -> Dict[RENIFieldHeadNames, TensorType]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
@@ -262,4 +263,4 @@ class EnvironmentMapField(BaseRENIField):
         Returns:
             Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.
         """
-        return self.get_outputs(ray_samples=ray_samples, rotation=rotation, envmaps=envmaps)
+        return self.get_outputs(ray_samples=ray_samples, rotation=rotation, envmaps=latent_codes)

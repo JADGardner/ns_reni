@@ -492,7 +492,7 @@ class RENIField(BaseRENIField):
 
         Args:
             ray_samples: [num_rays]
-            rotation: [3, 3]
+            rotation: [num_rays, 3, 3]
             latent_codes: [num_rays, latent_dim, 3]
             scale: [num_rays]
         """
@@ -506,7 +506,9 @@ class RENIField(BaseRENIField):
             log_var = None
 
         if rotation is not None:
-            latent_codes = torch.matmul(latent_codes, rotation)
+            # rotate the latent codes
+            # latent_codes = torch.matmul(latent_codes, rotation)
+            latent_codes = torch.einsum("bij,bkd->bkd", rotation, latent_codes)
 
         directions = (
             ray_samples.frustums.directions
@@ -571,7 +573,7 @@ class RENIField(BaseRENIField):
 
         Args:
             ray_samples: [num_rays]
-            rotation: [3, 3]
+            rotation: [num_rays, 3, 3]
             latent_codes: [num_rays, latent_dim, 3]
             scale: [num_rays]
 
