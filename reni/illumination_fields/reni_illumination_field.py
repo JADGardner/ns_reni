@@ -506,9 +506,10 @@ class RENIField(BaseRENIField):
             log_var = None
 
         if rotation is not None:
-            # rotate the latent codes
-            # latent_codes = torch.matmul(latent_codes, rotation)
-            latent_codes = torch.einsum("bij,bkd->bkd", rotation, latent_codes)
+            if len(rotation.shape) == 2:
+                latent_codes = torch.matmul(latent_codes, rotation)
+            elif len(rotation.shape) == 3:
+                latent_codes = torch.matmul(latent_codes.unsqueeze(1), rotation).squeeze(1)
 
         directions = (
             ray_samples.frustums.directions
