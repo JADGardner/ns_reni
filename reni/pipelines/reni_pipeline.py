@@ -95,14 +95,11 @@ class RENIPipeline(VanillaPipeline):
         self.config = config
         self.test_mode = test_mode if self.config.test_mode is None else self.config.test_mode
 
-        self.using_scale_inv_grad_loss = self.config.model.loss_inclusions["scale_inv_grad_loss"]
-
         self.datamanager: RENIDataManager = config.datamanager.setup(
             device=device,
             test_mode=self.test_mode,
             world_size=world_size,
             local_rank=local_rank,
-            using_scale_inv_grad_loss=self.using_scale_inv_grad_loss,
         )
         self.datamanager.to(device)
         assert self.datamanager.train_dataset is not None, "Missing input dataset"

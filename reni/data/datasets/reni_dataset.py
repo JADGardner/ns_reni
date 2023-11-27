@@ -119,6 +119,8 @@ class RENIDataset(InputDataset):
             num_cols_to_roll = int(np.round(img_width * angle_rad / (2 * np.pi)))
             image = np.roll(image, -num_cols_to_roll, axis=1)
 
+        # only use the first 3 channels
+        image = image[:, :, :3]
 
         assert np.all(np.isfinite(image)), "Image contains non finite values."
         assert np.all(image >= 0), "Image contains negative values."

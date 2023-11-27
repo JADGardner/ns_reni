@@ -30,7 +30,7 @@ RENIField = MethodSpecification(
         max_num_iterations=50001,
         mixed_precision=False,
         pipeline=RENIPipelineConfig(
-          test_mode='test',
+          test_mode='val',
             datamanager=RENIDataManagerConfig(
                 dataparser=RENIDataParserConfig(
                     data=Path("data/RENI_HDR"),
@@ -66,7 +66,7 @@ RENIField = MethodSpecification(
                     axis_of_invariance="z",  # Nerfstudio world space is z-up # old reni implementation was y-up
                     positional_encoding="NeRF",
                     encoded_input="Directions",  # "InvarDirection", "Directions", "Conditioning", "Both", "None"
-                    latent_dim=36,  # N for a latent code size of (N x 3) # 9, 36, 49, 100 (for paper sizes)
+                    latent_dim=100,  # N for a latent code size of (N x 3) # 9, 36, 49, 100 (for paper sizes)
                     hidden_features=128,  # ALL
                     hidden_layers=9,  # SIRENs
                     mapping_layers=5,  # FiLM MAPPING NETWORK
@@ -77,7 +77,7 @@ RENIField = MethodSpecification(
                     last_layer_linear=True,  # SIRENs
                     fixed_decoder=False,  # ALL
                     trainable_scale=False, # Used in inverse setting
-                    old_implementation=False,
+                    old_implementation=False, # Used to match prior RENI implementation, world space is y-up
                 ),
                 eval_latent_optimizer={
                     "eval_latents": {

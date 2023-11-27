@@ -42,8 +42,6 @@ class RENIInverseDataParserConfig(DataParserConfig):
     """target class to instantiate"""
     data: Path = Path("data/RENI_HDR")
     """Directory specifying location of data."""
-    download_data: bool = False
-    """Whether to download data."""
     envmap_remove_indicies: Optional[list] = None
     """Indicies of environment maps to remove."""
     specular_terms = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
@@ -68,13 +66,7 @@ class RENIInverseDataParser(DataParser):
     def _generate_dataparser_outputs(self, split="train"):
         path = self.data / split
 
-        # if it doesn't exist, download the data
-        url = "https://www.dropbox.com/s/15gn7zlzgua7s8n/RENI_HDR.zip?dl=1"
-        if not path.exists() and self.config.download_data:
-            wget.download(url, out=str(self.data) + ".zip")
-            with zipfile.ZipFile(str(self.data) + ".zip", "r") as zip_ref:
-                zip_ref.extractall(str(self.data))
-            Path(str(self.data) + ".zip").unlink()
+        assert path.exists(), f"Path {path} does not exist."
 
         # get paths for all images in the directory
         environment_maps_filenames = sorted(path.glob("*.exr"))

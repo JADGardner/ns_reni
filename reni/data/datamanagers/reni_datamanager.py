@@ -97,7 +97,6 @@ class RENIDataManager(VanillaDataManager):
         self.sampler = None
         self.test_mode = test_mode
         self.test_split = "test" if test_mode in ["test", "inference"] else "val"
-        self.using_scale_inv_grad_loss = kwargs.get("using_scale_inv_grad_loss", False)
         self.dataparser_config = self.config.dataparser
         if self.config.data is not None:
             self.config.dataparser.data = Path(self.config.data)
@@ -221,22 +220,8 @@ class RENIDataManager(VanillaDataManager):
         assert self.train_pixel_sampler is not None
         assert isinstance(image_batch, dict)
         batch = self.train_pixel_sampler.sample(image_batch)
-        if self.using_scale_inv_grad_loss:
-            finite_diff_grad_indices = batch["indices"].clone()
-            # update the index to be samples_idxs
-            finite_diff_grad_indices[:, 0] = batch["sampled_idxs"].clone()
-            # roll the x values by 1 using datamanger.image_width as mod
-            finite_diff_grad_indices[:, 2] = (finite_diff_grad_indices[:, 2] + 1) % self.image_width
-            finite_diff_batch = self.train_pixel_sampler.sample(image_batch, indices=finite_diff_grad_indices)
-            ray_indices = torch.cat([batch["indices"], finite_diff_batch["indices"]], dim=0)  # [2N, 3]
-            for key in batch:
-                batch[key] = torch.stack([batch[key], finite_diff_batch[key]], dim=0)  # [2, N, ...]
-            batch.pop("sampled_idxs")
-            ray_bundle = self.train_ray_generator(ray_indices)  # [2N, 3]
-            ray_bundle = self.stack_ray_bundle(ray_bundle, self.config.train_num_rays_per_batch)  # [2, N, 3]
-        else:
-            ray_indices = batch["indices"]  # [N, 3]
-            ray_bundle = self.train_ray_generator(ray_indices)  # [N, 3]
+        ray_indices = batch["indices"]  # [N, 3]
+        ray_bundle = self.train_ray_generator(ray_indices)  # [N, 3]
         return ray_bundle, batch
 
     def next_eval(self, step: int) -> Tuple[RayBundle, Dict]:
@@ -246,22 +231,8 @@ class RENIDataManager(VanillaDataManager):
         assert self.eval_pixel_sampler is not None
         assert isinstance(image_batch, dict)
         batch = self.eval_pixel_sampler.sample(image_batch)
-        if self.using_scale_inv_grad_loss:
-            finite_diff_grad_indices = batch["indices"].clone()
-            # update the index to be samples_idxs
-            finite_diff_grad_indices[:, 0] = batch["sampled_idxs"].clone()
-            # # roll the x values by 1 using datamanger.image_width as mod
-            finite_diff_grad_indices[:, 2] = (finite_diff_grad_indices[:, 2] + 1) % self.image_width
-            finite_diff_batch = self.eval_pixel_sampler.sample(image_batch, indices=finite_diff_grad_indices)
-            ray_indices = torch.cat([batch["indices"], finite_diff_batch["indices"]], dim=0)  # [2N, 3]
-            for key in batch:
-                batch[key] = torch.stack([batch[key], finite_diff_batch[key]], dim=0)  # [2, N, ...]
-            batch.pop("sampled_idxs")
-            ray_bundle = self.eval_ray_generator(ray_indices)  # [2N, 3]
-            ray_bundle = self.stack_ray_bundle(ray_bundle, self.config.eval_num_rays_per_batch)  # [2, N, 3]
-        else:
-            ray_indices = batch["indices"]
-            ray_bundle = self.eval_ray_generator(ray_indices)
+        ray_indices = batch["indices"]
+        ray_bundle = self.eval_ray_generator(ray_indices)
         return ray_bundle, batch
 
     def next_eval_image(self, idx: int) -> Tuple[int, RayBundle, Dict]:
@@ -275,24 +246,9 @@ class RENIDataManager(VanillaDataManager):
         assert self.eval_image_pixel_sampler is not None
         assert isinstance(image_batch, dict)
         batch = self.eval_image_pixel_sampler.sample(image_batch)
-        if self.using_scale_inv_grad_loss:
-            finite_diff_grad_indices = batch["indices"].clone()
-            # update the index to be samples_idxs
-            finite_diff_grad_indices[:, 0] = batch["sampled_idxs"].clone()
-            # # roll the x values by 1 using datamanger.image_width as mod
-            finite_diff_grad_indices[:, 2] = (finite_diff_grad_indices[:, 2] + 1) % self.image_width
-            finite_diff_batch = self.eval_image_pixel_sampler.sample(image_batch, indices=finite_diff_grad_indices)
-            ray_indices = torch.cat([batch["indices"], finite_diff_batch["indices"]], dim=0)  # [2N, 3]
-            for key in batch:
-                batch[key] = torch.stack([batch[key], finite_diff_batch[key]], dim=0)  # [2, N, ...]
-            batch.pop("sampled_idxs")
-            ray_bundle = self.eval_ray_generator(ray_indices)  # [2N, 3]
-            ray_bundle = self.stack_ray_bundle(ray_bundle, self.image_height * self.image_width)  # [2, N, 3]
-            image_idx = int(ray_bundle.camera_indices[0, 0, 0])
-        else:
-            ray_indices = batch["indices"]
-            ray_bundle = self.eval_ray_generator(ray_indices)
-            image_idx = int(ray_bundle.camera_indices[0, 0])
+        ray_indices = batch["indices"]
+        ray_bundle = self.eval_ray_generator(ray_indices)
+        image_idx = int(ray_bundle.camera_indices[0, 0])
         return image_idx, ray_bundle, batch
 
     def create_train_dataset(self) -> RENIDataset:
