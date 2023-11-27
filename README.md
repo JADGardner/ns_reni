@@ -1,2 +1,3 @@
-# ns_reni
-Nerfstudio Implementation of RENI
+# RENI++
+
+Nerfstudio Implementation of RENI++
