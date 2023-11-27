@@ -6,7 +6,7 @@ Paper: RENI++: A Rotation-Equivariant, Scale-Invariant, Natural Illumination Pri
 
 ## Installation
 
-We build on top of Nerfstudio. However, since Nerfstudio is still in very activate development with fairly large codebase changes still occurring compatibility might be an issue. Pull requests and issues are very welcome.
+We build on top of Nerfstudio. However, since Nerfstudio is still in very active development with fairly large codebase changes still occurring compatibility might be an issue. Pull requests and issues are very welcome.
 
 ### Prerequisites
 
