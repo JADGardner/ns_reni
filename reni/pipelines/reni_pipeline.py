@@ -128,7 +128,12 @@ class RENIPipeline(VanillaPipeline):
             self._model = typing.cast(Model, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
             dist.barrier(device_ids=[local_rank])
 
-        self.last_step_of_eval_optimisation = 0  # used to avoid fitting eval latents on each eval function call below
+        self.step_of_last_latent_optimisation = 0
+
+    def _optimise_evaluation_latents(self, step):
+        if self.step_of_last_latent_optimisation != step:
+            self.model.fit_eval_latents(self.datamanager)
+            self.step_of_last_latent_optimisation = step
 
     def forward(self):
         """Blank forward method
@@ -162,11 +167,7 @@ class RENIPipeline(VanillaPipeline):
             step: current iteration step
         """
         self.eval()
-        # if we haven't already fit the eval latents this step, do it now
-        if self.last_step_of_eval_optimisation != step:
-            if self.model.config.training_regime != "vae":
-                self.model.fit_eval_latents(self.datamanager)
-            self.last_step_of_eval_optimisation = step
+        self._optimise_evaluation_latents(step)
         ray_bundle, batch = self.datamanager.next_eval(step)
         model_outputs = self.model(ray_bundle, batch)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
@@ -184,10 +185,7 @@ class RENIPipeline(VanillaPipeline):
         """
         self.eval()
         # if we haven't already fit the eval latents this step, do it now
-        if self.last_step_of_eval_optimisation != step:
-            if self.model.config.training_regime != "vae":
-                self.model.fit_eval_latents(self.datamanager)
-            self.last_step_of_eval_optimisation = step
+        self._optimise_evaluation_latents(step)
         image_idx, ray_bundle, batch = self.datamanager.next_eval_image(step)
         outputs = self.model(ray_bundle, batch)
         metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
@@ -207,10 +205,7 @@ class RENIPipeline(VanillaPipeline):
         """
         self.eval()
         # if we haven't already fit the eval latents this step, do it now
-        if self.last_step_of_eval_optimisation != step:
-            if self.model.config.training_regime != "vae" and optimise_latents:
-                self.model.fit_eval_latents(self.datamanager)
-            self.last_step_of_eval_optimisation = step
+        self._optimise_evaluation_latents(step)
         metrics_dict_list = []
         num_images = len(self.datamanager.fixed_indices_eval_dataloader)
         # get all eval images

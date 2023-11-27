@@ -63,7 +63,6 @@ SHField = MethodSpecification(
                     "cosine_similarity_loss": 1.0,
                     "kld_loss": 0.00001,
                     "scale_inv_loss": 1.0,
-                    "scale_inv_grad_loss": 1.0,
                 },
                 loss_inclusions={
                     "log_mse_loss": True,
@@ -72,9 +71,6 @@ SHField = MethodSpecification(
                     "cosine_similarity_loss": False,
                     "kld_loss": False,
                     "scale_inv_loss": False,
-                    "scale_inv_grad_loss": False,
-                    "bce_loss": False,  # For RESGAN, leave False in this config
-                    "wgan_loss": False,  # For RESGAN, leave False in this config
                 },
             ),
         ),
@@ -131,7 +127,6 @@ SGField = MethodSpecification(
                     "cosine_similarity_loss": 1.0,
                     "kld_loss": 0.00001,
                     "scale_inv_loss": 1.0,
-                    "scale_inv_grad_loss": 1.0,
                 },
                 loss_inclusions={
                     "log_mse_loss": True,
@@ -140,9 +135,6 @@ SGField = MethodSpecification(
                     "cosine_similarity_loss": False,
                     "kld_loss": False,
                     "scale_inv_loss": False,
-                    "scale_inv_grad_loss": False,
-                    "bce_loss": False,  # For RESGAN, leave False in this config
-                    "wgan_loss": False,  # For RESGAN, leave False in this config
                 },
             ),
         ),
@@ -194,18 +186,20 @@ EnvMapField = MethodSpecification(
                     apply_padding=True,
                 ),
                 loss_coefficients={
-                    "mse_loss": 10.0,
+                    "log_mse_loss": 1.0,
+                    "hdr_mse_loss": 1.0,
+                    "ldr_mse_loss": 1.0,
                     "cosine_similarity_loss": 1.0,
                     "kld_loss": 0.00001,
                     "scale_inv_loss": 1.0,
-                    "scale_inv_grad_loss": 1.0,
                 },
                 loss_inclusions={
-                    "mse_loss": False,
-                    "cosine_similarity_loss": True,
-                    "kld_loss": True,
-                    "scale_inv_loss": True,
-                    "scale_inv_grad_loss": False,
+                    "log_mse_loss": True,
+                    "hdr_mse_loss": False,
+                    "ldr_mse_loss": False,
+                    "cosine_similarity_loss": False,
+                    "kld_loss": False,
+                    "scale_inv_loss": False,
                 },
             ),
         ),

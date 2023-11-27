@@ -152,10 +152,7 @@ class RENIModel(Model):
 
         ray_samples = self.create_ray_samples(ray_bundle.origins, ray_bundle.directions, ray_bundle.camera_indices)
 
-        rotation = None
-        latent_codes = None  # if auto-decoder training regime latents are trainable params of the field
-
-        field_outputs = self.field.forward(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes)
+        field_outputs = self.field.forward(ray_samples=ray_samples)
 
         outputs = {
             "rgb": field_outputs[RENIFieldHeadNames.RGB],
