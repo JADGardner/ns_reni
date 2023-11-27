@@ -76,7 +76,6 @@ SHField = MethodSpecification(
                     "bce_loss": False,  # For RESGAN, leave False in this config
                     "wgan_loss": False,  # For RESGAN, leave False in this config
                 },
-                include_sine_weighting=False,  # This is already handled by the equirectangular pixel sampler
             ),
         ),
         optimizers={
@@ -145,7 +144,6 @@ SGField = MethodSpecification(
                     "bce_loss": False,  # For RESGAN, leave False in this config
                     "wgan_loss": False,  # For RESGAN, leave False in this config
                 },
-                include_sine_weighting=False,  # This is already handled by the equirectangular pixel sampler
             ),
         ),
         optimizers={
@@ -209,8 +207,6 @@ EnvMapField = MethodSpecification(
                     "scale_inv_loss": True,
                     "scale_inv_grad_loss": False,
                 },
-                include_sine_weighting=False,
-                training_regime="autodecoder",
             ),
         ),
         optimizers={

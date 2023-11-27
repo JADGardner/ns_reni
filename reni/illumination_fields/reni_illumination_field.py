@@ -509,7 +509,7 @@ class RENIField(BaseRENIField):
             if len(rotation.shape) == 2:
                 latent_codes = torch.matmul(latent_codes, rotation)
             elif len(rotation.shape) == 3:
-                latent_codes = torch.matmul(latent_codes.unsqueeze(1), rotation).squeeze(1)
+                raise NotImplementedError("Batched rotation not implemented yet")
 
         directions = (
             ray_samples.frustums.directions

@@ -91,8 +91,6 @@ RENIField = MethodSpecification(
                     "ldr_mse_loss": 1.0,
                     "cosine_similarity_loss": 1.0,
                     "kld_loss": 0.000001,
-                    "scale_inv_loss": 1.0,
-                    "scale_inv_grad_loss": 1.0,
                 },
                 loss_inclusions={
                     "log_mse_loss": False,
@@ -101,21 +99,12 @@ RENIField = MethodSpecification(
                     "cosine_similarity_loss": True,
                     "kld_loss": "train",
                     "scale_inv_loss": True,
-                    "scale_inv_grad_loss": False,
-                    "bce_loss": False,  # For RESGAN, leave False in this config
-                    "wgan_loss": False,  # For RESGAN, leave False in this config
                 },
-                include_sine_weighting=False,  # This directly affects losses, not sampling method
-                training_regime="autodecoder",
             ),
         ),
         optimizers={
             "field": {
                 "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),  # 1e-3 for Attention, 1e-5 for Other
-                "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
-            },
-            "encoder": {  # If (training_regime="vae")
-                "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
                 "scheduler": CosineDecaySchedulerConfig(warm_up_end=500, learning_rate_alpha=0.05, max_steps=50001),
             },
         },
