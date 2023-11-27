@@ -68,4 +68,10 @@ c. Close and reopen your terminal and source conda environment again:
 conda activate nerfstudio
 ```
 
-## Download Data
+## Download Data and Pretrained Models
+
+```bash
+python3 python3 scripts/download_data.py output/data/path/
+
+python3 python3 scripts/download_models.py output/model/path/
+```
