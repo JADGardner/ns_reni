@@ -4,6 +4,8 @@
 
 Paper: RENI++: A Rotation-Equivariant, Scale-Invariant, Natural Illumination Prior
 
+![NeuSky Teaser](publication/figures/reni_plus_plus_teaser.gif)
+
 ## Installation
 
 We build on top of Nerfstudio. However, since Nerfstudio is still in very active development with fairly large codebase changes still occurring compatibility might be an issue. Pull requests and issues are very welcome.

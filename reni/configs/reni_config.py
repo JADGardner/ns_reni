@@ -38,15 +38,10 @@ RENIField = MethodSpecification(
                     val_subset_size=None,
                     convert_to_ldr=False,
                     convert_to_log_domain=True,
-                    # min_max_normalize=(
-                    #     -18.0536,
-                    #     11.4533,
-                    # ),  # Tuple[float, float] | Literal['min_max', 'quantile'] | None (Tuple should be in log domain if log_domain=True)
-                    min_max_normalize=None,
+                    min_max_normalize=None, # Prior RENI implementation used (-18.0536, 11.4533) in log domain
                     use_validation_as_train=False,
                     augment_with_mirror=True,
                     fit_val_in_ldr=False,
-                    # eval_mask_path=Path('/workspace/data/RENI_HDR/masks/01.png'),
                 ),
                 pixel_sampler=RENIEquirectangularPixelSamplerConfig(
                     full_image_per_batch=False,
@@ -76,7 +71,7 @@ RENIField = MethodSpecification(
                     last_layer_linear=True,  # SIRENs
                     fixed_decoder=False,  # ALL
                     trainable_scale=False, # Used in inverse setting
-                    old_implementation=False, # Used to match prior RENI implementation, world space is y-up
+                    old_implementation=False, # Used to match prior RENI implementation, input conditioning order is different
                 ),
                 eval_latent_optimizer={
                     "eval_latents": {

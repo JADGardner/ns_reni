@@ -106,10 +106,12 @@ class RENIDataParser(DataParser):
         if self.config.val_subset_size and split == "val":
             image_filenames = image_filenames[: self.config.val_subset_size]
 
+        # TODO just set as flag and have dataset do the doubling
         if self.config.augment_with_mirror and split == "train":
-            # just double the number of images and dataset will handle the mirroring
+            # just double the number of images and reni_dataset.py will handle the mirroring
             image_filenames = image_filenames + image_filenames
         
+        # TODO just set as flag and have dataset handle everything
         if self.config.augment_with_rotation and split == "train":
             raise NotImplementedError("Rotation augmentation not implemented yet.")
 

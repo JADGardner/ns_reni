@@ -20,6 +20,12 @@ def unzip_file(zip_path, extract_to):
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
         zip_ref.extractall(extract_to)
 
+def delete_file(file_path):
+    if os.path.exists(file_path):
+        os.remove(file_path)
+    else:
+        print("The file does not exist")
+
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Usage: python script.py <output_folder>")
@@ -33,5 +39,8 @@ if __name__ == "__main__":
 
     print("Unzipping...")
     unzip_file(zip_path, output_folder)
+
+    print("Deleting zip file...")
+    delete_file(zip_path)
 
     print("Done!")

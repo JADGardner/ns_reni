@@ -116,14 +116,14 @@ class RENIModel(Model):
         self.ssim = structural_similarity_index_measure
         self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
 
-    def forward(self, ray_bundle: RayBundle, batch: Optional[dict] = None) -> Dict[str, torch.Tensor]:
+    def forward(self, ray_bundle: RayBundle, rotation: Optional[torch.Tensor]) -> Dict[str, torch.Tensor]:
         """Run forward starting with a ray bundle. This outputs different things depending on the configuration
         of the model and whether or not the batch is provided (whether or not we are training basically)
 
         Args:
             ray_bundle: containing all the information needed to render that ray latents included
         """
-        return self.get_outputs(ray_bundle, batch)
+        return self.get_outputs(ray_bundle, rotation)
 
     def create_ray_samples(self, origins, directions, camera_indices) -> RaySamples:
         """Create ray samples from a ray bundle"""
@@ -146,13 +146,13 @@ class RENIModel(Model):
         param_groups["field"] = list(self.field.parameters())
         return param_groups
 
-    def get_outputs(self, ray_bundle: RayBundle, batch: Optional[dict] = None):
+    def get_outputs(self, ray_bundle: RayBundle, rotation: Optional[torch.Tensor]):
         if self.field is None:
             raise ValueError("populate_fields() must be called before get_outputs")
 
         ray_samples = self.create_ray_samples(ray_bundle.origins, ray_bundle.directions, ray_bundle.camera_indices)
 
-        field_outputs = self.field.forward(ray_samples=ray_samples)
+        field_outputs = self.field.forward(ray_samples=ray_samples, rotation=rotation)
 
         outputs = {
             "rgb": field_outputs[RENIFieldHeadNames.RGB],
@@ -347,7 +347,7 @@ class RENIModel(Model):
 
     @torch.no_grad()
     def get_outputs_for_camera_ray_bundle(
-        self, camera_ray_bundle: RayBundle, batch: Optional[dict] = None
+        self, camera_ray_bundle: RayBundle, rotation: Optional[torch.Tensor]
     ) -> Dict[str, torch.Tensor]:
         """Takes in camera parameters and computes the output of the model.
 
@@ -362,7 +362,7 @@ class RENIModel(Model):
             start_idx = i
             end_idx = i + num_rays_per_chunk
             ray_bundle = camera_ray_bundle.get_row_major_sliced_ray_bundle(start_idx, end_idx)
-            outputs = self.forward(ray_bundle=ray_bundle, batch=batch)
+            outputs = self.forward(ray_bundle=ray_bundle, rotation=rotation)
             for output_name, output in outputs.items():  # type: ignore
                 if not torch.is_tensor(output):
                     # TODO: handle lists of tensors as well

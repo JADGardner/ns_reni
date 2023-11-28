@@ -83,6 +83,8 @@ class RENIFieldConfig(BaseRENIFieldConfig):
     """Whether to train the scale parameter"""
     old_implementation: bool = False
     """Whether to match implementation of old RENI, when using old checkpoints"""
+    view_train_latents: bool = False
+    """Whether to select train latents regardless of eval mode"""
 
 
 class RENIField(BaseRENIField):
@@ -416,6 +418,13 @@ class RENIField(BaseRENIField):
         tuple (torch.Tensor, torch.Tensor, torch.Tensor): A tuple containing the sampled latent variable, the mean of the latent variable and the log variance of the latent variable
         """
 
+        if self.config.view_train_latents:
+            sample = self.train_mu[idx, :, :]
+            mu = self.train_mu[idx, :, :]
+            log_var = self.train_logvar[idx, :, :]
+            
+            return sample, mu, log_var
+        
         if self.training and not self.fixed_decoder:
             # use reparameterization trick
             mu = self.train_mu[idx, :, :]
