@@ -42,7 +42,7 @@ pip install --upgrade pip setuptools
 pip install -e .
 ```
 
-#### Install NeuSky
+#### Install RENI++
 
 a. Clone repo and install RENI++
 
