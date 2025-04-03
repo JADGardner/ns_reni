@@ -37,9 +37,9 @@ CONSOLE = Console(width=120)
 @dataclass
 class RENIModelConfig(ModelConfig):
     """Vanilla Model Config"""
-
     _target: Type = field(default_factory=lambda: RENIModel)
-    field: SphericalFieldConfig = SphericalFieldConfig()
+    # field: SphericalFieldConfig = SphericalFieldConfig()
+    field: SphericalFieldConfig = field(default_factory=lambda: SphericalFieldConfig)
     """Field configuration"""
     loss_inclusions: Dict[str, Union[bool, Literal["train", "eval", "both"]]] = to_immutable_dict(
         {
@@ -146,13 +146,13 @@ class RENIModel(Model):
         param_groups["field"] = list(self.field.parameters())
         return param_groups
 
-    def get_outputs(self, ray_bundle: RayBundle, rotation: Optional[torch.Tensor]):
+    def get_outputs(self, ray_bundle: RayBundle, rotation: Optional[torch.Tensor], latent_codes: Optional[torch.Tensor] = None, scale: Optional[torch.Tensor] = None):
         if self.field is None:
             raise ValueError("populate_fields() must be called before get_outputs")
 
         ray_samples = self.create_ray_samples(ray_bundle.origins, ray_bundle.directions, ray_bundle.camera_indices)
 
-        field_outputs = self.field.forward(ray_samples=ray_samples, rotation=rotation)
+        field_outputs = self.field.forward(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes, scale=scale)
 
         outputs = {
             "rgb": field_outputs[RENIFieldHeadNames.RGB],

@@ -164,6 +164,7 @@ class RENIDataManager(VanillaDataManager):
         # NOTE: Updated to RENI sampler where full image per batch is possible
         self.train_pixel_sampler = self._get_pixel_sampler(self.train_dataset, self.config.train_num_rays_per_batch)
         self.train_ray_generator = RayGenerator(self.train_dataset.cameras.to(self.device))
+        self.train_ray_generator.image_coords = self.train_ray_generator.image_coords.to(self.device)
 
     def setup_eval(self):
         """Sets up the data loader for evaluation"""
@@ -188,6 +189,7 @@ class RENIDataManager(VanillaDataManager):
             images_per_batch=1,
         )
         self.eval_ray_generator = RayGenerator(self.eval_dataset.cameras.to(self.device))
+        self.eval_ray_generator.image_coords = self.eval_ray_generator.image_coords.to(self.device)
 
         # for loading full images
         self.fixed_indices_eval_dataloader = FixedIndicesEvalDataloader(

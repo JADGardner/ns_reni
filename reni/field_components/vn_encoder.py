@@ -21,8 +21,8 @@ from dataclasses import dataclass, field
 from typing import Literal, Type, Union, Dict, Optional, List, Tuple
 
 import torch
-from torch import nn
-from torchtyping import TensorType
+from torch import nn, Tensor
+from jaxtyping import Float
 import torch.nn.functional as F
 from einops.layers.torch import Rearrange, Reduce
 
@@ -115,8 +115,7 @@ class VariationalVNEncoder(nn.Module):
         self.fc_mean = nn.Linear(512, self.output_dim)
         self.fc_logvar = nn.Linear(512, self.output_dim)
 
-
-    def get_outputs(self, ray_samples: RaySamples, rgb: TensorType["batch_size", "num_rays", 3]):
+    def get_outputs(self, ray_samples: RaySamples, rgb: Float[Tensor, "batch_size, num_rays, 3"]):
         """Returns the prediction of the discriminator."""
         directions = ray_samples.frustums.directions # [batch_size, num_rays, 3]
         
@@ -156,7 +155,7 @@ class VariationalVNEncoder(nn.Module):
             return mean, logvar
         
 
-    def forward(self, ray_samples: RaySamples, rgb: TensorType["batch_size", "num_rays", 3]):
+    def forward(self, ray_samples: RaySamples, rgb: Float[Tensor, "batch_size, num_rays, 3"]):
         """Evaluates discriminator for a given image batch.
 
         Args:

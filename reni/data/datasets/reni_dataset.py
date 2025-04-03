@@ -25,6 +25,7 @@ import imageio
 from PIL import Image
 from torch import Tensor
 import scipy
+import pyexr
 
 from typing import Type, Union, Tuple, Dict, List
 
@@ -95,7 +96,7 @@ class RENIDataset(InputDataset):
             image_idx: The image index in the dataset.
         """
         image_filename = self._dataparser_outputs.image_filenames[image_idx]
-        image = imageio.imread(image_filename).astype("float32")
+        image = pyexr.read(image_filename).astype("float32")
 
         if len(image.shape) == 2:
             image = image[:, :, None].repeat(3, axis=2)

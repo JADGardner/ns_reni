@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 import contextlib
 
 import torch
-from torch import nn
-from torchtyping import TensorType
+from torch import nn, Tensor
+from jaxtyping import Float
 from einops.layers.torch import Rearrange
 
 from reni.illumination_fields.base_spherical_field import BaseRENIField, BaseRENIFieldConfig
@@ -496,7 +496,7 @@ class RENIField(BaseRENIField):
         rotation: Optional[torch.Tensor] = None,
         latent_codes: Optional[torch.Tensor] = None,
         scale: Optional[torch.Tensor] = None,
-    ) -> Dict[RENIFieldHeadNames, TensorType]:
+    ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Returns the outputs of the field.
 
         Args:
@@ -578,7 +578,7 @@ class RENIField(BaseRENIField):
         rotation: Optional[torch.Tensor] = None,
         latent_codes: Optional[torch.Tensor] = None,
         scale: Optional[torch.Tensor] = None,
-    ) -> Dict[RENIFieldHeadNames, TensorType]:
+    ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:
@@ -588,6 +588,6 @@ class RENIField(BaseRENIField):
             scale: [num_rays]
 
         Returns:
-            Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.
+            Dict[RENIFieldHeadNames, Tensor]: A dictionary containing the outputs of the field.
         """
         return self.get_outputs(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes, scale=scale)

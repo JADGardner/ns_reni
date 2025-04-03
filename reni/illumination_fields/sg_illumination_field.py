@@ -22,8 +22,8 @@ from typing import Type, Union, Dict, Any, Tuple, Optional
 import contextlib
 
 import numpy as np
-import torch
-from torchtyping import TensorType
+from torch import nn, Tensor
+from jaxtyping import Float
 
 from reni.illumination_fields.base_spherical_field import BaseRENIField, BaseRENIFieldConfig
 from reni.field_components.field_heads import RENIFieldHeadNames
@@ -200,9 +200,9 @@ class SphericalGaussianField(BaseRENIField):
     def get_outputs(
         self,
         ray_samples: RaySamples,
-        rotation: Optional[torch.Tensor] = None,
-        latent_codes: Optional[torch.Tensor] = None,
-    ) -> Dict[RENIFieldHeadNames, TensorType]:
+        rotation: Optional[Tensor] = None,
+        latent_codes: Optional[Tensor] = None,
+    ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Returns the outputs of the field.
 
         Args:
@@ -228,9 +228,9 @@ class SphericalGaussianField(BaseRENIField):
     def forward(
         self,
         ray_samples: RaySamples,
-        rotation: Optional[torch.Tensor] = None,
-        latent_codes: Optional[torch.Tensor] = None,
-    ) -> Dict[RENIFieldHeadNames, TensorType]:
+        rotation: Optional[Tensor] = None,
+        latent_codes: Optional[Tensor] = None,
+    ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:

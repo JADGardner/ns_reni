@@ -31,17 +31,16 @@ from typing import Generator, Optional
 
 import nerfacc
 import torch
-from torch import nn
-from torchtyping import TensorType
+from torch import nn, Tensor
+from jaxtyping import Float
 import torch.nn.functional as F
 
 from reni.utils.colourspace import linear_to_sRGB
 
-BACKGROUND_COLOR_OVERRIDE: Optional[TensorType[3]] = None
-
+BACKGROUND_COLOR_OVERRIDE: Optional[Float[Tensor, "3"]] = None
 
 @contextlib.contextmanager
-def background_color_override_context(mode: TensorType[3]) -> Generator[None, None, None]:
+def background_color_override_context(mode: Float[Tensor, "3"]) -> Generator[None, None, None]:
     """Context manager for setting background mode."""
     global BACKGROUND_COLOR_OVERRIDE  # pylint: disable=global-statement
     old_background_color = BACKGROUND_COLOR_OVERRIDE
@@ -58,14 +57,14 @@ class RGBLambertianRenderer(nn.Module):
     @classmethod
     def render_and_combine_rgb(
         cls,
-        albedos: TensorType["bs":..., "num_samples", 3],
-        normals: TensorType["bs":..., "num_samples", 3],
-        light_directions: TensorType["bs":..., "num_samples", 3],
-        light_colors: TensorType["bs":..., "num_samples", 3],
-        weights: TensorType["bs":..., "num_samples", 1],
-        ray_indices: Optional[TensorType["num_samples"]] = None,
+        albedos: Float[Tensor, "*bs num_samples 3"],
+        normals: Float[Tensor, "*bs num_samples 3"],
+        light_directions: Float[Tensor, "*bs num_samples 3"],
+        light_colors: Float[Tensor, "*bs num_samples 3"],
+        weights: Float[Tensor, "*bs num_samples 3"],
+        ray_indices: Optional[Float[Tensor, "num_samples"]] = None,
         num_rays: Optional[int] = None,
-    ) -> TensorType["bs":..., 3]:
+    ) -> Float[Tensor, "*bs 3"]:
         """Composite samples along ray and render color image
 
         Args:
@@ -123,14 +122,14 @@ class RGBLambertianRenderer(nn.Module):
 
     def forward(
         self,
-        albedos: TensorType["bs":..., "num_samples", 3],
-        normals: TensorType["bs":..., "num_samples", 3],
-        light_directions: TensorType["bs":..., "num_samples", 3],
-        light_colors: TensorType["bs":..., "num_samples", 3],
-        weights: TensorType["bs":..., "num_samples", 1],
-        ray_indices: Optional[TensorType["num_samples"]] = None,
+        albedos: Float[Tensor, "*bs num_samples 3"],
+        normals: Float[Tensor, "*bs num_samples 3"],
+        light_directions: Float[Tensor, "*bs num_samples 3"],
+        light_colors: Float[Tensor, "*bs num_samples 3"],
+        weights: Float[Tensor, "*bs num_samples 3"],
+        ray_indices: Optional[Float[Tensor, "num_samples"]] = None,
         num_rays: Optional[int] = None,
-    ) -> TensorType["bs":..., 3]:
+    ) -> Float[Tensor, "*bs 3"]:
         """Composite samples along ray and render color image
 
         Args:

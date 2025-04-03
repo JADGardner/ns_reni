@@ -10,64 +10,25 @@ Paper: RENI++: A Rotation-Equivariant, Scale-Invariant, Natural Illumination Pri
 
 We build on top of Nerfstudio. However, since Nerfstudio is still in very active development with fairly large codebase changes still occurring compatibility might be an issue. Pull requests and issues are very welcome.
 
-### Prerequisites
-
-You must have an NVIDIA video card with CUDA installed on the system. This library has been tested with version 11.8 of CUDA. You can find more information about installing CUDA [here](https://docs.nvidia.com/cuda/cuda-quick-start-guide/index.html)
-
-### Create Environment
-
-Nerfstudio requires `python >= 3.8`. We recommend using conda to manage dependencies. Make sure to install [Conda](https://docs.conda.io/miniconda.html) before proceeding.
-
-#### Install nerfstudio
+#### Install
 
 ```bash
-conda create --name nerfstudio -y python=3.8
-
-conda activate nerfstudio
-
+conda create --name reni++ -y python=3.11
+conda activate reni++
 pip install --upgrade pip
-
-pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
-
-conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
-
+pip install torch==2.1.2+cu118 torchvision==0.16.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+conda install -c -y "nvidia/label/cuda-11.8.0" cuda-toolkit
+export CC=/usr/bin/gcc-11
+export CXX=/usr/bin/g++-11
 pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
-
-git clone https://github.com/nerfstudio-project/nerfstudio.git
-
-cd nerfstudio
-
-pip install --upgrade pip setuptools
-
-pip install -e .
-```
-
-#### Install RENI++
-
-a. Clone repo and install RENI++
-
-```bash
-git clone https://github.com/JADGardner/ns_reni.git
-
 sudo apt install libopenexr-dev
-
-conda install -c conda-forge openexr
-
-cd ns_reni
-
+git clone https://github.com/nerfstudio-project/nerfstudio.git
+cd nerfstudio
+pip install --upgrade pip setuptools
 pip install -e .
-```
-
-b. Setup Nerfstudio CLI
-
-```bash
-ns-install-cli
-```
-
-c. Close and reopen your terminal and source conda environment again:
-
-```bash
-conda activate nerfstudio
+cd ..
+pip install -e .
+pip install numpy==1.26.4
 ```
 
 ## Download Data and Pretrained Models

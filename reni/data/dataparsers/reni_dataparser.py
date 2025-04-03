@@ -89,13 +89,13 @@ class RENIDataParser(DataParser):
         else:
             path = self.data / split
 
-        # if it doesn't exist, download the data
-        url = "https://www.dropbox.com/s/15gn7zlzgua7s8n/RENI_HDR.zip?dl=1"
-        if not path.exists() and self.config.download_data:
-            wget.download(url, out=str(self.data) + ".zip")
-            with zipfile.ZipFile(str(self.data) + ".zip", "r") as zip_ref:
-                zip_ref.extractall(str(self.data))
-            Path(str(self.data) + ".zip").unlink()
+        # # if it doesn't exist, download the data
+        # url = "https://www.dropbox.com/s/15gn7zlzgua7s8n/RENI_HDR.zip?dl=1"
+        # if not path.exists() and self.config.download_data:
+        #     wget.download(url, out=str(self.data) + ".zip")
+        #     with zipfile.ZipFile(str(self.data) + ".zip", "r") as zip_ref:
+        #         zip_ref.extractall(str(self.data))
+        #     Path(str(self.data) + ".zip").unlink()
 
         # get paths for all images in the directory
         image_filenames = sorted(path.glob("*.exr"))

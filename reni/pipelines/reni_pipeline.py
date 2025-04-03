@@ -20,7 +20,7 @@ from __future__ import annotations
 import typing
 from dataclasses import dataclass, field
 from time import time
-from typing import Optional, Type, Union
+from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple, Type, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -52,9 +52,9 @@ class RENIPipelineConfig(VanillaPipelineConfig):
 
     _target: Type = field(default_factory=lambda: RENIPipeline)
     """target class to instantiate"""
-    datamanager: DataManagerConfig = RENIDataManagerConfig()
+    datamanager: DataManagerConfig = field(default_factory=RENIDataManagerConfig)
     """specifies the datamanager config"""
-    model: ModelConfig = ModelConfig()
+    model: ModelConfig = field(default_factory=ModelConfig)
     """specifies the model config"""
     eval_latent_optimisation_epochs: int = 100
     """Number of epochs to optimise latent during eval"""
@@ -101,7 +101,6 @@ class RENIPipeline(VanillaPipeline):
             world_size=world_size,
             local_rank=local_rank,
         )
-        self.datamanager.to(device)
         assert self.datamanager.train_dataset is not None, "Missing input dataset"
 
         if test_mode in ["val", "test"]:
@@ -141,6 +140,37 @@ class RENIPipeline(VanillaPipeline):
         This is an nn.Module, and so requires a forward() method normally, although in our case
         we do not need a forward() method"""
         raise NotImplementedError
+    
+    def load_state_dict(self, state_dict: Mapping[str, Any], strict: Optional[bool] = None):
+        is_ddp_model_state = True
+        model_state = {}
+        for key, value in state_dict.items():
+            if key.startswith("_model."):
+                # remove the "_model." prefix from key
+                model_state[key[len("_model.") :]] = value
+                # make sure that the "module." prefix comes from DDP,
+                # rather than an attribute of the model named "module"
+                if not key.startswith("_model.module."):
+                    is_ddp_model_state = False
+        # remove "module." prefix added by DDP
+        if is_ddp_model_state:
+            model_state = {key[len("module.") :]: value for key, value in model_state.items()}
+
+        pipeline_state = {key: value for key, value in state_dict.items() if not key.startswith("_model.")}
+
+        try:
+            self.model.load_state_dict(model_state, strict=True)
+        except RuntimeError:
+            if not strict:
+                # update the field.eval_mu and field.eval_logvar to be the same shape as the model
+                # with field.eval_mu being zeros and field.eval_logvar being ones
+                model_state["field.eval_mu"] = torch.zeros_like(self.model.field.eval_mu)
+                model_state["field.eval_logvar"] = torch.ones_like(self.model.field.eval_logvar)
+                self.model.load_state_dict(model_state, strict=False)
+            else:
+                raise
+
+        super().load_state_dict(pipeline_state, strict=False)
 
     @profiler.time_function
     def get_train_loss_dict(self, step: int):

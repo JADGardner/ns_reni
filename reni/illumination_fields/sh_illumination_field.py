@@ -19,9 +19,9 @@ from dataclasses import dataclass, field
 import contextlib
 
 import numpy as np
-import torch
 import torch.nn.functional as F
-from torchtyping import TensorType
+from torch import nn, Tensor
+from jaxtyping import Float
 
 from nerfstudio.cameras.rays import RaySamples
 
@@ -430,9 +430,9 @@ class SphericalHarmonicIlluminationField(BaseRENIField):
     def get_outputs(
         self,
         ray_samples: RaySamples,
-        rotation: Optional[torch.Tensor] = None,
-        latent_codes: Optional[torch.Tensor] = None,
-    ) -> Dict[RENIFieldHeadNames, TensorType]:
+        rotation: Optional[Tensor] = None,
+        latent_codes: Optional[Tensor] = None,
+    ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Returns the outputs of the field.
 
         Args:
@@ -441,7 +441,7 @@ class SphericalHarmonicIlluminationField(BaseRENIField):
             latent_codes: [num_rays, latent_dim, 3]
 
         Returns:
-            Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.
+            Dict[RENIFieldHeadNames, Tensor]: A dictionary containing the outputs of the field.
         """
         # we want to batch over camera_indices as these correspond to unique latent codes
         camera_indices = ray_samples.camera_indices.squeeze()  # [num_rays]
@@ -481,9 +481,9 @@ class SphericalHarmonicIlluminationField(BaseRENIField):
     def forward(
         self,
         ray_samples: RaySamples,
-        rotation: Optional[torch.Tensor] = None,
-        latent_codes: Optional[torch.Tensor] = None,
-    ) -> Dict[RENIFieldHeadNames, TensorType]:
+        rotation: Optional[Tensor] = None,
+        latent_codes: Optional[Tensor] = None,
+    ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:
@@ -492,6 +492,6 @@ class SphericalHarmonicIlluminationField(BaseRENIField):
             latent_codes: [num_rays, latent_dim, 3]
 
         Returns:
-            Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.
+            Dict[RENIFieldHeadNames, Tensor]: A dictionary containing the outputs of the field.
         """
         return self.get_outputs(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes)

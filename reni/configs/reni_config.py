@@ -49,6 +49,7 @@ RENIField = MethodSpecification(
                     is_equirectangular=True,
                 ),
                 images_on_gpu=True,
+                masks_on_gpu=True,
                 train_num_rays_per_batch=8192,  # if not full_image_per_batch
                 eval_num_rays_per_batch=8192,  # if not full_image_per_batch
             ),

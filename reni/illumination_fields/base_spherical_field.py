@@ -22,8 +22,8 @@ from typing import Type, Union, Dict, Any, Optional
 import contextlib
 
 import torch
-from torch import nn
-from torchtyping import TensorType
+from torch import nn, Tensor
+from jaxtyping import Float
 
 from reni.field_components.field_heads import RENIFieldHeadNames
 
@@ -51,7 +51,7 @@ class SphericalField(nn.Module):
     @abstractmethod
     def get_outputs(
         self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None]
-    ) -> Dict[RENIFieldHeadNames, TensorType]:
+    ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Returns the outputs of the field.
 
         Args:
@@ -62,7 +62,7 @@ class SphericalField(nn.Module):
 
     def forward(
         self, ray_samples: RaySamples, rotation: Union[torch.Tensor, None]
-    ) -> Dict[RENIFieldHeadNames, TensorType]:
+    ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:
@@ -130,7 +130,7 @@ class BaseRENIField(SphericalField):
         ray_samples: RaySamples,
         rotation: Union[torch.Tensor, None] = None,
         latent_codes: Union[torch.Tensor, None] = None,
-    ) -> Dict[RENIFieldHeadNames, TensorType]:
+    ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Returns the outputs of the field.
 
         Args:
@@ -158,7 +158,7 @@ class BaseRENIField(SphericalField):
         ray_samples: RaySamples,
         rotation: Union[torch.Tensor, None] = None,
         latent_codes: Union[torch.Tensor, None] = None,
-    ) -> Dict[RENIFieldHeadNames, TensorType]:
+    ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:

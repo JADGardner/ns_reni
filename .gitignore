@@ -163,6 +163,7 @@ cython_debug/
 
 # Experiments and outputs
 outputs/
+output/
 exports/
 renders/
 # tensorboard log files

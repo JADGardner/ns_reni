@@ -24,8 +24,8 @@ import numpy.typing as npt
 
 import numpy as np
 import torch
-from torch import nn
-from torchtyping import TensorType
+from torch import nn, Tensor
+from jaxtyping import Float
 
 from nerfstudio.cameras.rays import RaySamples
 
@@ -229,7 +229,7 @@ class EnvironmentMapField(BaseRENIField):
 
     def get_outputs(
         self, ray_samples: RaySamples, rotation: Optional[torch.Tensor]= None, envmaps: Optional[torch.Tensor] = None
-    ) -> Dict[RENIFieldHeadNames, TensorType]:
+    ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Returns the outputs of the field.
 
         Args:
@@ -277,7 +277,7 @@ class EnvironmentMapField(BaseRENIField):
 
     def forward(
         self, ray_samples: RaySamples, rotation: Optional[torch.Tensor]= None, latent_codes: Optional[torch.Tensor] = None
-    ) -> Dict[RENIFieldHeadNames, TensorType]:
+    ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
         Args:
@@ -286,6 +286,6 @@ class EnvironmentMapField(BaseRENIField):
             envmaps: [num_envmaps, 3, H, W]
 
         Returns:
-            Dict[RENIFieldHeadNames, TensorType]: A dictionary containing the outputs of the field.
+            Dict[RENIFieldHeadNames, Tensor]: A dictionary containing the outputs of the field.
         """
         return self.get_outputs(ray_samples=ray_samples, rotation=rotation, envmaps=latent_codes)
