@@ -52,9 +52,9 @@ class SHSGPipelineConfig(VanillaPipelineConfig):
 
     _target: Type = field(default_factory=lambda: SHSGPipeline)
     """target class to instantiate"""
-    datamanager: DataManagerConfig = RENIDataManagerConfig()
+    datamanager: DataManagerConfig = field(default_factory=RENIDataManagerConfig)
     """specifies the datamanager config"""
-    model: ModelConfig = ModelConfig()
+    model: ModelConfig = field(default_factory=ModelConfig)
 
 
 class SHSGPipeline(VanillaPipeline):

@@ -56,13 +56,13 @@ class RENIInverseModelConfig(ModelConfig):
 
     _target: Type = field(default_factory=lambda: RENIInverseModel)
     """target class to instantiate"""
-    illumination_field: SphericalFieldConfig = SphericalFieldConfig()
+    illumination_field: SphericalFieldConfig = field(default_factory=SphericalFieldConfig)
     """Illumination Field"""
     illumination_field_ckpt_path: Path = Path("/path/to/ckpt.pt")
     """Path of pretrained illumination field"""
     illumination_field_ckpt_step: int = 0
     """Step of pretrained illumination field"""
-    illumination_sampler: IlluminationSamplerConfig = IlluminationSamplerConfig()
+    illumination_sampler: IlluminationSamplerConfig = field(default_factory=IlluminationSamplerConfig)
     """Illumination sampler to use"""
     loss_inclusions: Dict[str, Any] = to_immutable_dict(
         {

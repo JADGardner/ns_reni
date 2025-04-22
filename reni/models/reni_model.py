@@ -116,7 +116,7 @@ class RENIModel(Model):
         self.ssim = structural_similarity_index_measure
         self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
 
-    def forward(self, ray_bundle: RayBundle, rotation: Optional[torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def forward(self, ray_bundle: RayBundle, rotation: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         """Run forward starting with a ray bundle. This outputs different things depending on the configuration
         of the model and whether or not the batch is provided (whether or not we are training basically)
 
@@ -146,7 +146,7 @@ class RENIModel(Model):
         param_groups["field"] = list(self.field.parameters())
         return param_groups
 
-    def get_outputs(self, ray_bundle: RayBundle, rotation: Optional[torch.Tensor], latent_codes: Optional[torch.Tensor] = None, scale: Optional[torch.Tensor] = None):
+    def get_outputs(self, ray_bundle: RayBundle, rotation: Optional[torch.Tensor] = None, latent_codes: Optional[torch.Tensor] = None, scale: Optional[torch.Tensor] = None):
         if self.field is None:
             raise ValueError("populate_fields() must be called before get_outputs")
 
@@ -254,7 +254,7 @@ class RENIModel(Model):
 
         batch["image"] = batch["image"].to(device)
 
-        if self.metadata["fit_val_in_ldr"]:
+        if self.metadata["val_in_ldr"]:
             gt_image = self.metadata["hdr_val_images"][batch["indices"][0, 0]].reshape(-1, 3)  # [num_rays, 3]
             gt_image = gt_image.to(device)
         else:
@@ -282,7 +282,7 @@ class RENIModel(Model):
         gt_image_gray = gt_image_gray.reshape(self.metadata["image_height"], self.metadata["image_width"], 1)
         pred_image_gray = pred_image_gray.reshape(self.metadata["image_height"], self.metadata["image_width"], 1)
 
-        gt_min, gt_max = torch.min(gt_image_gray), torch.max(gt_image_gray)
+        gt_min, gt_max = torch.min(gt_image_gray).item(), torch.max(gt_image_gray).item()
 
         combined_log_heatmap = torch.cat([gt_image_gray, pred_image_gray], dim=1)
 
@@ -401,7 +401,7 @@ class RENIModel(Model):
                     else:
                         _, ray_bundle, batch = datamanager.next_eval_image(step)
                     model_outputs = self(ray_bundle)
-                    if self.metadata["fit_val_in_ldr"]:
+                    if self.metadata["val_in_ldr"]:
                         model_outputs["rgb"] = linear_to_sRGB(self.field.unnormalise(model_outputs["rgb"]))
                     loss_dict = self.get_loss_dict(model_outputs, batch, ray_bundle)
                     # add losses together

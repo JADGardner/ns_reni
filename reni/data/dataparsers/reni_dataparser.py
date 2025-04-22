@@ -40,10 +40,10 @@ class RENIDataParserConfig(DataParserConfig):
     """target class to instantiate"""
     data: Path = Path("data/RENI_HDR")
     """Directory specifying location of data."""
-    download_data: bool = False
-    """Whether to download data."""
+    resize_image_width: int = 128
+    """Width to resize images to."""
     convert_to_ldr: bool = False
-    """Whether to convert images to LDR."""
+    """Whether to convert all images to LDR."""
     convert_to_log_domain: bool = False
     """Whether to convert images to log domain."""
     augment_with_mirror: bool = False
@@ -57,14 +57,14 @@ class RENIDataParserConfig(DataParserConfig):
     val_subset_size: Union[int, None] = None
     """Size of validation subset."""
     use_validation_as_train: bool = False
-    """Whether to use validation set as training set."""
+    """Whether to use validation set as training set. For debug"""
     min_max_normalize: Union[Literal["min_max", "quantile"], Tuple[float, float], None] = "min_max"
     """Whether to min-max normalize the images."""
     train_mask_path: Optional[Path] = None
     """Path to the training mask or a directory of masks."""
     eval_mask_path: Optional[Path] = None
     """Path to the evaluation mask or a directory of masks."""
-    fit_val_in_ldr: bool = False
+    val_in_ldr: bool = False
     """Whether to fit validation images in LDR, still includes metrics against HDR versions."""
     custom_val_folder: Optional[str] = None
     """Path to a custom validation folder, if None, uses the default validation folder."""
@@ -89,14 +89,6 @@ class RENIDataParser(DataParser):
         else:
             path = self.data / split
 
-        # # if it doesn't exist, download the data
-        # url = "https://www.dropbox.com/s/15gn7zlzgua7s8n/RENI_HDR.zip?dl=1"
-        # if not path.exists() and self.config.download_data:
-        #     wget.download(url, out=str(self.data) + ".zip")
-        #     with zipfile.ZipFile(str(self.data) + ".zip", "r") as zip_ref:
-        #         zip_ref.extractall(str(self.data))
-        #     Path(str(self.data) + ".zip").unlink()
-
         # get paths for all images in the directory
         image_filenames = sorted(path.glob("*.exr"))
 
@@ -117,6 +109,10 @@ class RENIDataParser(DataParser):
 
         img_0 = imageio.v2.imread(image_filenames[0])
         image_height, image_width = img_0.shape[:2]
+        if image_width != self.config.resize_image_width:
+            print(f"Split {split} images are not the same size as resize_image_width. Resizing to {self.config.resize_image_width}.")
+            image_width = self.config.resize_image_width
+            image_height = int(image_width // 2)
         num_images = len(image_filenames)
 
         mask_filenames = None
@@ -144,6 +140,7 @@ class RENIDataParser(DataParser):
             mask_filenames=mask_filenames,
             cameras=cameras,
             metadata={
+                "resize_image_width": self.config.resize_image_width,
                 "convert_to_ldr": self.config.convert_to_ldr,
                 "convert_to_log_domain": self.config.convert_to_log_domain,
                 "augment_with_mirror": self.config.augment_with_mirror,
@@ -152,7 +149,7 @@ class RENIDataParser(DataParser):
                 "min_max_normalize": self.config.min_max_normalize,
                 "image_height": image_height,
                 "image_width": image_width,
-                "fit_val_in_ldr": self.config.fit_val_in_ldr,
+                "val_in_ldr": self.config.val_in_ldr,
             },
         )
 

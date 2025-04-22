@@ -17,6 +17,7 @@
 from typing import Type, Optional, Dict, Any
 from dataclasses import dataclass, field
 import contextlib
+import torch
 
 import numpy as np
 import torch.nn.functional as F

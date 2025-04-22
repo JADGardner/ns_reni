@@ -10,7 +10,10 @@ from nerfstudio.plugins.types import MethodSpecification
 from nerfstudio.engine.optimizers import AdamOptimizerConfig
 from nerfstudio.engine.schedulers import CosineDecaySchedulerConfig, ExponentialDecaySchedulerConfig
 
+from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManagerConfig, VanillaDataManager
+
 from reni.data.dataparsers.reni_dataparser import RENIDataParserConfig
+from reni.data.datasets.reni_dataset import RENIDataset
 from reni.data.datamanagers.reni_datamanager import RENIDataManagerConfig
 from reni.models.reni_model import RENIModelConfig
 from reni.pipelines.reni_pipeline import RENIPipelineConfig
@@ -31,7 +34,30 @@ RENIField = MethodSpecification(
         mixed_precision=False,
         pipeline=RENIPipelineConfig(
           test_mode='val',
-            datamanager=RENIDataManagerConfig(
+            # datamanager=RENIDataManagerConfig(
+            #     dataparser=RENIDataParserConfig(
+            #         data=Path("data/RENI_HDR"),
+            #         train_subset_size=None,
+            #         val_subset_size=None,
+            #         convert_to_ldr=False,
+            #         convert_to_log_domain=True,
+            #         min_max_normalize=None, # Prior RENI implementation used (-18.0536, 11.4533) in log domain
+            #         use_validation_as_train=False,
+            #         augment_with_mirror=True,
+            #         fit_val_in_ldr=False,
+            #     ),
+            #     pixel_sampler=RENIEquirectangularPixelSamplerConfig(
+            #         full_image_per_batch=False,
+            #         images_per_batch=1,  # if full_image_per_batch
+            #         is_equirectangular=True,
+            #     ),
+            #     images_on_gpu=True,
+            #     masks_on_gpu=True,
+            #     train_num_rays_per_batch=8192,  # if not full_image_per_batch
+            #     eval_num_rays_per_batch=8192,  # if not full_image_per_batch
+            # ),
+            datamanager=VanillaDataManagerConfig(
+                _target=VanillaDataManager[RENIDataset],
                 dataparser=RENIDataParserConfig(
                     data=Path("data/RENI_HDR"),
                     train_subset_size=None,
@@ -41,15 +67,10 @@ RENIField = MethodSpecification(
                     min_max_normalize=None, # Prior RENI implementation used (-18.0536, 11.4533) in log domain
                     use_validation_as_train=False,
                     augment_with_mirror=True,
-                    fit_val_in_ldr=False,
+                    val_in_ldr=False,
                 ),
-                pixel_sampler=RENIEquirectangularPixelSamplerConfig(
-                    full_image_per_batch=False,
-                    images_per_batch=1,  # if full_image_per_batch
-                    is_equirectangular=True,
-                ),
-                images_on_gpu=True,
-                masks_on_gpu=True,
+                images_on_gpu=False,
+                masks_on_gpu=False,
                 train_num_rays_per_batch=8192,  # if not full_image_per_batch
                 eval_num_rays_per_batch=8192,  # if not full_image_per_batch
             ),

@@ -106,8 +106,8 @@ class RENIPipeline(VanillaPipeline):
         if test_mode in ["val", "test"]:
             assert self.datamanager.eval_dataset is not None, "Missing validation dataset"
 
-        num_train_data = self.datamanager.num_train
-        num_eval_data = self.datamanager.num_eval
+        num_train_data = len(self.datamanager.train_dataset)
+        num_eval_data = len(self.datamanager.eval_dataset)
 
         metadata = self.datamanager.train_dataset.metadata
         if "hdr_val_images" in self.datamanager.eval_dataset.metadata:
@@ -182,7 +182,7 @@ class RENIPipeline(VanillaPipeline):
             step: current iteration step to update sampler if using DDP (distributed)
         """
         ray_bundle, batch = self.datamanager.next_train(step)
-        model_outputs = self._model(ray_bundle, batch)  # train distributed data parallel model if world_size > 1
+        model_outputs = self._model(ray_bundle)  # train distributed data parallel model if world_size > 1
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
 
@@ -199,7 +199,7 @@ class RENIPipeline(VanillaPipeline):
         self.eval()
         self._optimise_evaluation_latents(step)
         ray_bundle, batch = self.datamanager.next_eval(step)
-        model_outputs = self.model(ray_bundle, batch)
+        model_outputs = self.model(ray_bundle)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
         self.train()
@@ -216,8 +216,15 @@ class RENIPipeline(VanillaPipeline):
         self.eval()
         # if we haven't already fit the eval latents this step, do it now
         self._optimise_evaluation_latents(step)
-        image_idx, ray_bundle, batch = self.datamanager.next_eval_image(step)
-        outputs = self.model(ray_bundle, batch)
+        camera, batch = self.datamanager.next_eval_image(step)
+        ray_bundle = camera.generate_rays(0)
+        ray_bundle.directions = ray_bundle.directions.reshape(-1, 3)
+        ray_bundle.origins = ray_bundle.origins.reshape(-1, 3)
+        ray_bundle.pixel_area = ray_bundle.pixel_area.reshape(-1, 1)
+        ray_bundle.camera_indices = ray_bundle.camera_indices.reshape(-1, 1)
+        ray_bundle.camera_indices = torch.ones_like(ray_bundle.camera_indices) * batch["image_idx"]
+        outputs = self.model(ray_bundle)
+        image_idx = batch["image_idx"]
         metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
         assert "image_idx" not in metrics_dict
         metrics_dict["image_idx"] = image_idx
@@ -249,11 +256,17 @@ class RENIPipeline(VanillaPipeline):
         ) as progress:
             task = progress.add_task("[green]Evaluating all eval images...", total=num_images)
             for idx in range(num_images):
-                _, ray_bundle, batch = self.datamanager.next_eval_image(idx=idx)
+                camera, batch = self.datamanager.next_eval_image(idx)
+                ray_bundle = camera.generate_rays(0)
+                ray_bundle.directions = ray_bundle.directions.reshape(-1, 3)
+                ray_bundle.origins = ray_bundle.origins.reshape(-1, 3)
+                ray_bundle.pixel_area = ray_bundle.pixel_area.reshape(-1, 1)
+                ray_bundle.camera_indices = ray_bundle.camera_indices.reshape(-1, 1)
+                ray_bundle.camera_indices = torch.ones_like(ray_bundle.camera_indices) * batch["image_idx"]
                 num_rays = ray_bundle.directions.shape[-2]
                 # time this the following line
                 inner_start = time()
-                outputs = self.model(ray_bundle, batch)
+                outputs = self.model(ray_bundle)
                 metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch)
                 assert "num_rays_per_sec" not in metrics_dict
                 metrics_dict["num_rays_per_sec"] = num_rays / (time() - inner_start)

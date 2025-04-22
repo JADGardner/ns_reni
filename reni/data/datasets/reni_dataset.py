@@ -26,6 +26,7 @@ from PIL import Image
 from torch import Tensor
 import scipy
 import pyexr
+import cv2
 
 from typing import Type, Union, Tuple, Dict, List
 
@@ -81,9 +82,10 @@ class RENIDataset(InputDataset):
         self.metadata["augment_with_mirror"] = self._dataparser_outputs.metadata["augment_with_mirror"]
         self.metadata["augment_with_rotation"] = self._dataparser_outputs.metadata["augment_with_rotation"]
         self.metadata["apply_eval_rotation"] = self._dataparser_outputs.metadata["apply_eval_rotation"]
-        self.metadata["fit_val_in_ldr"] = self._dataparser_outputs.metadata["fit_val_in_ldr"]
+        self.metadata["val_in_ldr"] = self._dataparser_outputs.metadata["val_in_ldr"]
+        self.metadata["resize_image_width"] = self._dataparser_outputs.metadata["resize_image_width"]
 
-        if self.metadata["fit_val_in_ldr"] and self.split == "val":
+        if self.metadata["val_in_ldr"] and self.split == "val":
             self.store_hdr_val_in_metadata()
 
     def __len__(self):
@@ -105,6 +107,12 @@ class RENIDataset(InputDataset):
         image[image == np.inf] = np.nanmax(image[image != np.inf])
         # make any values less than zero equal to min non negative
         image[image <= 0] = np.nanmin(image[image > 0])
+        
+        if self.metadata["resize_image_width"] != image.shape[1]:
+            # resize using bilinear interpolation
+            new_width = int(self.metadata["resize_image_width"])
+            new_height = int(self.metadata["resize_image_width"] // 2)
+            image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
 
         if self.metadata["augment_with_mirror"] and self.split == "train":
             # then every image after the halfway point is a copy of the first half and
@@ -156,7 +164,7 @@ class RENIDataset(InputDataset):
         """
         image = self.get_image(image_idx)
 
-        if self.metadata["fit_val_in_ldr"] and self.split == "val":
+        if self.metadata["val_in_ldr"] and self.split == "val":
             if self._dataparser_outputs.metadata["min_max_normalize"]:
                 # undo min max normalization
                 min_val, max_val = self.metadata["min_max"]
@@ -191,10 +199,6 @@ class RENIDataset(InputDataset):
         Args:
             image_idx: The image index in the dataset.
         """
-        # use top 1% of values as estimate of sun mask
-        # sun_mask = torch.mean(data["image"], dim=-1)
-        # sun_mask = sun_mask > torch.quantile(sun_mask, 0.99)
-        # data["sun_mask"] = sun_mask
         return data
 
     def store_hdr_val_in_metadata(self):
