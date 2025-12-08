@@ -228,7 +228,7 @@ class VNReLU(nn.Module):
 
         qk = inner_dot_product(q, k)
 
-        k_norm = k.norm(dim = -1, keepdim = True).clamp(min = self.eps)
+        k_norm = torch.sqrt((k**2).sum(dim=-1, keepdim=True).clamp(min=self.eps))
         q_projected_on_k = q - inner_dot_product(q, k / k_norm) * k
 
         out = torch.where(
