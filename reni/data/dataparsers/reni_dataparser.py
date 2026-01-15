@@ -23,6 +23,7 @@ import imageio
 import torch
 import wget
 import zipfile
+import pyexr
 
 from nerfstudio.cameras.cameras import Cameras, CameraType
 from nerfstudio.data.dataparsers.base_dataparser import (
@@ -107,7 +108,7 @@ class RENIDataParser(DataParser):
         if self.config.augment_with_rotation and split == "train":
             raise NotImplementedError("Rotation augmentation not implemented yet.")
 
-        img_0 = imageio.v2.imread(image_filenames[0])
+        img_0 = pyexr.read(str(image_filenames[0]))
         image_height, image_width = img_0.shape[:2]
         if image_width != self.config.resize_image_width:
             print(f"Split {split} images are not the same size as resize_image_width. Resizing to {self.config.resize_image_width}.")

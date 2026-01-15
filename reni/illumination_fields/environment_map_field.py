@@ -18,7 +18,7 @@ from typing import Type, Union, Dict, Union, Tuple, Optional, Any
 from dataclasses import dataclass, field
 import contextlib
 from pathlib import Path
-import imageio
+import pyexr
 import math
 import numpy.typing as npt
 
@@ -130,7 +130,7 @@ class EnvironmentMapField(BaseRENIField):
         Args:
             image_idx: The image index in the dataset.
         """
-        image = imageio.imread(image_path).astype("float32")
+        image = pyexr.read(str(image_path)).astype("float32")
         # make any inf values equal to max non inf
         image[image == np.inf] = np.nanmax(image[image != np.inf])
         # make any values less than zero equal to min non negative
