@@ -484,6 +484,7 @@ class SphericalHarmonicIlluminationField(BaseRENIField):
         ray_samples: RaySamples,
         rotation: Optional[Tensor] = None,
         latent_codes: Optional[Tensor] = None,
+        scale=None
     ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
