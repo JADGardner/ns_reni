@@ -485,7 +485,7 @@ class RENIField(BaseRENIField):
         elif self.config.encoded_input == "Directions":
             directional_input = self.direction_encoding(directional_input)  # [num_rays, embedding_dim]
         elif self.config.encoded_input == "Both":
-            directional_input = self.dirction_encoding(directional_input)
+            directional_input = self.direction_encoding(directional_input)
             conditioning_input = self.conditioning_encoding(conditioning_input)
 
         return directional_input, conditioning_input

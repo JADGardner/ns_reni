@@ -98,8 +98,11 @@ class BlinnPhongShader(nn.Module):
         lambertian_per_light = torch.einsum("...i,...i->...", normals_expanded, light_directions).clamp(min=0.0)
 
         lambertian_colors = lambertian_per_light.unsqueeze(-1) * light_colors
-
-        shaded_lambertian = albedo * lambertian_colors.sum(1)
+        del lambertian_per_light
+        lambertian_colors_sum = lambertian_colors.sum(1)
+        del lambertian_colors
+        
+        shaded_lambertian = albedo * lambertian_colors_sum
 
         H = (light_directions + view_directions.unsqueeze(1)) / 2.0
         H = H / H.norm(dim=-1, keepdim=True)
@@ -107,6 +110,8 @@ class BlinnPhongShader(nn.Module):
         specular_term_per_light = torch.einsum("...i,...i->...", normals_expanded, H).clamp(
             min=0.0
         ) ** shininess.unsqueeze(1)
+        del H
+        
         specular_term_per_light = specular_term_per_light.unsqueeze(-1)
 
         # Add normalization factor
@@ -116,6 +121,7 @@ class BlinnPhongShader(nn.Module):
 
         # Now combine them
         specular_colors = specular_term_per_light * light_colors
+        del specular_term_per_light
         shaded_specular = specular * bp_specular_normalisation_factor.unsqueeze(-1) * specular_colors.sum(1)
 
         final_color = shaded_lambertian + shaded_specular
