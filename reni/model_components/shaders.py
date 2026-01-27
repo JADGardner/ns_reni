@@ -71,63 +71,139 @@ class LambertianShader(nn.Module):
 
 
 class BlinnPhongShader(nn.Module):
-    """Calculate Blinn-Phong shading."""
+    """Calculate Blinn-Phong shading.
+
+    Optimized for memory efficiency using broadcasting instead of tensor expansion.
+    Supports both expanded inputs (N, M, 3) and broadcast-compatible inputs (1, M, 3).
+    """
 
     @classmethod
     def forward(
         cls,
-        albedo: torch.Tensor,  # shape: (*bs, 3)
-        normals: torch.Tensor,  # shape: (*bs, 3)
-        light_directions: torch.Tensor,  # shape: (*bs, num_light_directions, 3)
-        light_colors: torch.Tensor,  # shape: (*bs, num_light_directions, 3)
-        specular: torch.Tensor,  # shape: (*bs, 3)
-        shininess: torch.Tensor,  # shape: (*bs,)
-        view_directions: torch.Tensor,  # shape: (*bs, 3)
-        detach_normals=False,
+        albedo: torch.Tensor,  # shape: (N, 3)
+        normals: torch.Tensor,  # shape: (N, 3)
+        light_directions: torch.Tensor,  # shape: (N, M, 3) or (1, M, 3) for broadcasting
+        light_colors: torch.Tensor,  # shape: (N, M, 3) or (1, M, 3) for broadcasting
+        specular: torch.Tensor,  # shape: (N, 3)
+        shininess: torch.Tensor,  # shape: (N,)
+        view_directions: torch.Tensor,  # shape: (N, 3)
+        detach_normals: bool = False,
+        normalize_directions: bool = False,  # Set True only if inputs aren't pre-normalized
     ):
-        """Calculate Blinn-Phong shading."""
+        """Calculate Blinn-Phong shading.
 
+        Args:
+            albedo: Diffuse albedo per pixel (N, 3)
+            normals: Surface normals per pixel (N, 3), should be unit length
+            light_directions: Light directions (N, M, 3) or (1, M, 3) for memory-efficient broadcasting
+            light_colors: Light colors/intensities (N, M, 3) or (1, M, 3)
+            specular: Specular coefficient per pixel (N, 3)
+            shininess: Specular exponent per pixel (N,)
+            view_directions: View/camera directions per pixel (N, 3)
+            detach_normals: If True, detach normals from computation graph
+            normalize_directions: If True, normalize light_directions (skip if pre-normalized)
+
+        Returns:
+            Final shaded color per pixel (N, 3)
+        """
         if detach_normals:
             normals = normals.detach()
-        
-        # ensure light directions, normals are both normalised
-        light_directions = light_directions / light_directions.norm(dim=-1, keepdim=True)
 
+        # Only normalize if explicitly requested (saves compute if pre-normalized)
+        if normalize_directions:
+            light_directions = light_directions / light_directions.norm(dim=-1, keepdim=True)
+
+        # Expand normals for broadcasting: (N, 3) -> (N, 1, 3)
         normals_expanded = normals.unsqueeze(1)
 
+        # Lambertian term: dot(N, L) clamped to [0, inf)
+        # Broadcasting: (N, 1, 3) * (N or 1, M, 3) -> (N, M, 3) -> sum -> (N, M)
         lambertian_per_light = torch.einsum("...i,...i->...", normals_expanded, light_directions).clamp(min=0.0)
 
+        # Weight by light colors and sum over all lights
+        # (N, M, 1) * (N or 1, M, 3) -> (N, M, 3) -> sum(dim=1) -> (N, 3)
         lambertian_colors = lambertian_per_light.unsqueeze(-1) * light_colors
         del lambertian_per_light
         lambertian_colors_sum = lambertian_colors.sum(1)
         del lambertian_colors
-        
+
         shaded_lambertian = albedo * lambertian_colors_sum
+        del lambertian_colors_sum
 
-        H = (light_directions + view_directions.unsqueeze(1)) / 2.0
-        H = H / H.norm(dim=-1, keepdim=True)
+        # Half-vector for Blinn-Phong: H = normalize(L + V)
+        # view_directions: (N, 3) -> (N, 1, 3) for broadcasting with light_directions
+        H = light_directions + view_directions.unsqueeze(1)
+        H = H / (H.norm(dim=-1, keepdim=True) + 1e-8)  # Add epsilon for numerical stability
 
-        specular_term_per_light = torch.einsum("...i,...i->...", normals_expanded, H).clamp(
-            min=0.0
-        ) ** shininess.unsqueeze(1)
+        # Specular term: dot(N, H)^shininess
+        # shininess: (N,) -> (N, 1) for broadcasting
+        specular_term_per_light = torch.einsum("...i,...i->...", normals_expanded, H).clamp(min=0.0)
         del H
-        
+        specular_term_per_light = specular_term_per_light ** shininess.unsqueeze(1)
         specular_term_per_light = specular_term_per_light.unsqueeze(-1)
 
-        # Add normalization factor
+        # Blinn-Phong normalization factor: (n+2) / (4 * (2 - exp(-n/2)))
         bp_specular_normalisation_factor = (shininess + 2) / (
             4 * (2 - torch.exp(-shininess / 2))
         )
 
-        # Now combine them
+        # Combine specular with light colors
         specular_colors = specular_term_per_light * light_colors
         del specular_term_per_light
         shaded_specular = specular * bp_specular_normalisation_factor.unsqueeze(-1) * specular_colors.sum(1)
+        del specular_colors
 
         final_color = shaded_lambertian + shaded_specular
 
-        # set minimum to 1e-3
+        # Clamp to minimum value to avoid pure black
         final_color = final_color.clamp(min=1e-3)
 
         return final_color
+
+
+class BlinnPhongShaderChunked(nn.Module):
+    """Memory-efficient Blinn-Phong shader that processes pixels in chunks.
+
+    Use this for very large images or limited GPU memory.
+    """
+
+    def __init__(self, chunk_size: int = 4096):
+        super().__init__()
+        self.chunk_size = chunk_size
+        self.shader = BlinnPhongShader()
+
+    def forward(
+        cls,
+        albedo: torch.Tensor,  # shape: (N, 3)
+        normals: torch.Tensor,  # shape: (N, 3)
+        light_directions: torch.Tensor,  # shape: (1, M, 3) - shared across pixels
+        light_colors: torch.Tensor,  # shape: (1, M, 3) - shared across pixels
+        specular: torch.Tensor,  # shape: (N, 3)
+        shininess: torch.Tensor,  # shape: (N,)
+        view_directions: torch.Tensor,  # shape: (N, 3)
+        detach_normals: bool = False,
+        normalize_directions: bool = False,
+    ):
+        """Process in chunks to reduce peak memory usage."""
+        N = normals.shape[0]
+        chunk_size = cls.chunk_size
+
+        results = []
+        for start in range(0, N, chunk_size):
+            end = min(start + chunk_size, N)
+
+            chunk_result = BlinnPhongShader.forward(
+                albedo=albedo[start:end],
+                normals=normals[start:end],
+                light_directions=light_directions,  # Shared, no slicing
+                light_colors=light_colors,  # Shared, no slicing
+                specular=specular[start:end],
+                shininess=shininess[start:end],
+                view_directions=view_directions[start:end],
+                detach_normals=detach_normals,
+                normalize_directions=normalize_directions,
+            )
+            results.append(chunk_result)
+
+        return torch.cat(results, dim=0)
 
