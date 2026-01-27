@@ -161,6 +161,8 @@ class RENIInverseDataManager(VanillaDataManager):
         self.iter_train_image_dataloader = iter(self.train_image_dataloader)
         self.train_pixel_sampler = self._get_pixel_sampler(self.train_dataset, self.config.train_num_rays_per_batch)
         self.train_ray_generator = RayGenerator(self.train_dataset.cameras.to(self.device))
+        # Fix: ensure image_coords buffer is on the correct device (nerfstudio bug workaround)
+        self.train_ray_generator.image_coords = self.train_ray_generator.image_coords.to(self.device)
 
     def next_eval_image(self, step: int) -> Tuple[int, RayBundle, Dict]:
         fixed_indices_eval_dataloader = FixedIndicesEvalDataloader(
