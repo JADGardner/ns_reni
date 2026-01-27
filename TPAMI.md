@@ -304,3 +304,70 @@ publication/
 ✅ Visual evidence for high-frequency reflection quality  
 ✅ Professional, complete response letter  
 ✅ All editorial corrections made
+
+
+# TPAMI Baseline Method Implementation
+
+## Objective
+Implement baseline comparison methods for RENI++ paper to address reviewer feedback requiring quantitative comparisons against non-SH/SG methods.
+
+## Tasks
+
+### Research & Availability Check
+- [x] Hosek-Wilkie Sky Model - ✅ BSD C source available (v1.4a)
+- [x] SOLD-Net (Reviewer 4 priority) - ✅ Code at `ChemJeff/SOLD-Net`, pretrained on Baidu
+- [x] SkyNet - ❌ No public code (CVPR 2019)
+- [x] Lalonde-Matthews Model - ❌ No public implementation
+- [x] Liang et al. ECCV 24 - IntrinsicAnything (different task: inverse rendering)
+- [x] Yu & Smith CVPR 19 - InverseRenderNet available (SH prediction, not generative prior)
+- [x] Yi et al. CVPR 23 - NEnv EGSR23 available (envmap compression, not generative prior)
+
+### FOV Compatibility (RENI ↔ SOLD-Net)
+| Property | RENI | SOLD-Net |
+|----------|------|----------|
+| Resolution | 64×128 | 32×128 |
+| Vertical FOV | 180° (full sphere) | 90° (sky only) |
+| Horizontal | 360° | 360° |
+| Source | Laval Sky HDR | Laval Sky HDR |
+
+**Conversion**: Crop top half of RENI → matches SOLD-Net exactly!
+
+### Implementation Progress
+- [x] Clone SOLD-Net to project root (`/home/james/github/ns_reni/SOLD-Net`)
+- [x] Test conda compatibility - ✅ Works with `reni++` env
+- [x] FOV compatibility analysis - ✅ Trivial conversion (crop top half)
+- [x] Download pretrained models (Password: `i6ef`) - ✅ In `checkpoints/SOLD_Net/`
+- [x] Implement Hosek-Wilkie in `reni/baselines/hosek_wilkie.py`
+- [x] Implement SOLD-Net wrapper in `reni/baselines/soldnet.py`
+- [x] Create comparison script (`publication/baseline_comparison.py`)
+
+### Baseline Comparison Results (21 test images)
+
+**Final Results with all fixes applied:**
+
+| Method | PSNR↑ | SSIM↑ | LogMSE↓ | LDR PSNR↑ |
+|--------|-------|-------|---------|-----------|
+| **RENI++** | **32.24** | **0.66** | **0.022** | **22.55** |
+| Hosek-Wilkie | 28.84 | 0.36 | 0.097 | 11.61 |
+| SOLD-Net | 28.03 | 0.43 | 0.260 | 14.40 |
+
+Outputs saved to `publication/figures_baseline/`
+
+### Key Implementation Improvements (Dec 2024)
+
+1. **Data Pipeline Alignment**: Fixed `baseline_comparison.py` to use the RENI pipeline datamanager (matching `generate_figures.py`) for consistent GT/prediction handling and proper normalization/unnormalization.
+
+2. **SOLD-Net Sky-Only Decoder**: Added `sky_only=True` mode to bypass the sun decoder blending which caused visible 8×8 white square artifacts. The sun decoder outputs non-zero values outside the sun region when applied to different data distributions.
+
+3. **Hosek-Wilkie Gradient Descent Fitting**: Replaced naive grid search with scipy L-BFGS-B optimization:
+   - Stage 1: Coarse grid search (4×4×3 = 48 combinations) for initial parameters
+   - Stage 2: Gradient descent to refine all 5 parameters (sun_elev, sun_azim, turbidity, albedo, intensity)
+   - Parameters: `maxiter=5000, eps=1e-2, intensity_bounds=(0.01, 1000)`
+
+4. **Hosek-Wilkie Sky-Only Mode**: Fixed equirectangular theta mapping to correctly handle sky hemisphere (θ: 0→π/2) instead of full sphere (θ: 0→π). This eliminated the solid ground color block in the bottom half and improved SSIM from 0.17 → 0.36.
+
+5. **Consistent HDR Space**: All methods compared in HDR linear space with same `field.unnormalise()` and `linear_to_sRGB()` for visualization.
+
+### Documentation
+- [ ] Create `publication/comparison_justification.md` for unavailable methods
+- [x] Update generate_figures.py with baseline comparisons → separate script created

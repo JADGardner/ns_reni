@@ -58,6 +58,8 @@ class RENIDataParserConfig(DataParserConfig):
     """Size of validation subset."""
     use_validation_as_train: bool = False
     """Whether to use validation set as training set. For debug"""
+    use_test_as_train: bool = False
+    """Whether to use test set as training set. For SH/SG fitting on eval images."""
     min_max_normalize: Union[Literal["min_max", "quantile"], Tuple[float, float], None] = "min_max"
     """Whether to min-max normalize the images."""
     train_mask_path: Optional[Path] = None
@@ -83,6 +85,8 @@ class RENIDataParser(DataParser):
     def _generate_dataparser_outputs(self, split="train"):
         if self.config.use_validation_as_train:
             split = "val"
+        elif self.config.use_test_as_train:
+            split = "test"
 
         if split == "test" and self.config.custom_val_folder is not None:
             path = self.data / self.config.custom_val_folder

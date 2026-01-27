@@ -182,9 +182,11 @@ class RENIDataset(InputDataset):
                 pil_mask = pil_mask.resize(
                     (self.metadata["image_width"], self.metadata["image_height"]), resample=Image.NEAREST
                 )
-            mask_tensor = torch.from_numpy(np.array(pil_mask)).bool()
+            mask_tensor = torch.from_numpy(np.array(pil_mask))
+            if len(mask_tensor.shape) == 2:
+                mask_tensor = mask_tensor.unsqueeze(-1)
             # ensure only 1 channel
-            mask_tensor = mask_tensor[:, :, :1]
+            mask_tensor = mask_tensor[:, :, :1].bool()
             data["mask"] = mask_tensor
             assert (
                 data["mask"].shape[:2] == data["image"].shape[:2]

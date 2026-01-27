@@ -287,7 +287,7 @@ class EnvironmentMapField(BaseRENIField):
         if rotation is not None:
             # apply rotation to directions
             rotation = rotation.T
-            directions = torch.matmul(ray_bundle.directions, rotation)  # [num_rays, 3]
+            directions = torch.matmul(directions, rotation)  # [num_rays, 3]
 
         theta, phi = self.cart_to_spherical(directions)  # [num_rays], [num_rays]
         x, y = self.angles_to_map_coords(

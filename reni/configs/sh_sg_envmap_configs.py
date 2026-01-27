@@ -39,7 +39,7 @@ SHField = MethodSpecification(
                     convert_to_ldr=False,
                     convert_to_log_domain=True,
                     min_max_normalize=None,  # Tuple[float, float] | Literal['min_max', 'quantile'] | None (Tuple should be in log domain if log_domain=True)
-                    use_validation_as_train=True,  # SH and SG have no prior, just fit to val data
+                    use_test_as_train=True,  # SH and SG have no prior, fit to test data for fair comparison with RENI++
                     augment_with_mirror=False,
                 ),
                 pixel_sampler=RENIEquirectangularPixelSamplerConfig(
@@ -70,6 +70,7 @@ SHField = MethodSpecification(
                     "cosine_similarity_loss": False,
                     "kld_loss": False,
                     "scale_inv_loss": False,
+                    "scale_inv_grad_loss": False,
                 },
             ),
         ),
@@ -104,7 +105,7 @@ SGField = MethodSpecification(
                     convert_to_ldr=False,
                     convert_to_log_domain=True,
                     min_max_normalize=None,  # Tuple[float, float] | Literal['min_max', 'quantile'] | None (Tuple should be in log domain if log_domain=True)
-                    use_validation_as_train=True,  # SH and SG have no prior, just fit to val data
+                    use_test_as_train=True,  # SH and SG have no prior, fit to test data for fair comparison with RENI++
                     augment_with_mirror=False,
                 ),
                 pixel_sampler=RENIEquirectangularPixelSamplerConfig(
@@ -133,6 +134,7 @@ SGField = MethodSpecification(
                     "cosine_similarity_loss": False,
                     "kld_loss": False,
                     "scale_inv_loss": False,
+                    "scale_inv_grad_loss": False,
                 },
             ),
         ),

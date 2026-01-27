@@ -152,7 +152,14 @@ class RENIModel(Model):
 
         ray_samples = self.create_ray_samples(ray_bundle.origins, ray_bundle.directions, ray_bundle.camera_indices)
 
-        field_outputs = self.field.forward(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes, scale=scale)
+        # Check if the field's forward method accepts 'scale' parameter
+        # SH and SG fields don't support scale, only RENI fields do
+        import inspect
+        forward_params = inspect.signature(self.field.forward).parameters
+        if 'scale' in forward_params:
+            field_outputs = self.field.forward(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes, scale=scale)
+        else:
+            field_outputs = self.field.forward(ray_samples=ray_samples, rotation=rotation, latent_codes=latent_codes)
 
         outputs = {
             "rgb": field_outputs[RENIFieldHeadNames.RGB],
@@ -333,15 +340,29 @@ class RENIModel(Model):
         metrics_dict["ssim_hdr"] = self.ssim(preds=pred_image, target=gt_image)
 
         # for lpips we need to convert to 0 to 1 using image.min() and image.max()
-        gt_image = (gt_image - gt_image.min()) / (gt_image.max() - gt_image.min())
-        pred_image = (pred_image - pred_image.min()) / (pred_image.max() - pred_image.min())
-        metrics_dict["lpips_hdr"] = self.lpips(pred_image, gt_image)
+        # Add NaN/Inf protection for models that may produce invalid outputs during training
+        if torch.isnan(pred_image).any() or torch.isinf(pred_image).any():
+            metrics_dict["lpips_hdr"] = torch.tensor(float('nan'))
+        else:
+            pred_min, pred_max = pred_image.min(), pred_image.max()
+            gt_min_val, gt_max_val = gt_image.min(), gt_image.max()
+            # Avoid division by zero
+            if pred_max - pred_min > 1e-8 and gt_max_val - gt_min_val > 1e-8:
+                gt_image_norm = (gt_image - gt_min_val) / (gt_max_val - gt_min_val)
+                pred_image_norm = (pred_image - pred_min) / (pred_max - pred_min)
+                metrics_dict["lpips_hdr"] = self.lpips(pred_image_norm, gt_image_norm)
+            else:
+                metrics_dict["lpips_hdr"] = torch.tensor(float('nan'))
 
         # if we are not already learning in LDR space
         if not self.metadata["convert_to_ldr"]:
             metrics_dict["psnr_ldr"] = self.psnr(preds=pred_image_ldr, target=gt_image_ldr)
             metrics_dict["ssim_ldr"] = self.ssim(preds=pred_image_ldr, target=gt_image_ldr)
-            metrics_dict["lpips_ldr"] = self.lpips(pred_image_ldr, gt_image_ldr)
+            # Also protect LDR LPIPS
+            if torch.isnan(pred_image_ldr).any() or torch.isinf(pred_image_ldr).any():
+                metrics_dict["lpips_ldr"] = torch.tensor(float('nan'))
+            else:
+                metrics_dict["lpips_ldr"] = self.lpips(pred_image_ldr, gt_image_ldr)
 
         return metrics_dict, images_dict
 
