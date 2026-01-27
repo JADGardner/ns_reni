@@ -74,26 +74,41 @@ class RENIInverseDataset(InputDataset):
         self.metadata["render_filenames"] = self._dataparser_outputs.metadata["render_filenames"]
         self.image_dim = self.metadata["normal_map_resolution"]
 
-        # load all the environment maps
+        # Use fixed resolution for illumination sampling to match model config
+        self.illumination_width = 128
+        self.illumination_height = 64  # Half of width for equirectangular
+
+        # load all the environment maps and resize to fixed illumination resolution
         self.metadata["environment_maps"] = []
         for environment_map_path in self.metadata["environment_maps_filenames"]:
-            # environment_map = imageio.v2.imread(environment_map_path)
-            environment_map = imageio.imread(environment_map_path).astype("float32")
+            # Use pyexr for proper HDR float32 loading
+            environment_map = pyexr.read(str(environment_map_path)).astype("float32")
             # make any inf values equal to max non inf
             environment_map[environment_map == np.inf] = np.nanmax(environment_map[environment_map != np.inf])
             # make any values less than zero equal to min non negative
             environment_map[environment_map <= 0] = np.nanmin(environment_map[environment_map > 0])
             environment_map = torch.tensor(environment_map).float()
+            # Resize to fixed illumination resolution
+            environment_map = F.interpolate(
+                environment_map.unsqueeze(0).permute(0, 3, 1, 2),  # (1, 3, H, W)
+                size=(self.illumination_height, self.illumination_width),
+                mode='bilinear',
+                align_corners=False
+            ).squeeze(0).permute(1, 2, 0)  # (H, W, 3)
             self.metadata["environment_maps"].append(environment_map)
 
         camera_rays = dataparser_outputs.cameras.generate_rays(0) # TODO currently same for all images, this might not be the case
         self.view_directions = camera_rays.directions.reshape(-1, 3) # N x 3
         self.view_directions = self.view_directions / torch.norm(self.view_directions, dim=-1, keepdim=True)
 
-        ray_sampler_config = EquirectangularSamplerConfig(width=self.metadata["env_width"], apply_random_rotation=False, remove_lower_hemisphere=False)
+        # Use fixed resolution for illumination sampling to match model config
+        # This avoids memory issues with high-res environment maps
+        ray_sampler_config = EquirectangularSamplerConfig(width=self.illumination_width, apply_random_rotation=False, remove_lower_hemisphere=False)
         ray_sampler = ray_sampler_config.setup()
         illumination_samples = ray_sampler.generate_direction_samples()
-        light_directions = illumination_samples.frustums.directions.unsqueeze(0).repeat(self.image_dim**2, 1, 1) # N x M x 3
+        # Store light directions without expanding for all pixels (saves memory)
+        # Shape: (M, 3) where M = illumination_height * illumination_width
+        light_directions = illumination_samples.frustums.directions  # M x 3
         # ensure light directions are normalized
         self.light_directions = light_directions / torch.norm(light_directions, dim=-1, keepdim=True)
         self.blinn_phong_shader = BlinnPhongShader()
@@ -153,9 +168,11 @@ class RENIInverseDataset(InputDataset):
             environment_map = self.metadata["environment_maps"][self.metadata["render_metadata"][image_idx]["environment_map_idx"]]
             environment_map = environment_map.reshape(-1, 3).float() # M x 3
             light_colours = environment_map.unsqueeze(0).repeat(normals.shape[0], 1, 1) # N x M x 3
+            # Expand light directions for all pixels (N x M x 3)
+            light_directions = self.light_directions.unsqueeze(0).repeat(normals.shape[0], 1, 1)
             rendered_image = self.blinn_phong_shader(albedo=albedo,
                                                 normals=normals,
-                                                light_directions=self.light_directions,
+                                                light_directions=light_directions,
                                                 light_colors=light_colours,
                                                 specular=specular,
                                                 shininess=shininess,
