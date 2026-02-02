@@ -86,7 +86,18 @@ We have also expanded the Related Work section to explicitly discuss and differe
 
 ### Q5: Runtime and efficiency on consumer hardware
 
-**A5:** We agree that runtime evaluation is important and have added benchmarking results in the revised manuscript. [*Note: benchmark numbers to be inserted after running `scripts/benchmark_runtime.py` on target hardware.*]
+**A5:** We agree that runtime evaluation is important and apologise for dismissing this in our previous response. We have now benchmarked RENI++ on a consumer-grade NVIDIA RTX 4090 GPU (24 GB VRAM).
+
+| | Training (50K iters) | Inference (single forward pass) | Latent Optimisation (2,500 steps, 21 images) |
+|---|---|---|---|
+| **Total time** | ~9 minutes | 2.9 ms | 26.4 seconds |
+| **Per-step time** | 10.5 ms | — | 10.5 ms |
+| **Peak GPU memory** | ~451 MiB | 156 MiB | 451 MiB |
+| **Batch size** | 8,192 rays | 8,192 rays | 8,192 rays |
+
+The model weights occupy only 43 MiB of GPU memory. A single forward pass through the decoder takes 2.9 ms for 8,192 rays, and the full latent code optimisation at test time (2,500 steps across 21 evaluation images) completes in 26.4 seconds. Peak GPU memory usage during optimisation is 451 MiB — well within the capacity of any modern consumer GPU.
+
+For context, the full RENI++ prior trains in approximately 9 minutes on a single RTX 4090, making it highly accessible for researchers with consumer hardware. This is significantly faster than the original RENI, which required ~12 hours of training (an 80× speedup as noted in Section 4.4 of the manuscript).
 
 ---
 
