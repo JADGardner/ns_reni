@@ -1,0 +1,5 @@
+\RequirePackage{shellesc}
+\ShellEscape{latexdiff --flatten main-old.tex main.tex > main-d.tex}
+\input{main-d}
+\documentclass{dummy}
+\title{Demonstrating latexdiff}

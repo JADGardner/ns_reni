@@ -1,0 +1,36 @@
+\documentclass{article}
+
+\begin{document}
+\title{Summary of Changes}
+\date{}
+\maketitle
+
+\noindent This work is an extension of our earlier RENI model \cite{gardner2022rotation}, published at NeurIPS 2022. Compared to our earlier work, RENI++ adds: 
+\begin{itemize}
+\item[--] A scale-free loss enabling a large increase in generalisation capabilities on previously out-of-distribution HDR environments.
+\item[--] Transformer-decoder architecture with positional encoding, replacing the previous SIREN network, able to capture higher frequency details.
+\item[--] An invariant representation that scales as \(O(n)\) rather than \(O(n^{2})\) with the size of latent space by replacing the Gram-Matrix with the VN-Invariant layer \cite{deng_vector_2021}.
+\item[--] We generalise the $SO(2)$ formulation to an arbitrary rotation axis in Section 3.3.
+\item[--] A new NeRFStudio-based \cite{nerfstudio} implementation with an order-of-magnitude speedup in training time. 
+\item[--] A new data normalisation and sampling procedure resulting in smoother training and faster convergence.
+\end{itemize}
+
+\noindent Further, we have updated the paper to provide:
+\begin{itemize}
+\item[--] A more detailed introduction further clarifying this work's human visual system inspirations.
+\item[--] An extension of the related work to include an additional 20 references including many recent neural illumination models. 
+\item[--] An updated Figure 1 to use RENI++ outputs.
+\item[--] An updated Figure 2 to include 'Query' and 'Latent Code' terms for clarity.
+\item[--] An additional figure explaining three possible neural field conditioning methods, Figure 3.
+\item[--] An additional figure comparing outputs of RENI and RENI++, Figure 7.
+\item[--] The inverse rendering results figure, Figure 9, increased to a full-page figure.
+\item[--] Table 1 updated to include RENI++ and additional metrics, namely SSIM and LPIPS.
+\item[--] Additional evaluations of the loss-landscape's non-convexity with mean and standard deviations in Table 2.
+\item[--] Ablations of model components in Table 3.
+\end{itemize}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+
+\end{document}
