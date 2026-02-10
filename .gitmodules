@@ -1,0 +1,12 @@
+[submodule "thirdparty/InverseRenderNet"]
+	path = thirdparty/InverseRenderNet
+	url = https://github.com/YeeU/InverseRenderNet.git
+[submodule "thirdparty/SOLD-Net"]
+	path = thirdparty/SOLD-Net
+	url = https://github.com/ChemJeff/SOLD-Net.git
+[submodule "thirdparty/Yi_et_al_relighting"]
+	path = thirdparty/Yi_et_al_relighting
+	url = https://github.com/renjiaoyi/imagerelighting.git
+[submodule "thirdparty/nerfstudio"]
+	path = thirdparty/nerfstudio
+	url = https://github.com/nerfstudio-project/nerfstudio.git
