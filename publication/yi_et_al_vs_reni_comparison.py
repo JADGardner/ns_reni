@@ -64,7 +64,7 @@ def load_yi_model(model_path: Path, device: torch.device) -> InverseRenderModel:
     """Load Yi et al.'s pretrained InverseRenderModel."""
     net = InverseRenderModel()
     logger.info(f"Loading Yi et al. model from {model_path}")
-    state_dict = torch.load(str(model_path), map_location=device)
+    state_dict = torch.load(str(model_path), map_location=device, weights_only=False)
     if hasattr(state_dict, "_metadata"):
         del state_dict._metadata
     net.load_state_dict(state_dict)
@@ -167,7 +167,7 @@ def load_reni_decoder(ckpt_path: Path, ckpt_step: int, device: torch.device) -> 
         raise ValueError(f"Checkpoint not found at {full_ckpt_path}")
 
     logger.info(f"Loading RENI decoder from {full_ckpt_path}")
-    ckpt = torch.load(str(full_ckpt_path), map_location=device)
+    ckpt = torch.load(str(full_ckpt_path), map_location=device, weights_only=False)
 
     illumination_field_dict = {}
     match_str = "_model.field."
@@ -477,6 +477,7 @@ def main():
         with torch.no_grad():
             gt_render = render_with_environment(
                 normals, mask, gt_envmap, light_directions, view_directions, shader,
+                background_color=1.0,
             )
 
         # --- Yi et al. ---
@@ -515,6 +516,21 @@ def main():
             "reni_envmap": reni_envmap.detach().cpu(),
             "gt_render_ldr": gt_render_ldr.cpu(),
         })
+
+        # --- Save individual images ---
+        img_dir = output_dir / f"image_{idx:03d}"
+        img_dir.mkdir(parents=True, exist_ok=True)
+
+        render_np = np.clip(gt_render_ldr.cpu().numpy(), 0, 1)
+        gt_env_np = np.clip(linear_to_sRGB(gt_envmap, use_quantile=True).cpu().numpy(), 0, 1)
+        yi_env_np = np.clip(linear_to_sRGB(yi_envmap, use_quantile=True).detach().cpu().numpy(), 0, 1)
+        reni_env_np = np.clip(linear_to_sRGB(reni_envmap, use_quantile=True).detach().cpu().numpy(), 0, 1)
+
+        Image.fromarray((render_np * 255).astype(np.uint8)).save(img_dir / "input_render.png")
+        Image.fromarray((gt_env_np * 255).astype(np.uint8)).save(img_dir / "gt_envmap.png")
+        Image.fromarray((yi_env_np * 255).astype(np.uint8)).save(img_dir / "yi_envmap.png")
+        Image.fromarray((reni_env_np * 255).astype(np.uint8)).save(img_dir / "reni_envmap.png")
+        logger.info(f"  Saved individual images to {img_dir}")
 
     # --- Aggregate metrics ---
     mean_metrics = {}

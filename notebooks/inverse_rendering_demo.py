@@ -71,7 +71,7 @@ def load_pretrained_reni_decoder(
         raise ValueError(f"Checkpoint not found at {full_ckpt_path}")
 
     print(f"Loading RENI decoder from {full_ckpt_path}")
-    ckpt = torch.load(str(full_ckpt_path), map_location=device)
+    ckpt = torch.load(str(full_ckpt_path), map_location=device, weights_only=False)
 
     # Extract decoder weights
     illumination_field_dict = {}
@@ -104,6 +104,10 @@ def load_environment_map(
     # Handle inf/negative values
     env_map[env_map == np.inf] = np.nanmax(env_map[env_map != np.inf])
     env_map[env_map <= 0] = np.nanmin(env_map[env_map > 0])
+
+    # Keep only RGB channels (drop alpha if present)
+    if env_map.shape[-1] > 3:
+        env_map = env_map[..., :3]
 
     env_map = torch.tensor(env_map).float()
 
@@ -526,8 +530,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()if __name__ == "__main__":
-    main()if __name__ == "__main__":
-    main()if __name__ == "__main__":
-    main()if __name__ == "__main__":
     main()
