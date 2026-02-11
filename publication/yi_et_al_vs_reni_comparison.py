@@ -19,13 +19,20 @@ Usage:
 
 import argparse
 import logging
+import os
 import sys
 import warnings
 from pathlib import Path
 from typing import Dict, Tuple
 
+# Limit CPU thread usage to prevent system freezing
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS", "2")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+
 import numpy as np
 import torch
+torch.set_num_threads(2)
 import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
@@ -45,7 +52,7 @@ from reni.utils.utils import find_nerfstudio_project_root
 from nerfstudio.cameras.cameras import Cameras, CameraType
 
 # Yi et al. imports
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "Yi_et_al_relighting" / "InverseRendering"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "thirdparty" / "Yi_et_al_relighting" / "InverseRendering"))
 from model import InverseRenderModel
 
 # EXR loading
@@ -160,7 +167,7 @@ def load_reni_decoder(ckpt_path: Path, ckpt_step: int, device: torch.device) -> 
 
     field = config.setup(num_train_data=None, num_eval_data=None)
 
-    project_root = find_nerfstudio_project_root(Path(__file__))
+    project_root = Path(__file__).resolve().parent.parent
     full_ckpt_path = project_root / ckpt_path / "nerfstudio_models" / f"step-{ckpt_step:09d}.ckpt"
 
     if not full_ckpt_path.exists():
@@ -191,15 +198,15 @@ def decode_reni_to_envmap(
     reni_field: RENIField,
     latent_codes: torch.Tensor,
     scale: torch.Tensor,
-    sampler,
+    ray_samples,
+    num_dirs: int,
+    sampler_height: int,
+    sampler_width: int,
     device: torch.device,
 ) -> torch.Tensor:
     """Decode latent codes through RENI to get environment map."""
-    ray_samples = sampler.generate_direction_samples().to(device)
-    num_dirs = ray_samples.frustums.directions.shape[0]
     latents_expanded = latent_codes.unsqueeze(0).expand(num_dirs, -1, -1)
     scale_expanded = scale.expand(num_dirs)
-    ray_samples.camera_indices = torch.zeros(num_dirs, dtype=torch.long, device=device)
 
     with torch.set_grad_enabled(latent_codes.requires_grad):
         outputs = reni_field.forward(
@@ -208,7 +215,7 @@ def decode_reni_to_envmap(
 
     hdr_colors = outputs[RENIFieldHeadNames.RGB]
     hdr_colors = reni_field.unnormalise(hdr_colors)
-    env_map = hdr_colors.reshape(sampler.height, sampler.width, 3)
+    env_map = hdr_colors.reshape(sampler_height, sampler_width, 3)
     return env_map
 
 
@@ -234,10 +241,18 @@ def reni_inverse_render(
     l2_loss_fn = nn.MSELoss()
     cosine_sim = nn.CosineSimilarity(dim=-1)
 
+    # Pre-compute ray samples on GPU once (avoids CPU→GPU transfer every step)
+    ray_samples = sampler.generate_direction_samples().to(device)
+    num_dirs = ray_samples.frustums.directions.shape[0]
+    ray_samples.camera_indices = torch.zeros(num_dirs, dtype=torch.long, device=device)
+
     for step in range(num_steps + 1):
         optimizer.zero_grad()
 
-        pred_envmap = decode_reni_to_envmap(reni_field, latent_codes, torch.exp(scale), sampler, device)
+        pred_envmap = decode_reni_to_envmap(
+            reni_field, latent_codes, torch.exp(scale),
+            ray_samples, num_dirs, sampler.height, sampler.width, device,
+        )
         pred_render = render_with_environment(
             normals, mask, pred_envmap, light_directions, view_directions,
             shader, specular_term, shininess,
@@ -256,7 +271,10 @@ def reni_inverse_render(
         optimizer.step()
 
     with torch.no_grad():
-        final_envmap = decode_reni_to_envmap(reni_field, latent_codes, torch.exp(scale), sampler, device)
+        final_envmap = decode_reni_to_envmap(
+            reni_field, latent_codes, torch.exp(scale),
+            ray_samples, num_dirs, sampler.height, sampler.width, device,
+        )
 
     return final_envmap
 
@@ -425,7 +443,7 @@ def main():
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    project_root = find_nerfstudio_project_root(Path(__file__))
+    project_root = Path(__file__).resolve().parent.parent
     output_dir = project_root / args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -434,11 +452,11 @@ def main():
 
     # --- Load models ---
     logger.info("Loading Yi et al. model...")
-    yi_model_path = project_root / "Yi_et_al_relighting" / "InverseRendering" / "path" / "invrender.pth"
+    yi_model_path = project_root / "thirdparty" / "Yi_et_al_relighting" / "InverseRendering" / "path" / "invrender.pth"
     yi_net = load_yi_model(yi_model_path, device)
 
     logger.info("Loading RENI++ decoder...")
-    reni_ckpt_path = Path("outputs/reni/reni_plus_plus_models/latent_dim_100")
+    reni_ckpt_path = Path("checkpoints/reni_plus_plus_models/latent_dim_100")
     reni_field = load_reni_decoder(reni_ckpt_path, ckpt_step=50000, device=device)
 
     # --- Load normal map ---
@@ -485,6 +503,9 @@ def main():
         with torch.no_grad():
             gt_render_ldr = linear_to_sRGB(gt_render, use_quantile=True)
             gt_render_ldr = torch.clamp(gt_render_ldr, 0, 1)
+            # Composite white background after tone-mapping (avoids quantile crushing bg)
+            mask_3ch = mask.unsqueeze(-1).expand_as(gt_render_ldr).float()
+            gt_render_ldr = gt_render_ldr * mask_3ch + (1.0 - mask_3ch)
 
         yi_sh_coeffs = yi_predict_sh(yi_net, gt_render_ldr, mask.float(), device)
         yi_envmap = shReconstructSignal(yi_sh_coeffs, width=illumination_width, device=device)
@@ -563,7 +584,7 @@ def main():
     logger.info(f"Saved {table_path}")
 
     # --- Generate comparison figure (last image) ---
-    fig, axes = plt.subplots(1, 4, figsize=(20, 4))
+    fig, axes = plt.subplots(1, 4, figsize=(20, 4), gridspec_kw={'width_ratios': [1, 2, 2, 2]})
 
     gt_disp = linear_to_sRGB(gt_envmap, use_quantile=True).cpu().numpy()
     yi_disp = linear_to_sRGB(yi_envmap, use_quantile=True).detach().cpu().numpy()
@@ -595,7 +616,7 @@ def main():
     # --- Generate multi-image comparison grid ---
     if len(saved_results) > 1:
         n_show = min(len(saved_results), 5)
-        fig, axes = plt.subplots(n_show, 4, figsize=(20, 4 * n_show))
+        fig, axes = plt.subplots(n_show, 4, figsize=(20, 4 * n_show), gridspec_kw={'width_ratios': [1, 2, 2, 2]})
         if n_show == 1:
             axes = axes.reshape(1, -1)
 

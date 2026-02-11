@@ -25,6 +25,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+from PIL import Image
 from tqdm import tqdm
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
@@ -490,7 +491,6 @@ class InverseRenderNetVsRENI:
             # Either from the custom_val_folder or from the data dir
             if self.custom_val_folder is not None:
                 # Get image size from the first EXR in custom folder
-                from pathlib import Path
                 custom_path = Path(self.data_dir).parent / self.custom_val_folder
                 exr_files = sorted(custom_path.glob("*.exr"))
                 if exr_files:
@@ -606,6 +606,27 @@ class InverseRenderNetVsRENI:
         
         # Render as full environment map at target resolution
         sh_coeffs = sh_coeffs[0]  # [9, 3]
+
+        # Remap SH coeffs from InverseRenderNet camera space to RENI equirectangular space
+        # IRN normal map: x=right, y=up, z=toward_viewer
+        # RENI equirect:  x_reni=right, y_reni=forward, z_reni=up
+        # Mapping: x_irn=x_reni, y_irn=z_reni, z_irn=-y_reni
+        # IRN basis:  B1∝y_irn, B2∝z_irn, B3∝x_irn
+        # RENI basis: B1∝-x_reni, B2∝z_reni, B3∝-y_reni
+        remapped = torch.zeros_like(sh_coeffs)
+        remapped[0] = sh_coeffs[0]
+        # l=1
+        remapped[1] = -sh_coeffs[3]   # x_irn=x_reni; B1_reni∝-x → negate
+        remapped[2] = sh_coeffs[1]    # y_irn=z_reni; B2_reni∝z → direct
+        remapped[3] = sh_coeffs[2]    # z_irn=-y_reni; B3_reni∝-y → direct
+        # l=2
+        remapped[4] = -sh_coeffs[7]                             # xz_irn → B4∝xy_reni
+        remapped[5] = -sh_coeffs[4]                             # xy_irn → B5∝-xz_reni
+        remapped[6] = -0.5 * (sh_coeffs[6] + sh_coeffs[8])     # diagonal mixing
+        remapped[7] = sh_coeffs[5]                              # yz_irn → B7∝-yz_reni
+        remapped[8] = 0.5 * (3 * sh_coeffs[6] - sh_coeffs[8])  # diagonal mixing
+        sh_coeffs = remapped
+
         envmap = shReconstructSignal(sh_coeffs, width=target_width, device=self.device)
         envmap = envmap.cpu().numpy()
         
@@ -806,21 +827,27 @@ class InverseRenderNetVsRENI:
         
         return gt_img_hdr.cpu().numpy(), rgb_hdr.cpu().numpy(), mask
     
-    def run_evaluation(self, num_images: Optional[int] = None) -> Tuple[Dict, Dict]:
+    def run_evaluation(self, num_images: Optional[int] = None, image_indices: Optional[List[int]] = None) -> Tuple[Dict, Dict]:
         """
         Run full evaluation.
-        
+
         Both methods are evaluated on the same images from RENI++ eval dataset:
         - InverseRenderNet: Extract FoV crop from GT envmap, predict full envmap from SH
         - RENI++: Use datamanager with masks, fit latent codes, predict full envmap
         """
         n_eval = len(self.datamanager.eval_dataset) if self.reni_model else 0
-        n_images_eval = min(num_images, n_eval) if num_images else n_eval
-        
-        if n_images_eval == 0:
+
+        if image_indices is not None:
+            eval_indices = [i for i in image_indices if i < n_eval]
+        elif num_images:
+            eval_indices = list(range(min(num_images, n_eval)))
+        else:
+            eval_indices = list(range(n_eval))
+
+        if len(eval_indices) == 0:
             logger.warning("No evaluation images available")
             return {}, {}
-        
+
         metrics = {'InverseRenderNet': [], 'RENI++': []}
         images_data = {
             'crop': [],
@@ -830,10 +857,10 @@ class InverseRenderNetVsRENI:
             'RENI++': [],
             'mask': [],
         }
-        
-        logger.info(f"Running evaluation on {n_images_eval} images...")
-        
-        for i in tqdm(range(n_images_eval), desc="Evaluating"):
+
+        logger.info(f"Running evaluation on {len(eval_indices)} images (indices: {eval_indices})...")
+
+        for i in tqdm(eval_indices, desc="Evaluating"):
             # Run RENI++ outpainting first to get the GT image
             gt_hdr, reni_envmap, mask = self.run_reni_outpainting(i)
             
@@ -885,44 +912,60 @@ class InverseRenderNetVsRENI:
         return avg_metrics, images_data
     
     def generate_comparison_figure(
-        self, 
-        images_data: Dict, 
+        self,
+        images_data: Dict,
         indices: Optional[List[int]] = None,
         save_name: str = "comparison.png",
     ):
         """Generate visual comparison figure."""
         if indices is None:
             indices = list(range(min(5, len(images_data['gt']))))
-        
+
         n_images = len(indices)
-        # 5 columns: Input Crop, Conditioning, InverseRenderNet, RENI++, Ground Truth
-        fig, axes = plt.subplots(n_images, 5, figsize=(17, n_images * 2.2))
-        
+        # 5 columns: Ground Truth, Input Crop, RENI++ Conditioning, InverseRenderNet (SH), RENI++ (Outpainting)
+        fig, axes = plt.subplots(n_images, 5, figsize=(17, n_images * 2.2),
+                                 gridspec_kw={'width_ratios': [2, 1, 2, 2, 2]})
+
         if n_images == 1:
             axes = axes.reshape(1, -1)
-        
-        titles = ['Input Crop', 'RENI++ Conditioning', 'InverseRenderNet (SH)', 'RENI++ (Outpainting)', 'Ground Truth']
-        
+
+        titles = ['Ground Truth', 'Input Crop', 'RENI++ Conditioning', 'InverseRenderNet (SH)', 'RENI++ (Outpainting)']
+
         for row, idx in enumerate(indices):
+            # Get the equirectangular height for padding reference
+            gt_img = images_data['gt'][idx]
+
+            # Resize crop to match equirectangular image height (no padding)
+            crop_img = images_data['crop'][idx]
+            eq_h, eq_w = gt_img.shape[:2]
+            crop_h, crop_w = crop_img.shape[:2]
+            scale = eq_h / crop_h
+            new_h = eq_h
+            new_w = int(crop_w * scale)
+            p999 = np.percentile(crop_img, 99.9) + 1e-8
+            crop_ldr = (np.clip(crop_img / p999, 0, 1) * 255).astype(np.uint8)
+            crop_resized = np.array(Image.fromarray(crop_ldr).resize((new_w, new_h), Image.LANCZOS)).astype(np.float32) / 255.0
+            crop_padded = crop_resized * p999
+
             images = [
-                images_data['crop'][idx],
+                gt_img,
+                crop_padded,
                 images_data['conditioning'][idx],
                 images_data['InverseRenderNet'][idx],
                 images_data['RENI++'][idx],
-                images_data['gt'][idx],
             ]
-            
+
             for col, (img, title) in enumerate(zip(images, titles)):
                 # Convert to sRGB for display
                 img_tensor = torch.from_numpy(img).float()
                 display = linear_to_sRGB(img_tensor, use_quantile=True)
                 display = np.clip(display.numpy(), 0, 1)
-                
+
                 axes[row, col].imshow(display)
                 if row == 0:
                     axes[row, col].set_title(title, fontsize=10, fontweight='bold')
                 axes[row, col].axis('off')
-        
+
         plt.tight_layout()
         save_path = self.output_dir / save_name
         plt.savefig(save_path, dpi=200, bbox_inches='tight')
@@ -954,13 +997,13 @@ class InverseRenderNetVsRENI:
         
         return table
     
-    def run(self, num_images: Optional[int] = None):
+    def run(self, num_images: Optional[int] = None, image_indices: Optional[List[int]] = None):
         """Run full comparison pipeline."""
         logger.info("=" * 60)
         logger.info("InverseRenderNet vs RENI++ Comparison")
         logger.info("=" * 60)
-        
-        metrics, images_data = self.run_evaluation(num_images)
+
+        metrics, images_data = self.run_evaluation(num_images, image_indices=image_indices)
         
         # Print results
         print("\n" + "=" * 60)
@@ -991,7 +1034,7 @@ def main():
     parser.add_argument("--data_dir", type=str, default="data/RENI_HDR/test",
                        help="Directory with test HDR images")
     parser.add_argument("--inversenet_weights", type=str, 
-                       default="checkpoints/inverserendernet/inversenet_weights.pth",
+                       default="checkpoints/inverserendernet/model_ckpt.pth",
                        help="Path to InverseRenderNet weights")
     parser.add_argument("--reni_checkpoint", type=str,
                        default="checkpoints/reni_plus_plus_models/latent_dim_100",
@@ -1002,19 +1045,21 @@ def main():
                        help="Limit to first N images")
     parser.add_argument("--device", type=str, default="cuda:0",
                        help="Device to run on")
-    parser.add_argument("--crop_fov", type=float, default=90.0,
+    parser.add_argument("--crop_fov", type=float, default=120.0,
                        help="Horizontal FoV of crop in degrees")
-    parser.add_argument("--crop_v_fov", type=float, default=45.0,
+    parser.add_argument("--crop_v_fov", type=float, default=120.0,
                        help="Vertical FoV of crop in degrees")
-    parser.add_argument("--azimuth", type=float, default=0.0,
+    parser.add_argument("--azimuth", type=float, default=80.0,
                        help="Azimuth angle for mask center in degrees (-180 to 180)")
-    parser.add_argument("--elevation", type=float, default=0.0,
+    parser.add_argument("--elevation", type=float, default=-10.0,
                        help="Elevation angle for mask center in degrees (-90 to 90)")
-    parser.add_argument("--reni_fit_steps", type=int, default=1000,
+    parser.add_argument("--reni_fit_steps", type=int, default=2500,
                        help="Number of latent fitting steps for RENI++")
     parser.add_argument("--custom_val_folder", type=str, default=None,
                        help="Custom folder for evaluation images (relative to data root)")
-    
+    parser.add_argument("--image_indices", type=int, nargs='+', default=None,
+                       help="Specific image indices to evaluate (e.g. --image_indices 0 9 10 11 20)")
+
     args = parser.parse_args()
     
     comparison = InverseRenderNetVsRENI(
@@ -1031,7 +1076,7 @@ def main():
         custom_val_folder=args.custom_val_folder,
     )
     
-    comparison.run(num_images=args.num_images)
+    comparison.run(num_images=args.num_images, image_indices=args.image_indices)
 
 
 if __name__ == "__main__":

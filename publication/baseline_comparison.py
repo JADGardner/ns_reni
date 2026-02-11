@@ -354,43 +354,79 @@ class BaselineComparison:
         return avg_metrics, images_data
     
     def generate_comparison_figure(
-        self, 
-        images_data: Dict, 
+        self,
+        images_data: Dict,
         indices: List[int] = [0, 5, 10],
-        save_name: str = "baseline_comparison.png"
+        save_name: str = "baseline_comparison.png",
+        layout: str = "two_column",
     ):
-        """Generate visual comparison figure."""
+        """Generate visual comparison figure.
+
+        Args:
+            layout: "two_column" for 2 major column groups (8 examples),
+                    "single_column" for 1 column (5 examples).
+        No text titles (added via tikz in LaTeX).
+        """
+        import matplotlib.gridspec as gridspec
+
         methods = ['GT', 'RENI++', 'SOLD-Net', 'Hosek-Wilkie']
         n_methods = len(methods)
-        n_images = len(indices)
-        
-        fig, axes = plt.subplots(n_images, n_methods, figsize=(n_methods * 3.5, n_images * 1.8))
-        
-        if n_images == 1:
-            axes = axes.reshape(1, -1)
-        
-        for row, idx in enumerate(indices):
-            images = [
-                images_data['gt'][idx],
-                images_data['RENI++'][idx],
-                images_data['SOLD-Net'][idx],
-                images_data['Hosek-Wilkie'][idx],
-            ]
-            
-            for col, (img, title) in enumerate(zip(images, methods)):
-                # Convert to sRGB for display (matching generate_figures.py)
-                img_tensor = torch.from_numpy(img).float()
-                display = linear_to_sRGB(img_tensor, use_quantile=True)
-                display = np.clip(display.numpy(), 0, 1)
-                
-                axes[row, col].imshow(display)
-                if row == 0:
-                    axes[row, col].set_title(title, fontsize=11, fontweight='bold')
-                axes[row, col].axis('off')
-        
-        plt.tight_layout()
+
+        if layout == "two_column":
+            half = (len(indices) + 1) // 2
+            left_indices = indices[:half]
+            right_indices = indices[half:]
+            n_rows = max(len(left_indices), len(right_indices))
+
+            fig = plt.figure(figsize=(n_methods * 2 * 1.8, n_rows * 0.48))
+            outer = gridspec.GridSpec(1, 2, figure=fig, wspace=0.02)
+
+            for group_idx, group_indices in enumerate([left_indices, right_indices]):
+                inner = gridspec.GridSpecFromSubplotSpec(
+                    len(group_indices), n_methods,
+                    subplot_spec=outer[group_idx],
+                    wspace=0.02, hspace=0.0,
+                )
+                for row, idx in enumerate(group_indices):
+                    images = [
+                        images_data['gt'][idx],
+                        images_data['RENI++'][idx],
+                        images_data['SOLD-Net'][idx],
+                        images_data['Hosek-Wilkie'][idx],
+                    ]
+                    for col, img in enumerate(images):
+                        ax = fig.add_subplot(inner[row, col])
+                        img_tensor = torch.from_numpy(img).float()
+                        display = linear_to_sRGB(img_tensor, use_quantile=True)
+                        display = np.clip(display.numpy(), 0, 1)
+                        ax.imshow(display)
+                        ax.axis('off')
+        else:  # single_column
+            n_rows = len(indices)
+            fig, axes = plt.subplots(
+                n_rows, n_methods,
+                figsize=(n_methods * 2.5, n_rows * 0.65),
+                gridspec_kw={'wspace': 0.02, 'hspace': 0.0},
+            )
+            if n_rows == 1:
+                axes = axes[np.newaxis, :]
+            for row, idx in enumerate(indices):
+                images = [
+                    images_data['gt'][idx],
+                    images_data['RENI++'][idx],
+                    images_data['SOLD-Net'][idx],
+                    images_data['Hosek-Wilkie'][idx],
+                ]
+                for col, img in enumerate(images):
+                    ax = axes[row, col]
+                    img_tensor = torch.from_numpy(img).float()
+                    display = linear_to_sRGB(img_tensor, use_quantile=True)
+                    display = np.clip(display.numpy(), 0, 1)
+                    ax.imshow(display)
+                    ax.axis('off')
+
         save_path = self.output_dir / save_name
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0.01)
         plt.close()
         logger.info(f"Saved {save_path}")
         
@@ -422,15 +458,15 @@ class BaselineComparison:
         
         return table
     
-    def run(self, num_images: Optional[int] = None):
+    def run(self, num_images: Optional[int] = None, image_indices: Optional[List[int]] = None):
         """Run full comparison pipeline."""
         logger.info("=" * 60)
         logger.info("Baseline Comparison Evaluation")
         logger.info("=" * 60)
-        
+
         # Run evaluation
         metrics, images_data = self.run_evaluation(num_images)
-        
+
         # Print metrics
         print("\n" + "=" * 60)
         print("RESULTS")
@@ -439,12 +475,22 @@ class BaselineComparison:
             print(f"\n{method}:")
             for key, value in m.items():
                 print(f"  {key}: {value:.4f}")
-        
+
         # Generate outputs
-        logger.info("\nGenerating comparison figure...")
+        logger.info("\nGenerating comparison figures...")
         n_available = len(images_data['gt'])
-        indices = list(range(n_available))  # Show all images
-        self.generate_comparison_figure(images_data, indices)
+        if image_indices is not None:
+            indices = [i for i in image_indices if i < n_available]
+        else:
+            indices = list(range(n_available))
+
+        # Two-column version (8 examples)
+        idx_8 = indices[:8] if len(indices) >= 8 else indices
+        self.generate_comparison_figure(images_data, idx_8, save_name="baseline_comparison_2col.png", layout="two_column")
+
+        # Single-column version (5 examples)
+        idx_5 = indices[:5] if len(indices) >= 5 else indices
+        self.generate_comparison_figure(images_data, idx_5, save_name="baseline_comparison_1col.png", layout="single_column")
         
         logger.info("Generating metrics table...")
         table = self.generate_metrics_table(metrics)
@@ -471,17 +517,19 @@ def main():
                        help="Limit to first N images (for quick testing)")
     parser.add_argument("--device", type=str, default="cuda:0",
                        help="Device to run on")
-    
+    parser.add_argument("--image_indices", type=int, nargs='+', default=None,
+                       help="Specific image indices for the figure (e.g. --image_indices 0 2 5 7 9 11 15 18)")
+
     args = parser.parse_args()
-    
+
     comparison = BaselineComparison(
         reni_checkpoint=args.reni_checkpoint,
         soldnet_checkpoint=args.soldnet_checkpoint,
         output_dir=args.output_dir,
         device=args.device,
     )
-    
-    comparison.run(num_images=args.num_images)
+
+    comparison.run(num_images=args.num_images, image_indices=args.image_indices)
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ import torch.nn as nn
 from typing import Optional, Tuple
 
 # Add SOLD-Net to path
-SOLDNET_ROOT = Path(__file__).parent.parent.parent / "SOLD-Net" / "encoding"
+SOLDNET_ROOT = Path(__file__).parent.parent.parent / "thirdparty" / "SOLD-Net" / "encoding"
 sys.path.insert(0, str(SOLDNET_ROOT))
 
 from model.Autoencoder import GlobalEncoder, SkyDecoder, SunDecoder
