@@ -58,7 +58,7 @@ class VariationalVNEncoderConfig(InstantiateConfig):
     """whether to return the intermediate components of the discriminator (for testing)"""
     output_dim: int = 1
     """output dimension of the discriminator"""
-    output_activation: torch.nn.Module = nn.Sigmoid()
+    output_activation: torch.nn.Module = field(default_factory=nn.Sigmoid)
     """output activation of the discriminator"""
     fusion_strategy: Literal["early", "late"] = "early"
     """early fusion concat at the input, late fusion concat at the output"""

@@ -38,8 +38,7 @@ CONSOLE = Console(width=120)
 class RENIModelConfig(ModelConfig):
     """Vanilla Model Config"""
     _target: Type = field(default_factory=lambda: RENIModel)
-    # field: SphericalFieldConfig = SphericalFieldConfig()
-    field: SphericalFieldConfig = field(default_factory=lambda: SphericalFieldConfig)
+    field: SphericalFieldConfig = field(default_factory=SphericalFieldConfig)
     """Field configuration"""
     loss_inclusions: Dict[str, Union[bool, Literal["train", "eval", "both"]]] = to_immutable_dict(
         {

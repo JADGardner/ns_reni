@@ -138,7 +138,7 @@ class RENIInverseModel(Model):
             if not ckpt_path.exists():
                 raise ValueError(f"Could not find illumination field checkpoint at {ckpt_path}")
 
-            ckpt = torch.load(str(ckpt_path))
+            ckpt = torch.load(str(ckpt_path), weights_only=False)
             illumination_field_dict = {}
             match_str = "_model.field."
             ignore_strs = [

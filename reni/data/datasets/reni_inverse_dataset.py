@@ -17,6 +17,8 @@ Dataset.
 """
 from __future__ import annotations
 
+from dataclasses import field
+
 import numpy as np
 import numpy.typing as npt
 import torch
