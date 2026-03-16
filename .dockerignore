@@ -1,0 +1,20 @@
+# Don't send data/outputs/checkpoints as build context
+data/
+outputs/
+checkpoints/
+wandb/
+
+# Build artifacts
+*.sif
+*_overlay.img
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Thirdparty (large repos, not needed for build)
+thirdparty/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store

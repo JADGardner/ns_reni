@@ -185,7 +185,7 @@ class RENIInverseModel(Model):
             self.cosine_similarity = nn.CosineSimilarity(dim=1)
 
         # metrics
-        self.psnr = PeakSignalNoiseRatio()
+        self.psnr = PeakSignalNoiseRatio(data_range=1.0)
         self.ssim = structural_similarity_index_measure
         self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
 

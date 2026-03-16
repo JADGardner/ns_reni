@@ -191,3 +191,8 @@ camera_paths/
 */**/._.DS_Store
 /checkpoints/
 models/*
+
+# Apptainer artifacts (SIF images, overlays, .env)
+.apptainer/*.sif
+.apptainer/*_overlay.img
+.apptainer/.env
