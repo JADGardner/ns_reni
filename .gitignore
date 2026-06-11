@@ -195,4 +195,5 @@ models/*
 # Apptainer artifacts (SIF images, overlays, .env)
 .apptainer/*.sif
 .apptainer/*_overlay.img
-.apptainer/.env
+.apptainer/.envthirdparty/SOLD-Net/
+thirdparty/Yi_et_al_relighting/
