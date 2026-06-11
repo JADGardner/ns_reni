@@ -11,30 +11,26 @@ Usage:
     python scripts/inverse_rendering_demo.py
 """
 
-from pathlib import Path
-
-import matplotlib.pyplot as plt
-import numpy as np
-import pyexr
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
+import pyexr
+from pathlib import Path
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
-from nerfstudio.cameras.cameras import Cameras, CameraType
-from reni.field_components.field_heads import RENIFieldHeadNames
-from reni.illumination_fields.reni_illumination_field import (RENIField,
-                                                              RENIFieldConfig)
-from reni.model_components.illumination_samplers import \
-    EquirectangularSamplerConfig
+from reni.illumination_fields.reni_illumination_field import RENIField, RENIFieldConfig
+from reni.model_components.illumination_samplers import EquirectangularSamplerConfig
 from reni.model_components.shaders import BlinnPhongShader
+from reni.field_components.field_heads import RENIFieldHeadNames
 from reni.utils.colourspace import linear_to_sRGB
 from reni.utils.utils import find_nerfstudio_project_root
 
+from nerfstudio.cameras.cameras import Cameras, CameraType
 
-def load_pretrained_reni_decoder(
-    ckpt_path: Path, ckpt_step: int, device: torch.device
-) -> RENIField:
+
+def load_pretrained_reni_decoder(ckpt_path: Path, ckpt_step: int, device: torch.device) -> RENIField:
     """Load the pretrained RENI decoder from checkpoint."""
 
     # Create RENI field config matching the pretrained model
@@ -63,15 +59,13 @@ def load_pretrained_reni_decoder(
 
     # Load checkpoint
     project_root = find_nerfstudio_project_root(Path(__file__))
-    full_ckpt_path = (
-        project_root / ckpt_path / "nerfstudio_models" / f"step-{ckpt_step:09d}.ckpt"
-    )
+    full_ckpt_path = project_root / ckpt_path / "nerfstudio_models" / f"step-{ckpt_step:09d}.ckpt"
 
     if not full_ckpt_path.exists():
         raise ValueError(f"Checkpoint not found at {full_ckpt_path}")
 
     print(f"Loading RENI decoder from {full_ckpt_path}")
-    ckpt = torch.load(str(full_ckpt_path), map_location=device, weights_only=False)
+    ckpt = torch.load(str(full_ckpt_path), map_location=device)
 
     # Extract decoder weights
     illumination_field_dict = {}
@@ -79,10 +73,8 @@ def load_pretrained_reni_decoder(
     ignore_strs = ["train_logvar", "eval_logvar", "train_mu", "eval_mu"]
 
     for key in ckpt["pipeline"].keys():
-        if key.startswith(match_str) and not any(
-            ignore in key for ignore in ignore_strs
-        ):
-            illumination_field_dict[key[len(match_str) :]] = ckpt["pipeline"][key]
+        if key.startswith(match_str) and not any(ignore in key for ignore in ignore_strs):
+            illumination_field_dict[key[len(match_str):]] = ckpt["pipeline"][key]
 
     field.load_state_dict(illumination_field_dict, strict=False)
     field = field.to(device)
@@ -95,9 +87,7 @@ def load_pretrained_reni_decoder(
     return field
 
 
-def load_environment_map(
-    env_path: Path, target_height: int = 64, target_width: int = 128
-) -> torch.Tensor:
+def load_environment_map(env_path: Path, target_height: int = 64, target_width: int = 128) -> torch.Tensor:
     """Load and preprocess an HDR environment map."""
     env_map = pyexr.read(str(env_path)).astype("float32")
 
@@ -105,23 +95,15 @@ def load_environment_map(
     env_map[env_map == np.inf] = np.nanmax(env_map[env_map != np.inf])
     env_map[env_map <= 0] = np.nanmin(env_map[env_map > 0])
 
-    # Keep only RGB channels (drop alpha if present)
-    if env_map.shape[-1] > 3:
-        env_map = env_map[..., :3]
-
     env_map = torch.tensor(env_map).float()
 
     # Resize to target resolution
-    env_map = (
-        F.interpolate(
-            env_map.unsqueeze(0).permute(0, 3, 1, 2),
-            size=(target_height, target_width),
-            mode="bilinear",
-            align_corners=False,
-        )
-        .squeeze(0)
-        .permute(1, 2, 0)
-    )
+    env_map = F.interpolate(
+        env_map.unsqueeze(0).permute(0, 3, 1, 2),
+        size=(target_height, target_width),
+        mode='bilinear',
+        align_corners=False
+    ).squeeze(0).permute(1, 2, 0)
 
     return env_map
 
@@ -129,11 +111,10 @@ def load_environment_map(
 def load_normal_map(normal_path: Path, target_size: int = 128) -> tuple:
     """Load normal map and create mask."""
     # Use pyexr for EXR files to preserve float32 [-1, 1] range
-    if str(normal_path).endswith(".exr"):
-        normals = pyexr.read(str(normal_path)).astype("float32")
+    if str(normal_path).endswith('.exr'):
+        normals = pyexr.read(str(normal_path)).astype('float32')
     else:
         import imageio
-
         normals = imageio.v2.imread(str(normal_path))
         # Convert uint8 [0, 255] to [-1, 1] if needed
         if normals.max() > 1.0:
@@ -142,16 +123,12 @@ def load_normal_map(normal_path: Path, target_size: int = 128) -> tuple:
     normals = torch.tensor(normals).float()
 
     # Resize
-    normals = (
-        F.interpolate(
-            normals.unsqueeze(0).permute(0, 3, 1, 2),
-            size=(target_size, target_size),
-            mode="bilinear",
-            align_corners=False,
-        )
-        .squeeze(0)
-        .permute(1, 2, 0)
-    )
+    normals = F.interpolate(
+        normals.unsqueeze(0).permute(0, 3, 1, 2),
+        size=(target_size, target_size),
+        mode='bilinear',
+        align_corners=False
+    ).squeeze(0).permute(1, 2, 0)
 
     # Create mask based on normal magnitude
     # Valid normals should have magnitude close to 1
@@ -170,9 +147,7 @@ def load_normal_map(normal_path: Path, target_size: int = 128) -> tuple:
     return normals, mask
 
 
-def create_camera_and_view_directions(
-    image_size: int, device: torch.device
-) -> torch.Tensor:
+def create_camera_and_view_directions(image_size: int, device: torch.device) -> torch.Tensor:
     """Create view directions for rendering."""
     # Simple orthographic-like camera looking at object
     camera_angle_x = 0.6911112070083618  # ~40 degrees FOV
@@ -206,84 +181,44 @@ def render_with_environment(
     specular_term: float = 0.2,
     shininess: float = 500.0,
     background_color: float = 1.0,  # White background
-    use_masked_rendering: bool = True,  # Only compute for valid pixels
 ) -> torch.Tensor:
-    """Render object with given environment map illumination.
-
-    Optimized for memory efficiency using:
-    - Broadcasting instead of tensor expansion (saves ~3GB)
-    - Masked rendering to only compute for valid pixels (saves ~50% compute)
-    """
+    """Render object with given environment map illumination."""
     image_size = normals.shape[0]
     normals_flat = normals.reshape(-1, 3)
     mask_flat = mask.reshape(-1)
 
-    # Prepare light colors and directions for BROADCASTING (1, M, 3) not (N, M, 3)
+    # Material properties
+    specular = torch.ones_like(normals_flat) * specular_term
+    albedo = 1 - specular
+    shin = torch.ones(normals_flat.shape[0], device=normals.device) * shininess
+
+    # Zero out masked regions
+    albedo[~mask_flat] = 0
+    specular[~mask_flat] = 0
+    shin[~mask_flat] = 0
+
+    # Prepare light colors and directions
     env_flat = env_map.reshape(-1, 3)  # M x 3
-    light_colors = env_flat.unsqueeze(0)  # (1, M, 3) - will broadcast
-    light_dirs = light_directions.unsqueeze(0)  # (1, M, 3) - will broadcast
+    light_colors = env_flat.unsqueeze(0).repeat(normals_flat.shape[0], 1, 1)  # N x M x 3
+    light_dirs = light_directions.unsqueeze(0).repeat(normals_flat.shape[0], 1, 1)  # N x M x 3
 
-    if use_masked_rendering:
-        # Only compute shading for valid pixels - saves significant compute
-        valid_indices = mask_flat.nonzero(as_tuple=True)[0]
-        num_valid = valid_indices.shape[0]
+    # Render
+    rendered = shader(
+        albedo=albedo,
+        normals=normals_flat,
+        light_directions=light_dirs,
+        light_colors=light_colors,
+        specular=specular,
+        shininess=shin,
+        view_directions=view_directions,
+        detach_normals=True
+    )
 
-        if num_valid > 0:
-            # Extract only valid pixels
-            valid_normals = normals_flat[valid_indices]  # K x 3
-            valid_view_dirs = view_directions[valid_indices]  # K x 3
+    rendered = rendered.reshape(image_size, image_size, 3)
 
-            # Material properties for valid pixels only
-            valid_specular = torch.ones_like(valid_normals) * specular_term
-            valid_albedo = 1 - valid_specular
-            valid_shin = torch.ones(num_valid, device=normals.device) * shininess
+    # Set background pixels to background color (white by default)
+    rendered[~mask] = background_color
 
-            # Render only valid pixels
-            valid_rendered = shader(
-                albedo=valid_albedo,
-                normals=valid_normals,
-                light_directions=light_dirs,
-                light_colors=light_colors,
-                specular=valid_specular,
-                shininess=valid_shin,
-                view_directions=valid_view_dirs,
-                detach_normals=True,
-            )
-
-            # Scatter back to full image with background color
-            rendered_flat = torch.full(
-                (normals_flat.shape[0], 3), background_color, device=normals.device
-            )
-            rendered_flat[valid_indices] = valid_rendered
-        else:
-            rendered_flat = torch.full(
-                (normals_flat.shape[0], 3), background_color, device=normals.device
-            )
-    else:
-        # Full rendering but still using broadcasting for memory efficiency
-        specular = torch.ones_like(normals_flat) * specular_term
-        albedo = 1 - specular
-        shin = torch.ones(normals_flat.shape[0], device=normals.device) * shininess
-
-        # Zero out masked regions
-        albedo[~mask_flat] = 0
-        specular[~mask_flat] = 0
-        shin[~mask_flat] = 0
-
-        rendered_flat = shader(
-            albedo=albedo,
-            normals=normals_flat,
-            light_directions=light_dirs,
-            light_colors=light_colors,
-            specular=specular,
-            shininess=shin,
-            view_directions=view_directions,
-            detach_normals=True,
-        )
-        # Set background
-        rendered_flat[~mask_flat] = background_color
-
-    rendered = rendered_flat.reshape(image_size, image_size, 3)
     return rendered
 
 
@@ -307,7 +242,9 @@ def decode_reni_to_envmap(
 
     with torch.set_grad_enabled(latent_codes.requires_grad):
         outputs = reni_field.forward(
-            ray_samples=ray_samples, latent_codes=latents_expanded, scale=scale_expanded
+            ray_samples=ray_samples,
+            latent_codes=latents_expanded,
+            scale=scale_expanded
         )
 
     hdr_colors = outputs[RENIFieldHeadNames.RGB]
@@ -340,25 +277,25 @@ def save_comparison_image(
 
     axes[0, 0].imshow(gt_render_disp)
     axes[0, 0].set_title("Ground Truth Render")
-    axes[0, 0].axis("off")
+    axes[0, 0].axis('off')
 
     axes[0, 1].imshow(pred_render_disp)
     axes[0, 1].set_title(f"RENI Predicted Render (Step {step})")
-    axes[0, 1].axis("off")
+    axes[0, 1].axis('off')
 
     axes[1, 0].imshow(gt_env_disp)
     axes[1, 0].set_title("Ground Truth Environment")
-    axes[1, 0].axis("off")
+    axes[1, 0].axis('off')
 
     axes[1, 1].imshow(pred_env_disp)
     axes[1, 1].set_title("RENI Decoded Environment")
-    axes[1, 1].axis("off")
+    axes[1, 1].axis('off')
 
     fig.suptitle(f"Step {step} | Loss: {loss:.6f}", fontsize=14)
     plt.tight_layout()
 
     output_path = output_dir / f"step_{step:04d}.png"
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"Saved {output_path}")
 
@@ -400,9 +337,7 @@ def main():
 
     # Load ground truth environment map
     print("\n[2/5] Loading environment map...")
-    gt_envmap = load_environment_map(
-        env_map_path, illumination_height, illumination_width
-    )
+    gt_envmap = load_environment_map(env_map_path, illumination_height, illumination_width)
     gt_envmap = gt_envmap.to(device)
     print(f"  Environment map shape: {gt_envmap.shape}")
 
@@ -418,7 +353,7 @@ def main():
     sampler = EquirectangularSamplerConfig(
         width=illumination_width,
         apply_random_rotation=False,
-        remove_lower_hemisphere=False,
+        remove_lower_hemisphere=False
     ).setup()
 
     shader = BlinnPhongShader()
@@ -426,9 +361,7 @@ def main():
     # Get light directions
     ray_samples = sampler.generate_direction_samples()
     light_directions = ray_samples.frustums.directions.to(device)
-    light_directions = light_directions / torch.norm(
-        light_directions, dim=-1, keepdim=True
-    )
+    light_directions = light_directions / torch.norm(light_directions, dim=-1, keepdim=True)
 
     # Get view directions
     view_directions = create_camera_and_view_directions(image_size, device)
@@ -437,14 +370,8 @@ def main():
     print("\n[5/5] Rendering ground truth...")
     with torch.no_grad():
         gt_render = render_with_environment(
-            normals,
-            mask,
-            gt_envmap,
-            light_directions,
-            view_directions,
-            shader,
-            specular_term,
-            shininess,
+            normals, mask, gt_envmap, light_directions, view_directions,
+            shader, specular_term, shininess
         )
     print(f"  GT render shape: {gt_render.shape}")
 
@@ -472,14 +399,8 @@ def main():
 
         # Render with predicted environment
         pred_render = render_with_environment(
-            normals,
-            mask,
-            pred_envmap,
-            light_directions,
-            view_directions,
-            shader,
-            specular_term,
-            shininess,
+            normals, mask, pred_envmap, light_directions, view_directions,
+            shader, specular_term, shininess
         )
 
         # Compute loss in sRGB space
@@ -488,35 +409,26 @@ def main():
         pred_srgb = linear_to_sRGB(pred_render, q=q, clamp=False)
 
         rgb_loss = l2_loss_fn(pred_srgb, gt_srgb)
-        cos_loss = (
-            1.0 - cosine_sim(pred_srgb.reshape(-1, 3), gt_srgb.reshape(-1, 3)).mean()
-        )
-        prior_loss = torch.mean(latent_codes**2)
+        cos_loss = 1.0 - cosine_sim(pred_srgb.reshape(-1, 3), gt_srgb.reshape(-1, 3)).mean()
+        prior_loss = torch.mean(latent_codes ** 2)
 
         total_loss = 100.0 * rgb_loss + 1.0 * cos_loss + 0.001 * prior_loss
 
         total_loss.backward()
         optimizer.step()
 
-        pbar.set_postfix(
-            {
-                "loss": f"{total_loss.item():.4f}",
-                "rgb": f"{rgb_loss.item():.4f}",
-                "scale": f"{torch.exp(scale).item():.2f}",
-            }
-        )
+        pbar.set_postfix({
+            'loss': f'{total_loss.item():.4f}',
+            'rgb': f'{rgb_loss.item():.4f}',
+            'scale': f'{torch.exp(scale).item():.2f}'
+        })
 
         # Save comparison images
         if step % save_every == 0:
             with torch.no_grad():
                 save_comparison_image(
-                    gt_render,
-                    pred_render,
-                    gt_envmap,
-                    pred_envmap,
-                    step,
-                    output_dir,
-                    total_loss.item(),
+                    gt_render, pred_render, gt_envmap, pred_envmap,
+                    step, output_dir, total_loss.item()
                 )
 
     print("\n" + "=" * 60)

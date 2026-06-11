@@ -14,23 +14,27 @@
 
 """Environment Map"""
 
-from typing import Type, Union, Dict, Union, Tuple, Optional, Any
-from dataclasses import dataclass, field
 import contextlib
-from pathlib import Path
-import pyexr
 import math
-import numpy.typing as npt
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple, Type, Union
 
+import imageio
 import numpy as np
+import numpy.typing as npt
 import torch
-from torch import nn, Tensor
 from jaxtyping import Float
+from torch import Tensor, nn
 
 from nerfstudio.cameras.rays import RaySamples
-
-from reni.illumination_fields.base_spherical_field import SphericalField, SphericalFieldConfig, BaseRENIFieldConfig, BaseRENIField
 from reni.field_components.field_heads import RENIFieldHeadNames
+from reni.illumination_fields.base_spherical_field import (
+    BaseRENIField,
+    BaseRENIFieldConfig,
+    SphericalField,
+    SphericalFieldConfig,
+)
 
 
 @dataclass
@@ -60,7 +64,10 @@ class EnvironmentMapField(BaseRENIField):
         normalisations: Dict[str, Any],
     ) -> None:
         super().__init__(
-            config=config, num_train_data=num_train_data, num_eval_data=num_eval_data, normalisations=normalisations
+            config=config,
+            num_train_data=num_train_data,
+            num_eval_data=num_eval_data,
+            normalisations=normalisations,
         )
         self.config = config
         self.num_train_data = num_train_data
@@ -71,37 +78,47 @@ class EnvironmentMapField(BaseRENIField):
         self.apply_padding = config.apply_padding
         self.fixed_decoder = config.fixed_decoder
 
-        assert self.resolution[0] == self.resolution[1] // 2, "Environment map must have a 2:1 aspect ratio."
+        assert (
+            self.resolution[0] == self.resolution[1] // 2
+        ), "Environment map must have a 2:1 aspect ratio."
 
         if self.apply_padding:
             self.resolution[1] += 2  # add padding to the width dimension
 
         if self.config.trainable:
             self.train_envmaps = nn.Parameter(
-                torch.randn(num_train_data, 3, self.resolution[0], self.resolution[1]), requires_grad=True
+                torch.randn(num_train_data, 3, self.resolution[0], self.resolution[1]),
+                requires_grad=True,
             )
             self.eval_envmaps = nn.Parameter(
-                torch.randn(num_eval_data, 3, self.resolution[0], self.resolution[1]), requires_grad=True
+                torch.randn(num_eval_data, 3, self.resolution[0], self.resolution[1]),
+                requires_grad=True,
             )
         else:
             # get the image from the path and set both train and eval envmaps to the same image
             image = self.get_numpy_image(self.path)
-            image = torch.from_numpy(image).unsqueeze(0).permute(0, 3, 1, 2)  # [1, 3, H, W]
+            image = (
+                torch.from_numpy(image).unsqueeze(0).permute(0, 3, 1, 2)
+            )  # [1, 3, H, W]
 
             # Apply padding to the environment maps to avoid artifacts at the borders.
             if self.apply_padding:
                 image = image.permute(0, 2, 3, 1)  # Change dimensions to [B, W, H, C]
                 image = torch.nn.functional.pad(
-                    image, (0, 0, 1, 1), mode="replicate"  # padding of 1 on either side of width dimension
+                    image,
+                    (0, 0, 1, 1),
+                    mode="replicate",  # padding of 1 on either side of width dimension
                 )
-                image = image.permute(0, 3, 1, 2)  # Change dimensions back to [B, C, H, W+2]
+                image = image.permute(
+                    0, 3, 1, 2
+                )  # Change dimensions back to [B, C, H, W+2]
 
             self.train_envmaps = image
             self.eval_envmaps = image
 
-        # ensure envmap is only 3 channels
-        self.train_envmaps = self.train_envmaps[:, :3, :, :]
-        self.eval_envmaps = self.eval_envmaps[:, :3, :, :]
+            # ensure envmap is only 3 channels
+            self.train_envmaps = self.train_envmaps[:, :3, :, :]
+            self.eval_envmaps = self.eval_envmaps[:, :3, :, :]
 
         # to match RENI training make train_mu and eval_mu pointers to self.train_envmaps, self.eval_envmaps
         self.train_mu = self.train_envmaps
@@ -130,7 +147,7 @@ class EnvironmentMapField(BaseRENIField):
         Args:
             image_idx: The image index in the dataset.
         """
-        image = pyexr.read(str(image_path)).astype("float32")
+        image = imageio.imread(image_path).astype("float32")
         # make any inf values equal to max non inf
         image[image == np.inf] = np.nanmax(image[image != np.inf])
         # make any values less than zero equal to min non negative
@@ -200,8 +217,13 @@ class EnvironmentMapField(BaseRENIField):
         wc = (x1.type_as(x) - x) * (y - y0.type_as(y))
         wd = (x - x0.type_as(x)) * (y - y0.type_as(y))
 
-        return wa[..., None] * Ia + wb[..., None] * Ib + wc[..., None] * Ic + wd[..., None] * Id
-    
+        return (
+            wa[..., None] * Ia
+            + wb[..., None] * Ib
+            + wc[..., None] * Ic
+            + wd[..., None] * Id
+        )
+
     def nearest_neighbor_interpolate(self, envmaps, camera_indices, x, y):
         """
         Performs nearest neighbor interpolation on the image.
@@ -226,9 +248,11 @@ class EnvironmentMapField(BaseRENIField):
 
         return nearest_pixel
 
-
     def get_outputs(
-        self, ray_samples: RaySamples, rotation: Optional[torch.Tensor]= None, envmaps: Optional[torch.Tensor] = None
+        self,
+        ray_samples: RaySamples,
+        rotation: Optional[torch.Tensor] = None,
+        envmaps: Optional[torch.Tensor] = None,
     ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Returns the outputs of the field.
 
@@ -263,11 +287,15 @@ class EnvironmentMapField(BaseRENIField):
         if rotation is not None:
             # apply rotation to directions
             rotation = rotation.T
-            directions = torch.matmul(ray_bundle.directions, rotation)  # [num_rays, 3]
+            directions = torch.matmul(directions, rotation)  # [num_rays, 3]
 
         theta, phi = self.cart_to_spherical(directions)  # [num_rays], [num_rays]
-        x, y = self.angles_to_map_coords(theta, phi, envmaps.shape[-2], envmaps.shape[-1])  # [num_rays], [num_rays]
-        samples = self.nearest_neighbor_interpolate(envmaps, camera_indices, x, y)  # [num_rays, 3]
+        x, y = self.angles_to_map_coords(
+            theta, phi, envmaps.shape[-2], envmaps.shape[-1]
+        )  # [num_rays], [num_rays]
+        samples = self.nearest_neighbor_interpolate(
+            envmaps, camera_indices, x, y
+        )  # [num_rays, 3]
 
         outputs = {
             RENIFieldHeadNames.RGB: samples,
@@ -276,7 +304,10 @@ class EnvironmentMapField(BaseRENIField):
         return outputs
 
     def forward(
-        self, ray_samples: RaySamples, rotation: Optional[torch.Tensor]= None, latent_codes: Optional[torch.Tensor] = None
+        self,
+        ray_samples: RaySamples,
+        rotation: Optional[torch.Tensor] = None,
+        latent_codes: Optional[torch.Tensor] = None,
     ) -> Dict[RENIFieldHeadNames, Tensor]:
         """Evaluates spherical field for a given ray bundle and rotation.
 
@@ -288,4 +319,6 @@ class EnvironmentMapField(BaseRENIField):
         Returns:
             Dict[RENIFieldHeadNames, Tensor]: A dictionary containing the outputs of the field.
         """
-        return self.get_outputs(ray_samples=ray_samples, rotation=rotation, envmaps=latent_codes)
+        return self.get_outputs(
+            ray_samples=ray_samples, rotation=rotation, envmaps=latent_codes
+        )

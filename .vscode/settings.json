@@ -26,8 +26,8 @@
   "[python]": {
     "editor.defaultFormatter": "ms-python.black-formatter",
     "editor.codeActionsOnSave": {
-      "source.organizeImports": true,
-      "source.fixAll": true
+      "source.organizeImports": "explicit",
+      "source.fixAll": "explicit"
     }
   },
   "editor.formatOnSave": true,
@@ -122,5 +122,8 @@
   },
   "python.analysis.typeCheckingMode": "basic",
   "python.analysis.diagnosticMode": "workspace",
-  "eslint.packageManager": "yarn"
+  "eslint.packageManager": "yarn",
+  "python-envs.defaultEnvManager": "ms-python.python:conda",
+  "python-envs.defaultPackageManager": "ms-python.python:conda",
+  "python-envs.pythonProjects": []
 }

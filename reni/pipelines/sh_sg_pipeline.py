@@ -97,7 +97,7 @@ class SHSGPipeline(VanillaPipeline):
             local_rank=local_rank,
             using_scale_inv_grad_loss=self.using_scale_inv_grad_loss,
         )
-        self.datamanager.to(device)
+        # Note: RENIDataManager already stores device in __init__, no .to() needed
         assert self.datamanager.train_dataset is not None, "Missing input dataset"
 
         self.eval_equals_train = self.datamanager.dataparser.config.use_validation_as_train
@@ -141,7 +141,8 @@ class SHSGPipeline(VanillaPipeline):
             step: current iteration step to update sampler if using DDP (distributed)
         """
         ray_bundle, batch = self.datamanager.next_train(step)
-        model_outputs = self._model(ray_bundle, batch)  # train distributed data parallel model if world_size > 1
+        # Note: SH/SG fields don't use rotation, so we only pass ray_bundle
+        model_outputs = self._model(ray_bundle)  # train distributed data parallel model if world_size > 1
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
 
@@ -162,7 +163,7 @@ class SHSGPipeline(VanillaPipeline):
                 self.model.field.copy_train_to_eval()
             self.last_step_of_eval_optimisation = step
         ray_bundle, batch = self.datamanager.next_eval(step)
-        model_outputs = self.model(ray_bundle, batch)
+        model_outputs = self.model(ray_bundle)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
         self.train()
@@ -183,7 +184,7 @@ class SHSGPipeline(VanillaPipeline):
                 self.model.field.copy_train_to_eval()
             self.last_step_of_eval_optimisation = step
         image_idx, ray_bundle, batch = self.datamanager.next_eval_image(step)
-        outputs = self.model(ray_bundle, batch)
+        outputs = self.model(ray_bundle)
         metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
         assert "image_idx" not in metrics_dict
         metrics_dict["image_idx"] = image_idx
@@ -222,7 +223,7 @@ class SHSGPipeline(VanillaPipeline):
                 num_rays = ray_bundle.directions.shape[-2]
                 # time this the following line
                 inner_start = time()
-                outputs = self.model(ray_bundle, batch)
+                outputs = self.model(ray_bundle)
                 metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch)
                 assert "num_rays_per_sec" not in metrics_dict
                 metrics_dict["num_rays_per_sec"] = num_rays / (time() - inner_start)

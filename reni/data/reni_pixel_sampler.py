@@ -127,7 +127,7 @@ class RENIEquirectangularPixelSampler(PixelSampler):
                 indices = self.sample_method_equirectangular(
                     num_rays_per_batch, num_images, image_height, image_width, device=device
                 )
-
+        
         c, y, x = (i.flatten() for i in torch.split(indices, 1, dim=-1))
         c, y, x = c.cpu(), y.cpu(), x.cpu()
         collated_batch = {

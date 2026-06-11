@@ -458,7 +458,7 @@ class SphericalHarmonicIlluminationField(BaseRENIField):
 
         if rotation is not None:
             rotation = rotation.T
-            directions = torch.matmul(ray_bundle.directions, rotation)  # [num_rays, 3]
+            directions = torch.matmul(directions, rotation)  # [num_rays, 3]
 
         # convert from cartesian to spherical coordinates with z-up convention
         theta = torch.acos(directions[:, 2])  # [num_rays]
