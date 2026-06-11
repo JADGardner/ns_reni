@@ -11,6 +11,7 @@ Usage:
     python generate_figures.py --output-dir publication/figures_custom/
 """
 
+import copy
 import os
 import sys
 import argparse
@@ -43,6 +44,7 @@ from reni.utils.colourspace import linear_to_sRGB
 from reni.data.datamanagers.reni_datamanager import RENIDataManagerConfig
 from reni.data.dataparsers.reni_dataparser import RENIDataParserConfig
 from reni.data.reni_pixel_sampler import RENIEquirectangularPixelSamplerConfig
+from reni.utils.checkpoint_locator import find_checkpoint
 
 # Suppress matplotlib warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -130,6 +132,9 @@ class ModelLoader:
         
         Handles both new nerfstudio format and old RENI format (.pt files).
         """
+        # Resolve through the shared locator (repo extras / paper archive /
+        # baselines archive) -- no symlinks needed.
+        load_dir = find_checkpoint(load_dir)
         # Check if this is an old-format checkpoint (has RENI.pt file)
         old_format_path = load_dir / "files" / "RENI.pt"
         if old_format_path.exists():
@@ -209,7 +214,7 @@ class ModelLoader:
     
     def _setup_reni_config(self, config: Dict) -> Any:
         """Setup RENI model config from loaded config dict."""
-        model_config = RENIField.config
+        model_config = copy.deepcopy(RENIField.config)
         field_config = config['pipeline']['model']['field']
         dataparser_config = config['pipeline']['datamanager']['dataparser']
         
@@ -258,9 +263,9 @@ class ModelLoader:
         """Setup SH or SG model config from loaded config dict."""
         # Use appropriate base config
         if model_type == 'sh':
-            model_config = SHField.config
+            model_config = copy.deepcopy(SHField.config)
         else:
-            model_config = SGField.config
+            model_config = copy.deepcopy(SGField.config)
         
         field_config = config['pipeline']['model']['field']
         dataparser_config = config['pipeline']['datamanager']['dataparser']
@@ -351,7 +356,7 @@ class ModelLoader:
         
         # Create new config matching old architecture
         # Old RENI used: Concat conditioning, GramMatrix invariance, NeRF encoding on directions
-        model_config = RENIField.config
+        model_config = copy.deepcopy(RENIField.config)
         model_config.pipeline.model.field.latent_dim = latent_dim
         model_config.pipeline.model.field.hidden_features = hidden_features
         model_config.pipeline.model.field.hidden_layers = hidden_layers
@@ -453,8 +458,12 @@ class FigureGenerator:
         os.chdir(self.config.project_root)
     
     def _get_checkpoint_path(self, *parts: str) -> Path:
-        """Get full checkpoint path from parts."""
-        return self.config.checkpoint_base / Path(*parts)
+        """Get full checkpoint path from parts, resolved through the shared
+        locator (repo extras / paper archive / baselines archive)."""
+        try:
+            return find_checkpoint(Path(*parts))
+        except FileNotFoundError:
+            return self.config.checkpoint_base / Path(*parts)
     
     def _check_checkpoint_exists(self, path: Path, figure_name: str) -> bool:
         """Check if checkpoint exists, log warning if not."""

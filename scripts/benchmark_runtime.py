@@ -22,7 +22,8 @@ torch.cuda.reset_peak_memory_stats(device)
 
 # --- Setup ---
 reni_config = RENIField
-reni_config.config.load_dir = Path("output/model/reni_plus_plus_models/latent_dim_100/nerfstudio_models/")
+from reni.utils.checkpoint_locator import find_checkpoint
+reni_config.config.load_dir = find_checkpoint("reni_plus_plus_models/latent_dim_100") / "nerfstudio_models"
 reni_config.config.load_step = 50000
 reni_config.config.pipeline.test_mode = "test"
 reni_config.config.pipeline.model_load_strict = False

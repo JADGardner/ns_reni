@@ -29,6 +29,7 @@ from skimage.metrics import peak_signal_noise_ratio as psnr
 # Import baseline models
 from reni.baselines.soldnet import SOLDNetGlobalModel
 from reni.baselines.hosek_wilkie import HosekWilkieSkyModel
+from reni.utils.checkpoint_locator import find_checkpoint
 
 # Import RENI++ loader and utilities (same as generate_figures.py)
 from generate_figures import ModelLoader, FigureConfig
@@ -131,7 +132,7 @@ class BaselineComparison:
         config = FigureConfig()
         config.device = device
         self.reni_loader = ModelLoader(config)
-        self.reni_checkpoint = Path(reni_checkpoint)
+        self.reni_checkpoint = find_checkpoint(reni_checkpoint)
         self.reni_pipeline = None
         self.reni_datamanager = None
         self.reni_model = None
@@ -140,7 +141,7 @@ class BaselineComparison:
         # Load baseline models
         logger.info("Loading SOLD-Net...")
         self.soldnet = SOLDNetGlobalModel(device=device)
-        self.soldnet.load_pretrained(soldnet_checkpoint)
+        self.soldnet.load_pretrained(str(find_checkpoint(soldnet_checkpoint)))
         
         logger.info("Loading Hosek-Wilkie...")
         self.hosek = HosekWilkieSkyModel()

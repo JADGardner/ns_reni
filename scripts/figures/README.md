@@ -75,8 +75,14 @@ spherical_gaussians). `checkpoints/old_reni_models` is a symlink into it and
 is what `MODEL_DIRS["reni_old"]` uses; `fig_old_vs_new.py` and the table's
 RENI column work from these.
 
-Do NOT use `checkpoints/reni_original/` (original-repo wandb dumps): those
-runs are early/abandoned — hidden layers at SIREN init statistics, decoder
-output nearly latent-independent (verified by manual decode with the
-original maths). `scripts/figures/convert_original_reni.py` is retained in
-case genuine original-format weights ever need converting.
+CORRECTION: `checkpoints/reni_original/` (original-repo wandb dumps) ARE the
+published original-RENI weights — `publication/generate_figures.py`
+(`_load_old_format`) loads them correctly and reproduces the published
+table values. The `old_implementation` path in the modern field (and the
+naive manual decode) does NOT reproduce them — use the generate_figures
+loader for old-format checkpoints. `convert_original_reni.py` is retained
+but should be ported to that loader's conventions before trusting it.
+
+All checkpoint paths resolve through `reni/utils/checkpoint_locator.py`
+(repo extras → paper archive → baselines archive; `$RENI_CHECKPOINT_ROOTS`
+override). No symlinks.

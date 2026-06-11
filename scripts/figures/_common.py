@@ -45,28 +45,11 @@ from reni.utils.utils import rot_y, rot_z  # noqa: E402
 
 CHECKPOINTS = REPO_ROOT / "checkpoints"
 
+# Single shared resolver (no symlinks): maps legacy 'checkpoints/<rel>' names
+# onto the repo extras / paper-model archive / baselines archive roots.
+from reni.utils.checkpoint_locator import find_checkpoint  # noqa: E402
 
-def _resolve_paper_models() -> Path:
-    """The complete paper model archive — the single source of truth for all
-    figure/table checkpoints. Resolution order: $RENI_PAPER_MODELS, the
-    model-storage copy, then checkpoints/paper_models (the download target).
-    Get it with: python scripts/download_models.py
-    """
-    candidates = [
-        os.environ.get("RENI_PAPER_MODELS"),
-        "/home/james/model-storage/reni_paper_models",
-        CHECKPOINTS / "paper_models",
-    ]
-    for c in candidates:
-        if c and (Path(c) / "reni_plus_plus_models").is_dir():
-            return Path(c)
-    raise FileNotFoundError(
-        "Paper model archive not found. Download it with:\n"
-        "    python scripts/download_models.py\n"
-        "or set RENI_PAPER_MODELS to an existing copy.")
-
-
-PAPER_MODELS = _resolve_paper_models()
+PAPER_MODELS = find_checkpoint("reni_plus_plus_models").parent
 
 MODEL_DIRS = {
     "reni_pp": {d: PAPER_MODELS / "reni_plus_plus_models" / f"latent_dim_{d}"

@@ -49,6 +49,7 @@ from reni.model_components.illumination_samplers import EquirectangularSamplerCo
 from reni.model_components.shaders import BlinnPhongShader
 from reni.utils.colourspace import linear_to_sRGB
 from reni.utils.utils import find_nerfstudio_project_root
+from reni.utils.checkpoint_locator import find_checkpoint
 from nerfstudio.cameras.cameras import Cameras, CameraType
 
 # Yi et al. imports
@@ -456,7 +457,7 @@ def main():
     yi_net = load_yi_model(yi_model_path, device)
 
     logger.info("Loading RENI++ decoder...")
-    reni_ckpt_path = Path("checkpoints/reni_plus_plus_models/latent_dim_100")
+    reni_ckpt_path = find_checkpoint("checkpoints/reni_plus_plus_models/latent_dim_100")
     reni_field = load_reni_decoder(reni_ckpt_path, ckpt_step=50000, device=device)
 
     # --- Load normal map ---

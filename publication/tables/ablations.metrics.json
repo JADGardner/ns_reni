@@ -1,0 +1,39 @@
+{
+  "ablations/1_old_reni_50k_steps/latent_dim_9": null,
+  "ablations/1_old_reni_50k_steps/latent_dim_36": null,
+  "ablations/1_old_reni_50k_steps/latent_dim_49": {
+    "psnr_hdr": 3.2291858196258545,
+    "psnr_ldr": 15.538252830505371
+  },
+  "ablations/1_old_reni_50k_steps/latent_dim_100": null,
+  "ablations/2_data_aug/latent_dim_9": null,
+  "ablations/2_data_aug/latent_dim_36": null,
+  "ablations/2_data_aug/latent_dim_49": null,
+  "ablations/2_data_aug/latent_dim_100": null,
+  "ablations/3_transformer_decoder/latent_dim_9": null,
+  "ablations/3_transformer_decoder/latent_dim_36": null,
+  "ablations/3_transformer_decoder/latent_dim_49": null,
+  "ablations/3_transformer_decoder/latent_dim_100": null,
+  "ablations/4_scale_inv/latent_dim_9": null,
+  "ablations/4_scale_inv/latent_dim_36": null,
+  "ablations/4_scale_inv/latent_dim_49": null,
+  "ablations/4_scale_inv/latent_dim_100": null,
+  "reni_plus_plus_models/latent_dim_9": {
+    "psnr_hdr": 4.329767227172852,
+    "psnr_ldr": 18.02290916442871
+  },
+  "reni_plus_plus_models/latent_dim_36": {
+    "psnr_hdr": 5.566798686981201,
+    "psnr_ldr": 20.809751510620117
+  },
+  "reni_plus_plus_models/latent_dim_49": {
+    "psnr_hdr": 5.929092884063721,
+    "psnr_ldr": 21.133058547973633
+  },
+  "reni_plus_plus_models/latent_dim_100": {
+    "psnr_hdr": 6.419422626495361,
+    "psnr_ldr": 22.09389877319336
+  },
+  "ablations/equivariance/none": null,
+  "ablations/equivariance/so3": null
+}

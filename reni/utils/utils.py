@@ -4,14 +4,20 @@ from pathlib import Path
 
 
 def find_nerfstudio_project_root(start_dir: Path = Path(".")) -> Path:
+    """Find the ns_reni repo root.
+
+    Prefer the repo's own markers (the reni package next to pyproject.toml);
+    fall back to the historical heuristic of a directory containing
+    'nerfstudio' (a vendored checkout), which mis-resolves on machines where
+    a sibling nerfstudio clone exists above the repo.
     """
-    Find the project root by searching for a '.root' file.
-    """
-    # Go up in the directory tree to find the root marker
+    start_dir = Path(start_dir).resolve()
     for path in [start_dir, *start_dir.parents]:
-        if (path / 'nerfstudio').exists():
+        if (path / "reni").is_dir() and (path / "pyproject.toml").exists():
             return path
-    # If we didn't find it, raise an error
+    for path in [start_dir, *start_dir.parents]:
+        if (path / "nerfstudio").exists():
+            return path
     raise ValueError("Project root not found.")
 
 # https://github.com/lucidrains/VN-transformer/blob/main/VN_transformer/rotations.py

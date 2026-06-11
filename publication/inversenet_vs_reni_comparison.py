@@ -44,6 +44,7 @@ from nerfstudio.cameras.rays import RayBundle
     
 # InverseRenderNet
 from reni.baselines.inversenet import InverseRenderNet, load_pytorch_weights
+from reni.utils.checkpoint_locator import find_checkpoint
 
 # SH rendering utilities
 from reni.illumination_fields.sh_illumination_field import shReconstructSignal
@@ -459,7 +460,7 @@ class InverseRenderNetVsRENI:
         logger.info("Loading InverseRenderNet...")
         self.inversenet = InverseRenderNet().to(device)
         self.inversenet.eval()
-        weight_path = Path(inversenet_weights)
+        weight_path = find_checkpoint(inversenet_weights)
         if weight_path.exists():
             load_pytorch_weights(self.inversenet, str(weight_path))
         else:
@@ -468,7 +469,7 @@ class InverseRenderNetVsRENI:
         # Load RENI++
         logger.info("Loading RENI++...")
         self.reni_config = RENIField
-        self.reni_checkpoint = Path(reni_checkpoint)
+        self.reni_checkpoint = find_checkpoint(reni_checkpoint)
         self.reni_pipeline = None
         self.reni_model = None
         self._load_reni_model()
