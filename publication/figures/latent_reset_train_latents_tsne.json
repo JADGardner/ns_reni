@@ -1,0 +1,47 @@
+{
+  "original": "/home/james/model-storage/reni_paper_models/reni_plus_plus_models/latent_dim_100/nerfstudio_models/step-000050000.ckpt",
+  "restart": "/workspace/phd/code/ns_reni/outputs/reni_latent_reset_4_rerun/reni/2026-07-01_4cycles_rerun/nerfstudio_models/step-000200003.ckpt",
+  "data": "/home/james/data/RENI_HDR",
+  "latent_shape": [
+    3346,
+    300
+  ],
+  "appearance_descriptor": {
+    "source": "log HDR train EXRs",
+    "low_frequency_size": [
+      8,
+      16
+    ],
+    "coloring": "RGB from first 3 PCA components of descriptors"
+  },
+  "tsne": {
+    "perplexity": 45.0,
+    "iterations": 1500,
+    "pca_dim": 50,
+    "seed": 42
+  },
+  "metrics": {
+    "original": {
+      "latent_10nn_appearance_cosine_mean": 0.20599482161409532,
+      "latent_10nn_appearance_l2_mean": 1.9321865599025743,
+      "random_10nn_appearance_cosine_mean": 0.0067125089547598925,
+      "random_10nn_appearance_l2_mean": 2.2194430612548697,
+      "tsne_trustworthiness_k10": 0.6890724061058595,
+      "mirror_pair_distance_mean": 11.99130916595459,
+      "mirror_pair_distance_median": 11.977551460266113,
+      "mirror_pair_neighbor_rank_median": 1372.0,
+      "mirror_pair_neighbor_percentile_median": 0.4101644245142003
+    },
+    "latent_reset": {
+      "latent_10nn_appearance_cosine_mean": 0.7738026411950898,
+      "latent_10nn_appearance_l2_mean": 0.9501506065581277,
+      "random_10nn_appearance_cosine_mean": 0.0067125089547598925,
+      "random_10nn_appearance_l2_mean": 2.2194430612548697,
+      "tsne_trustworthiness_k10": 0.9425790433524204,
+      "mirror_pair_distance_mean": 14.396001815795898,
+      "mirror_pair_distance_median": 14.088476181030273,
+      "mirror_pair_neighbor_rank_median": 48.0,
+      "mirror_pair_neighbor_percentile_median": 0.014349775784753363
+    }
+  }
+}

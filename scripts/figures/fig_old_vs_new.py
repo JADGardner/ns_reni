@@ -9,11 +9,33 @@ same latent dimensions.
 import argparse
 
 import matplotlib.pyplot as plt
+import numpy as np
 
-from _common import (MODEL_DIRS, add_common_args, collect_model_outputs,
+from _common import (MODEL_DIRS, add_common_args, add_figure_label,
+                     axes_span_center_x, axis_center, collect_model_outputs,
                      resolve_run_dir, save_figure, seed_all)
 
 DIMS = (9, 49, 100)
+
+
+def _add_old_vs_new_labels(fig, axes, fontsize):
+    axes = np.asarray(axes)
+    if axes.ndim == 1:
+        axes = axes[None, :]
+    label_y = axes[0, 0].get_position().y1 + 0.052
+    sublabel_y = axes[0, 0].get_position().y1 + 0.026
+
+    add_figure_label(fig, axis_center(axes[0, 0])[0], label_y, "Ground",
+                     fontsize)
+    add_figure_label(fig, axis_center(axes[0, 0])[0], sublabel_y, "Truth",
+                     fontsize)
+    add_figure_label(fig, axes_span_center_x(*axes[0, 1:4]), label_y, "RENI",
+                     fontsize)
+    add_figure_label(fig, axes_span_center_x(*axes[0, 4:7]), label_y, "RENI++",
+                     fontsize)
+    for col, label in zip(range(1, 7), ("27", "147", "300", "27", "147", "300")):
+        add_figure_label(fig, axis_center(axes[0, col])[0], sublabel_y, label,
+                         fontsize)
 
 
 def _available(path) -> bool:
@@ -29,6 +51,9 @@ def main():
     add_common_args(parser, "old_vs_new")
     parser.add_argument("--image_indices", type=int, nargs="+",
                         default=[6, 7, 8, 9, 10])
+    parser.add_argument("--labels", action="store_true",
+                        help="Bake current LaTeX/TikZ labels into the figure")
+    parser.add_argument("--label_fontsize", type=float, default=18.0)
     args = parser.parse_args()
     seed_all(args.seed)
 
@@ -62,6 +87,8 @@ def main():
             axes[i, j + 1 + len(DIMS)].set_aspect(1)
 
     plt.tight_layout()
+    if args.labels:
+        _add_old_vs_new_labels(fig, axes, args.label_fontsize)
     save_figure(fig, args.output, svg=args.svg)
 
 

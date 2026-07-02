@@ -36,17 +36,77 @@ IMAGE_PROPERTIES = {
     "latent_code2": {"x": 1450, "y": 1100, "zoom": 0.8},
 }
 
+REFERENCE_RENDER_HEIGHT = 64
 
-def plot_latent_vectors(latent_code, num_vectors=30):
-    """3D quiver plot of latent vectors, returned as a cropped image array."""
+# Median latent-vector norm of the paper D=100 model's teaser latent; the
+# auto quiver scale maps the plotted latents' median norm onto this so the
+# arrows fill the Z box like the original paper teaser regardless of how
+# compact the checkpoint's latent distribution is (latent-reset models train
+# much smaller latents than the paper models).
+QUIVER_TARGET_MEDIAN_NORM = 1.4
+
+TEASER_LABELS = (
+    {"xy": (615, 520), "text": r"$\mathbf{Z}=\mathbf{0}_{3\times N}$", "size": 20},
+    {"xy": (770, 140), "text": r"$\mathrm{vec}(\mathbf{Z})\sim\mathcal{N}(\mathbf{0},\mathbf{I}_{3N})$", "size": 15},
+    {"xy": (1450, 85), "text": r"$\mathbf{Z}$", "size": 22},
+    {"xy": (1450, 935), "text": r"$\mathbf{Z}$", "size": 22},
+    {"xy": (1820, 160), "text": r"$\mathbf{D}$", "size": 22},
+    {"xy": (1820, 845), "text": r"$\mathbf{D}$", "size": 22},
+    {
+        "xy": (2235, 650),
+        "text": "SO(2) Rotation of Latent Code\nAround Vertical Y-Axis",
+        "size": 15,
+    },
+)
+
+TEASER_AXIS_LABELS = (
+    (1340, 355, r"$x$"),
+    (1505, 335, r"$z$"),
+    (1545, 210, r"$y$"),
+    (1340, 1200, r"$x$"),
+    (1505, 1180, r"$z$"),
+    (1545, 1055, r"$y$"),
+)
+
+
+def _add_teaser_labels(ax):
+    for item in TEASER_LABELS:
+        ax.text(
+            *item["xy"],
+            item["text"],
+            ha="center",
+            va="center",
+            fontsize=item["size"],
+            fontfamily="serif",
+            color="black",
+            zorder=30,
+        )
+    for x, y, label in TEASER_AXIS_LABELS:
+        ax.text(x, y, label, ha="center", va="center", fontsize=8,
+                fontfamily="serif", color="black", zorder=30)
+
+
+def plot_latent_vectors(latent_code, num_vectors=30, scale=None, linewidth=2.0):
+    """3D quiver plot of latent vectors, returned as a cropped image array.
+
+    ``scale`` is a display-space multiplier only (the plotted latents are
+    unchanged); ``None`` auto-scales the median arrow norm to
+    QUIVER_TARGET_MEDIAN_NORM for paper-teaser-like arrow prominence.
+    """
     arr = latent_code.cpu().detach().numpy().squeeze()[:num_vectors]
+    if scale is None:
+        median_norm = float(np.median(np.linalg.norm(arr, axis=-1)))
+        scale = QUIVER_TARGET_MEDIAN_NORM / max(median_norm, 1e-8)
+        print(f"[quiver] auto display scale {scale:.2f} "
+              f"(median vector norm {median_norm:.3f})")
+    arr = arr * scale
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
     origin = np.zeros((len(arr), 3))
     colors = get_cmap("viridis")(np.linspace(0, 1, len(arr)))
     ax.quiver(origin[:, 0], origin[:, 1], origin[:, 2],
               arr[:, 0], arr[:, 1], arr[:, 2],
-              color=colors, arrow_length_ratio=0.1)
+              color=colors, arrow_length_ratio=0.1, linewidth=linewidth)
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     for lim in (ax.set_xlim, ax.set_ylim, ax.set_zlim):
         lim([-2.0, 2.0])
@@ -63,10 +123,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_args(parser, "teaser")
     parser.add_argument("--latent_dim", type=int, default=100)
-    parser.add_argument("--latent_idx", type=int, default=200,
-                        help="Train latent shown in the vector plots")
+    parser.add_argument("--recon-latent-idx", type=int, default=10,
+                        help="Train latent decoded in the right-hand 0/90 deg "
+                             "reconstruction panels and shown in the vector plots")
+    parser.add_argument("--quiver-scale", type=float, default=None,
+                        help="Display-space multiplier for the latent quiver "
+                             "arrows; default auto-scales the median arrow to "
+                             "match the paper-teaser prominence")
+    parser.add_argument("--quiver-linewidth", type=float, default=2.0,
+                        help="Line width of the latent quiver arrows")
     parser.add_argument("--base_image", type=Path,
                         default=REPO_ROOT / "publication" / "figures" / "teaser_base.png")
+    parser.add_argument("--labels", action="store_true",
+                        help="Bake current LaTeX/TikZ labels into the figure")
     args = parser.parse_args()
     seed_all(args.seed)
 
@@ -83,24 +152,29 @@ def main():
             rot_angle = 90.0 if i == 1 else 0.0
             rotation = get_rotation(
                 torch.tensor(np.deg2rad(rot_angle)).float()).to(args.device)
-            z = model.field.train_mu[args.latent_idx]
+            z = model.field.train_mu[args.recon_latent_idx]
             img = decode_latents(model, ray_samples, z.unsqueeze(0),
-                                 rotation=rotation, height=args.height)
+                                 rotation=rotation, height=args.height,
+                                 chunk_size=args.decode_chunk)
             z_rot = torch.matmul(rotation, z.unsqueeze(-1)).squeeze(-1)
             images[i] = {"pred_img": img,
-                         "latent_code_image": plot_latent_vectors(z_rot)}
+                         "latent_code_image": plot_latent_vectors(
+                             z_rot, scale=args.quiver_scale,
+                             linewidth=args.quiver_linewidth)}
         elif i == 2:
             # Zero latent: the mean environment
             z = torch.zeros(1, model.field.latent_dim, 3, device=args.device)
             images[i] = {"pred_img": decode_latents(model, ray_samples, z,
-                                                    height=args.height)}
+                                                    height=args.height,
+                                                    chunk_size=args.decode_chunk)}
         else:
             # Interpolated train latents as plausible random samples
             z = torch.lerp(model.field.train_mu[i].unsqueeze(0),
                            model.field.train_mu[i + 1].unsqueeze(0), 0.5)
             images[i] = {"pred_img": decode_latents(model, ray_samples,
                                                     z.to(args.device),
-                                                    height=args.height)}
+                                                    height=args.height,
+                                                    chunk_size=args.decode_chunk)}
 
     base_image = plt.imread(str(args.base_image))
     h, w = base_image.shape[:2]
@@ -111,8 +185,13 @@ def main():
 
     for i in images:
         props = IMAGE_PROPERTIES.get(f"image{i+1}", {"x": 0, "y": 0, "zoom": 1.0})
-        ab = AnnotationBbox(OffsetImage(images[i]["pred_img"], zoom=props["zoom"]),
-                            (props["x"], props["y"]), frameon=False, pad=0)
+        image_zoom = props["zoom"] * REFERENCE_RENDER_HEIGHT / args.height
+        ab = AnnotationBbox(
+            OffsetImage(images[i]["pred_img"], zoom=image_zoom),
+            (props["x"], props["y"]),
+            frameon=False,
+            pad=0,
+        )
         ax.add_artist(ab)
         if "latent_code_image" in images[i]:
             props = IMAGE_PROPERTIES[f"latent_code{i+1}"]
@@ -120,6 +199,9 @@ def main():
                 OffsetImage(images[i]["latent_code_image"], zoom=props["zoom"]),
                 (props["x"], props["y"]), frameon=False, pad=0)
             ax.add_artist(ab)
+
+    if args.labels:
+        _add_teaser_labels(ax)
 
     save_figure(fig, args.output, svg=args.svg, dpi=dpi)
 

@@ -19,18 +19,34 @@ Checkpoint layout expected under <repo>/checkpoints/ (all committed):
 
 import os
 import re
+import csv
 from pathlib import Path
 from typing import Optional
 
 import matplotlib
 
 matplotlib.use("Agg")
+matplotlib.rcParams.update({
+    "font.family": "serif",
+    "font.serif": [
+        "Nimbus Roman",
+        "Times New Roman",
+        "Times",
+        "Liberation Serif",
+        "STIXGeneral",
+        "DejaVu Serif",
+    ],
+    "mathtext.fontset": "stix",
+})
 
 import numpy as np
+import cv2
+import pyexr
 import torch
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+PHD_ROOT = REPO_ROOT.parents[1]
 # Relative paths in saved configs (data/RENI_HDR etc.) resolve from repo root.
 os.chdir(REPO_ROOT)
 
@@ -49,7 +65,14 @@ CHECKPOINTS = REPO_ROOT / "checkpoints"
 # onto the repo extras / paper-model archive / baselines archive roots.
 from reni.utils.checkpoint_locator import find_checkpoint  # noqa: E402
 
-PAPER_MODELS = find_checkpoint("reni_plus_plus_models").parent
+try:
+    PAPER_MODELS = find_checkpoint("reni_plus_plus_models").parent
+except FileNotFoundError:
+    # Explicit --model_dir scripts do not need the paper archive at import time.
+    PAPER_MODELS = Path(os.environ.get(
+        "RENI_PAPER_MODELS",
+        Path.home() / "model-storage" / "reni_paper_models",
+    ))
 
 MODEL_DIRS = {
     "reni_pp": {d: PAPER_MODELS / "reni_plus_plus_models" / f"latent_dim_{d}"
@@ -62,6 +85,104 @@ MODEL_DIRS = {
     "sg": {n: PAPER_MODELS / "spherical_gaussians" / f"num_param_{n}"
            for n in (30, 108, 150, 300)},
 }
+
+_EVAL_MAPPING = None
+
+
+def _eval_mapping():
+    """Optional split/filename -> high-res EXR mapping for figure GT images."""
+    global _EVAL_MAPPING
+    if _EVAL_MAPPING is not None:
+        return _EVAL_MAPPING
+
+    mapping_path = os.environ.get("RENI_FIGURE_EVAL_MAPPING")
+    if not mapping_path:
+        _EVAL_MAPPING = {}
+        return _EVAL_MAPPING
+
+    high_root = Path(os.environ.get(
+        "RENI_FIGURE_HIGH_ROOT",
+        PHD_ROOT / "data" / "RENI_HDR_512x1024",
+    )).expanduser()
+    mapping = {}
+    with open(Path(mapping_path).expanduser(), newline="") as f:
+        for row in csv.DictReader(f):
+            split = row["split"]
+            target = row["target_file"]
+            high_rel = row["best_high_path"]
+            if high_rel:
+                mapping[(split, target)] = high_root / high_rel
+    _EVAL_MAPPING = mapping
+    print(f"[eval-mapping] loaded {len(mapping)} entries from {mapping_path}")
+    return _EVAL_MAPPING
+
+
+def mapped_eval_image_path(split: str, filename: str):
+    """Return the mapped high-res EXR path for a low-res eval filename."""
+    mapping = _eval_mapping()
+    if not mapping:
+        return None
+    return mapping.get((split, filename)) or mapping.get(("test", filename))
+
+
+def read_clean_exr(path: Path):
+    """Read an EXR as finite, positive float32 RGB."""
+    return _clean_numpy_image(pyexr.read(str(path)))
+
+
+def _clean_numpy_image(image):
+    if len(image.shape) == 2:
+        image = image[:, :, None].repeat(3, axis=2)
+    image = image[:, :, :3].astype("float32", copy=False)
+    finite = np.isfinite(image)
+    finite_max = float(np.max(image[finite])) if np.any(finite) else 0.0
+    image = np.nan_to_num(image, nan=0.0, posinf=finite_max, neginf=0.0)
+    positive = image[image > 0]
+    floor = float(np.min(positive)) if positive.size else 0.0
+    image[image <= 0] = floor
+    return image
+
+
+def _mapped_eval_image(dataset, idx: int):
+    split = getattr(dataset, "split", "test")
+    original_name = dataset._dataparser_outputs.image_filenames[idx].name
+    image_path = mapped_eval_image_path(split, original_name)
+    if image_path is None:
+        return None
+    if not image_path.exists():
+        raise FileNotFoundError(f"Mapped high-res eval image missing: {image_path}")
+
+    image = read_clean_exr(image_path)
+    width = int(os.environ.get("RENI_FIGURE_EVAL_WIDTH", image.shape[1]))
+    if image.shape[1] != width:
+        image = cv2.resize(
+            image,
+            (width, width // 2),
+            interpolation=cv2.INTER_LINEAR,
+        )
+
+    tensor = torch.from_numpy(image)
+    metadata = dataset._dataparser_outputs.metadata
+    if metadata["convert_to_ldr"]:
+        tensor = linear_to_sRGB(tensor)
+    if metadata["convert_to_log_domain"]:
+        tensor = torch.log(tensor + 1e-8)
+    if metadata["min_max_normalize"]:
+        min_val, max_val = dataset.metadata["min_max"]
+        tensor = (tensor - min_val) / (max_val - min_val) * 2 - 1
+    return tensor
+
+
+def eval_image_tensor(dataset, idx: int, batch=None):
+    """Return the figure GT tensor, using the high-res mapping when enabled."""
+    gt_raw = _mapped_eval_image(dataset, idx)
+    if gt_raw is None:
+        if batch is None:
+            batch = dataset[idx]
+        gt_raw = batch["image"]
+    if gt_raw.dim() == 4:
+        gt_raw = gt_raw[0]
+    return gt_raw
 
 
 def seed_all(seed: int):
@@ -113,7 +234,11 @@ def load_model(load_dir: Path, device: str = "cuda:0", load_step: Optional[int] 
             int(x[x.find("-") + 1: x.find(".")]) for x in os.listdir(ckpt_dir)
         )[-1]
 
-    ckpt = torch.load(ckpt_dir / f"step-{load_step:09d}.ckpt", map_location=device)
+    ckpt = torch.load(
+        ckpt_dir / f"step-{load_step:09d}.ckpt",
+        map_location=device,
+        weights_only=False,
+    )
     model_dict = {k[7:]: v for k, v in ckpt["pipeline"].items() if k.startswith("_model.")}
 
     with open(load_dir / "config.yml") as f:
@@ -206,15 +331,24 @@ def load_model(load_dir: Path, device: str = "cuda:0", load_step: Optional[int] 
     model_state = model.state_dict()
     grafted, filtered = {}, {}
     for k, v in model_dict.items():
-        if k in model_state and model_state[k].shape != v.shape:
+        zero_stride_target = (
+            k in model_state and any(stride == 0 for stride in model_state[k].stride())
+        )
+        if k in model_state and (model_state[k].shape != v.shape or zero_stride_target):
             grafted[k] = v
         else:
             filtered[k] = v
     for k, v in grafted.items():
         module_path, _, param_name = k.rpartition(".")
         mod = model.get_submodule(module_path) if module_path else model
-        setattr(mod, param_name,
-                torch.nn.Parameter(v.to(device), requires_grad=False))
+        value = v.to(device)
+        if param_name in mod._parameters:
+            setattr(mod, param_name,
+                    torch.nn.Parameter(value, requires_grad=False))
+        elif param_name in mod._buffers:
+            mod._buffers[param_name] = value
+        else:
+            setattr(mod, param_name, value)
     missing, unexpected = model.load_state_dict(filtered, strict=False)
     # Metric networks (LPIPS) ship torchvision-initialised and are absent
     # from converted original-RENI checkpoints; that is fine.
@@ -291,12 +425,30 @@ def rotation_fn(model):
     return rot_y if getattr(model.field, "old_implementation", False) else rot_z
 
 
-def decode_latents(model, ray_samples, latent_code, rotation=None, height: int = 64):
+def decode_latents(model, ray_samples, latent_code, rotation=None,
+                   height: int = 64, chunk_size: Optional[int] = None):
     """Decode a [1, latent_dim, 3] latent code to an sRGB envmap [H, W, 3]."""
     H, W = height, height * 2
-    latents = latent_code.repeat(ray_samples.shape[0], 1, 1)
-    outputs = model.field.forward(ray_samples, rotation=rotation, latent_codes=latents)
-    img = model.field.unnormalise(outputs[RENIFieldHeadNames.RGB]).reshape(H, W, 3)
+    if chunk_size is None:
+        chunk_size = int(os.environ.get("RENI_FIGURE_DECODE_CHUNK", 65536))
+    if chunk_size <= 0:
+        chunk_size = ray_samples.shape[0]
+
+    chunks = []
+    with torch.no_grad():
+        for start in range(0, ray_samples.shape[0], chunk_size):
+            end = min(start + chunk_size, ray_samples.shape[0])
+            chunk = ray_samples[start:end]
+            latents = latent_code.repeat(chunk.shape[0], 1, 1)
+            outputs = model.field.forward(
+                chunk,
+                rotation=rotation,
+                latent_codes=latents,
+            )
+            rgb = model.field.unnormalise(outputs[RENIFieldHeadNames.RGB])
+            chunks.append(rgb.cpu())
+
+    img = torch.cat(chunks, dim=0).reshape(H, W, 3)
     return linear_to_sRGB(img, use_quantile=True).cpu().detach()
 
 
@@ -312,30 +464,41 @@ def render_eval_image(model, datamanager, idx: int, device, height: int = 64):
     """
     model.eval()
     batch = datamanager.eval_dataset[idx]
-    gt_raw = batch["image"]
-    if gt_raw.dim() == 4:
-        gt_raw = gt_raw[0]
+    gt_raw = eval_image_tensor(datamanager.eval_dataset, idx, batch=batch)
     H, W = gt_raw.shape[0], gt_raw.shape[1]
     del height  # render at the dataset's native resolution so GT/pred align
 
     ray_bundle = equirect_ray_bundle(device, idx=idx, height=H)
     gt_raw = gt_raw.to(device)
 
-    outputs = model.get_outputs_for_camera_ray_bundle(ray_bundle, rotation=None)
-    pred = model.field.unnormalise(outputs["rgb"]).reshape(H, W, 3)
-    gt = model.field.unnormalise(gt_raw).reshape(H, W, 3)
+    with torch.no_grad():
+        outputs = model.get_outputs_for_camera_ray_bundle(ray_bundle, rotation=None)
+        pred = model.field.unnormalise(outputs["rgb"]).reshape(H, W, 3)
+        gt = model.field.unnormalise(gt_raw).reshape(H, W, 3)
 
-    gt_gray = torch.mean(gt, dim=-1, keepdim=True)
-    pred_gray = torch.mean(pred, dim=-1, keepdim=True)
-    gt_min, gt_max = torch.min(gt_gray), torch.max(gt_gray)
-    combined = colormaps.apply_depth_colormap(
-        torch.cat([gt_gray, pred_gray], dim=1), near_plane=gt_min, far_plane=gt_max)
-    gt_heat, pred_heat = combined[:, :W, :], combined[:, W:, :]
+        gt_gray = torch.mean(gt, dim=-1, keepdim=True)
+        pred_gray = torch.mean(pred, dim=-1, keepdim=True)
+        gt_min, gt_max = torch.min(gt_gray), torch.max(gt_gray)
+        combined = colormaps.apply_depth_colormap(
+            torch.cat([gt_gray, pred_gray], dim=1),
+            near_plane=gt_min,
+            far_plane=gt_max,
+        )
+        gt_heat, pred_heat = combined[:, :W, :], combined[:, W:, :]
 
-    pred_img = linear_to_sRGB(pred, use_quantile=True)
-    gt_img = linear_to_sRGB(gt, use_quantile=True)
+        pred_img = linear_to_sRGB(pred, use_quantile=True)
+        gt_img = linear_to_sRGB(gt, use_quantile=True)
     if "mask" in batch:
-        mask = batch["mask"].reshape(H, W, -1)[..., :1].expand_as(gt_img).to(device)
+        mask = batch["mask"]
+        if mask.dim() == 4:
+            mask = mask[0]
+        if mask.shape[:2] != (H, W):
+            mask = torch.nn.functional.interpolate(
+                mask.permute(2, 0, 1)[None].float(),
+                size=(H, W),
+                mode="nearest",
+            )[0].permute(1, 2, 0).bool()
+        mask = mask.reshape(H, W, -1)[..., :1].expand_as(gt_img).to(device)
         gt_img = gt_img * mask
 
     return {
@@ -361,6 +524,31 @@ def collect_model_outputs(model_specs, image_indices, device, height: int = 64):
     return all_outputs
 
 
+def axis_center(ax):
+    bbox = ax.get_position()
+    return (bbox.x0 + bbox.x1) / 2, (bbox.y0 + bbox.y1) / 2
+
+
+def axes_span_center_x(*axes):
+    bboxes = [ax.get_position() for ax in axes]
+    return (min(b.x0 for b in bboxes) + max(b.x1 for b in bboxes)) / 2
+
+
+def add_figure_label(fig, x, y, text, fontsize, rotation=0):
+    fig.text(
+        x,
+        y,
+        text,
+        ha="center",
+        va="center",
+        fontsize=fontsize,
+        fontfamily="serif",
+        rotation=rotation,
+        color="black",
+        zorder=20,
+    )
+
+
 def save_figure(fig, out_stem: Path, svg: bool = False, dpi: int = 200):
     out_stem = Path(out_stem)
     out_stem.parent.mkdir(parents=True, exist_ok=True)
@@ -375,6 +563,10 @@ def add_common_args(parser, default_output: str):
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--height", type=int, default=64,
                         help="Envmap render height (width = 2x)")
+    parser.add_argument("--decode_chunk", type=int,
+                        default=int(os.environ.get("RENI_FIGURE_DECODE_CHUNK", 65536)),
+                        help="Rays per chunk for direct latent envmap decoding; "
+                             "use 0 to decode a full envmap in one pass")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--svg", action="store_true", help="Also write SVG")
     parser.add_argument("--output", type=Path,
