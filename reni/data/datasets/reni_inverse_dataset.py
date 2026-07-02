@@ -123,7 +123,7 @@ class RENIInverseDataset(InputDataset):
             image_idx: The image index in the dataset.
         """
         normal_filename = self._dataparser_outputs.image_filenames[image_idx]
-        normals = imageio.v2.imread(normal_filename)
+        normals = pyexr.read(str(normal_filename))[:, :, :3]
         normals = torch.tensor(normals).float()
         normals = F.interpolate(normals.unsqueeze(0).permute(0, 3, 1, 2), size=(self.image_dim, self.image_dim), mode='nearest').squeeze(0).permute(1, 2, 0)
         # normalise normals where the magnitude is greater than 0
