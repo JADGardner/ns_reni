@@ -47,12 +47,39 @@ class ScaleInvariantLogLoss(nn.Module):
     def __init__(self):
         super(ScaleInvariantLogLoss, self).__init__()
 
-    def forward(self, log_predicted, log_gt):
+    def forward(self, log_predicted, log_gt, weights=None):
+        """Scale-invariant log loss; optionally per-element weighted.
+
+        Args:
+            log_predicted: predicted log values.
+            log_gt: ground truth log values.
+            weights: optional non-negative weights broadcastable to the
+                residual. When given, the loss is the weighted variance of the
+                residual (still invariant to a global log-space shift); when
+                None the original unweighted computation is used exactly.
+        """
         R = log_predicted - log_gt
 
-        term1 = torch.mean(R**2)
-        term2 = torch.pow(torch.sum(R), 2) / (log_predicted.numel()**2)
+        if weights is None:
+            term1 = torch.mean(R**2)
+            term2 = torch.pow(torch.sum(R), 2) / (log_predicted.numel()**2)
 
-        loss = term1 - term2
+            loss = term1 - term2
+
+            return loss
+
+        weights = weights.expand_as(R)
+        weight_sum = weights.sum().clamp_min(1e-12)
+        weighted_mean = (weights * R).sum() / weight_sum
+        loss = (weights * R**2).sum() / weight_sum - weighted_mean**2
 
         return loss
+
+
+class WeightedMSELoss(nn.Module):
+    """MSE with per-element non-negative weights (normalised by weight sum)."""
+
+    def forward(self, predicted, gt, weights):
+        weights = weights.expand_as(predicted)
+        weight_sum = weights.sum().clamp_min(1e-12)
+        return (weights * (predicted - gt) ** 2).sum() / weight_sum

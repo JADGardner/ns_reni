@@ -404,6 +404,7 @@ class RENIField(BaseRENIField):
                 num_heads=self.config.num_attention_heads,
                 num_layers=self.config.num_attention_layers,
                 out_activation=output_activation,
+                out_dim=self.out_features,
             )
         assert network is not None, "unknown conditioning type"
         return network

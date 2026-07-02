@@ -19,8 +19,10 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 from reni.illumination_fields.base_spherical_field import SphericalFieldConfig
 from reni.field_components.field_heads import RENIFieldHeadNames
-from reni.model_components.losses import KLD, ScaleInvariantLogLoss
+from reni.model_components.losses import KLD, ScaleInvariantLogLoss, WeightedMSELoss
 from reni.utils.colourspace import linear_to_sRGB
+from reni.utils.hdr_metrics import compute_hdr_peak_metrics
+from reni.utils.tonemap import luminance, two_bracket_to_linear
 
 from nerfstudio.cameras.rays import RayBundle, RaySamples, Frustums
 from nerfstudio.configs.config_utils import to_immutable_dict
@@ -48,9 +50,24 @@ class RENIModelConfig(ModelConfig):
             "kld_loss": False,
             "cosine_similarity_loss": False,
             "scale_inv_loss": False,
+            "ldr_bracket_mse_loss": False,
+            "log_bracket_mse_loss": False,
+            "blended_recon_loss": False,
         }
     )
     """Which losses to include in the training"""
+    luminance_weighted_loss: bool = False
+    """Weight scale_inv_loss / log_mse_loss per ray by GT linear luminance (upweights bright directions)."""
+    luminance_weight_power: float = 1.0
+    """Exponent applied to the GT luminance when computing loss weights."""
+    luminance_weight_cap: float = 100.0
+    """Cap on the per-ray luminance weight after normalising to mean 1 (limits sun-pixel domination)."""
+    blended_recon_domain: Literal["linear", "log1p"] = "log1p"
+    """Domain for the optional blended-HDR reconstruction loss in two-bracket mode."""
+    compute_hdr_peak_metrics: bool = False
+    """Compute peak-aware HDR eval metrics (log RMSE, luminance-weighted RMSE, sun/peak errors)."""
+    hdr_metrics_alignment: Literal["auto", "none", "median_ratio"] = "auto"
+    """Exposure alignment for peak metrics; auto = median_ratio for scale-invariant models else none."""
     eval_latent_optimizer: Dict[str, Any] = to_immutable_dict(
         {
             "eval_latents": {
@@ -93,6 +110,16 @@ class RENIModel(Model):
 
         normalisations = {"min_max": self.metadata["min_max"], "log_domain": self.metadata["convert_to_log_domain"]}
 
+        # Two-bracket (complementary tonemapping) mode is driven by the dataparser metadata.
+        self.two_bracket = bool(self.metadata.get("tonemap_targets", False))
+        self.tonemap_m_ldr = float(self.metadata.get("tonemap_m_ldr", 16.0))
+        self.tonemap_m_log = float(self.metadata.get("tonemap_m_log", 10000.0))
+        if self.two_bracket:
+            if getattr(self.config.field, "out_features", 3) != 6:
+                raise ValueError("tonemap_targets requires field.out_features=6 (two 3-channel brackets).")
+            if getattr(self.config.field, "output_activation", None) != "sigmoid":
+                raise ValueError("tonemap_targets requires field.output_activation='sigmoid' (bounded brackets).")
+
         self.field = self.config.field.setup(
             num_train_data=self.num_train_data, num_eval_data=self.num_eval_data, normalisations=normalisations
         )
@@ -110,6 +137,14 @@ class RENIModel(Model):
             self.cosine_similarity = nn.CosineSimilarity(dim=1)
         if self.config.loss_inclusions["scale_inv_loss"] in [True, "train", "eval", "both"]:
             self.scale_invariant_loss = ScaleInvariantLogLoss()
+        if self.config.loss_inclusions.get("ldr_bracket_mse_loss", False) in [True, "train", "eval", "both"]:
+            self.ldr_bracket_mse_loss = nn.MSELoss()
+        if self.config.loss_inclusions.get("log_bracket_mse_loss", False) in [True, "train", "eval", "both"]:
+            self.log_bracket_mse_loss = nn.MSELoss()
+        if self.config.loss_inclusions.get("blended_recon_loss", False) in [True, "train", "eval", "both"]:
+            self.blended_recon_mse_loss = nn.MSELoss()
+        if self.config.luminance_weighted_loss:
+            self.weighted_mse_loss = WeightedMSELoss()
         # metrics
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
         self.ssim = structural_similarity_index_measure
@@ -157,6 +192,49 @@ class RENIModel(Model):
         if hasattr(self.field, "reset_eval_latents"):
             self.field.reset_eval_latents()
 
+    def _to_linear_hdr(self, x: torch.Tensor) -> torch.Tensor:
+        """Map a model/GT tensor to linear HDR RGB (blend two-bracket outputs, else unnormalise)."""
+        if self.two_bracket:
+            return two_bracket_to_linear(x, m_ldr=self.tonemap_m_ldr, m_log=self.tonemap_m_log)
+        return self.field.unnormalise(x)
+
+    def _luminance_loss_weights(self, gt: torch.Tensor) -> torch.Tensor:
+        """Per-ray loss weights from GT linear luminance (mean-normalised, capped)."""
+        with torch.no_grad():
+            linear = self._to_linear_hdr(gt)
+            weights = luminance(linear).clamp_min(0.0) ** self.config.luminance_weight_power
+            weights = weights / weights.mean().clamp_min(1e-12)
+            weights = weights.clamp(max=self.config.luminance_weight_cap)
+        return weights.unsqueeze(-1)
+
+    def _two_bracket_losses(self, outputs, batch) -> Dict[str, torch.Tensor]:
+        """Per-bracket MSE losses and optional blended-HDR reconstruction loss (G7h)."""
+        phase = "eval" if self.fitting_eval_latents else "train"
+        allowed = [True, "both", phase]
+        loss_dict = {}
+
+        if self.config.loss_inclusions.get("ldr_bracket_mse_loss", False) in allowed:
+            loss_dict["ldr_bracket_mse_loss"] = self.ldr_bracket_mse_loss(
+                outputs["rgb"][..., :3], batch["image"][..., :3]
+            )
+
+        if self.config.loss_inclusions.get("log_bracket_mse_loss", False) in allowed:
+            loss_dict["log_bracket_mse_loss"] = self.log_bracket_mse_loss(
+                outputs["rgb"][..., 3:6], batch["image"][..., 3:6]
+            )
+
+        if self.config.loss_inclusions.get("blended_recon_loss", False) in allowed:
+            pred_linear = two_bracket_to_linear(outputs["rgb"], m_ldr=self.tonemap_m_ldr, m_log=self.tonemap_m_log)
+            gt_linear = two_bracket_to_linear(batch["image"], m_ldr=self.tonemap_m_ldr, m_log=self.tonemap_m_log)
+            if self.config.blended_recon_domain == "log1p":
+                loss_dict["blended_recon_loss"] = self.blended_recon_mse_loss(
+                    torch.log1p(pred_linear), torch.log1p(gt_linear)
+                )
+            else:
+                loss_dict["blended_recon_loss"] = self.blended_recon_mse_loss(pred_linear, gt_linear)
+
+        return loss_dict
+
     def get_outputs(self, ray_bundle: RayBundle, rotation: Optional[torch.Tensor] = None, latent_codes: Optional[torch.Tensor] = None, scale: Optional[torch.Tensor] = None):
         if self.field is None:
             raise ValueError("populate_fields() must be called before get_outputs")
@@ -188,6 +266,10 @@ class RENIModel(Model):
         gt_image = batch["image"].to(device)
         pred_image = outputs["rgb"]
 
+        if self.two_bracket:
+            # Both live in the bounded tonemapped domain [0, 1]; no unnormalise.
+            return {"psnr": self.psnr(preds=pred_image, target=gt_image)}
+
         if self.config.loss_inclusions["scale_inv_loss"]:
             # estimate scale using least squares
             scale = (gt_image * pred_image).sum() / (pred_image * pred_image).sum()
@@ -209,11 +291,17 @@ class RENIModel(Model):
 
         loss_dict = {}
 
+        # Optional luminance weighting for scale_inv_loss / log_mse_loss (G7h control variant).
+        lum_weights = self._luminance_loss_weights(batch["image"]) if self.config.luminance_weighted_loss else None
+
         # Unlike original RENI implementation, the sineweighting
         # is implemented by the ray sampling so no need to modify losses
         if not self.fitting_eval_latents:
             if self.config.loss_inclusions["log_mse_loss"] in [True, "train", "both"]:
-                log_mse_loss = self.log_mse_loss(outputs["rgb"], batch["image"])
+                if lum_weights is not None:
+                    log_mse_loss = self.weighted_mse_loss(outputs["rgb"], batch["image"], lum_weights)
+                else:
+                    log_mse_loss = self.log_mse_loss(outputs["rgb"], batch["image"])
                 loss_dict["log_mse_loss"] = log_mse_loss
 
             if self.config.loss_inclusions["hdr_mse_loss"] in [True, "train", "both"]:
@@ -234,11 +322,14 @@ class RENIModel(Model):
                 loss_dict["cosine_similarity_loss"] = cosine_similarity_loss
 
             if self.config.loss_inclusions["scale_inv_loss"] in [True, "train", "both"]:
-                scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], batch["image"])
+                scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], batch["image"], weights=lum_weights)
                 loss_dict["scale_inv_loss"] = scale_inv_loss
         else:
             if self.config.loss_inclusions["log_mse_loss"] in [True, "eval", "both"]:
-                log_mse_loss = self.log_mse_loss(outputs["rgb"], batch["image"])
+                if lum_weights is not None:
+                    log_mse_loss = self.weighted_mse_loss(outputs["rgb"], batch["image"], lum_weights)
+                else:
+                    log_mse_loss = self.log_mse_loss(outputs["rgb"], batch["image"])
                 loss_dict["log_mse_loss"] = log_mse_loss
 
             if self.config.loss_inclusions["hdr_mse_loss"] in [True, "eval", "both"]:
@@ -259,8 +350,10 @@ class RENIModel(Model):
                 loss_dict["cosine_similarity_loss"] = cosine_similarity_loss
 
             if self.config.loss_inclusions["scale_inv_loss"] in [True, "eval", "both"]:
-                scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], batch["image"])
+                scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], batch["image"], weights=lum_weights)
                 loss_dict["scale_inv_loss"] = scale_inv_loss
+
+        loss_dict.update(self._two_bracket_losses(outputs, batch))
 
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
         return loss_dict
@@ -278,19 +371,24 @@ class RENIModel(Model):
         else:
             gt_image = batch["image"]  # [num_rays, 3]
 
-        pred_image = outputs["rgb"]  # [num_rays, 3]
+        pred_image = outputs["rgb"]  # [num_rays, C]
 
-        # reshape to [H, W, 3]
-        gt_image = gt_image.reshape(self.metadata["image_height"], self.metadata["image_width"], 3)
-        pred_image = pred_image.reshape(self.metadata["image_height"], self.metadata["image_width"], 3)
+        num_channels = 6 if self.two_bracket else 3
 
-        if self.config.loss_inclusions["scale_inv_loss"] in [True, "eval", "both"]:
+        # reshape to [H, W, C]
+        gt_image = gt_image.reshape(self.metadata["image_height"], self.metadata["image_width"], num_channels)
+        pred_image = pred_image.reshape(self.metadata["image_height"], self.metadata["image_width"], num_channels)
+
+        scale_inv_eval = self.config.loss_inclusions["scale_inv_loss"] in [True, "eval", "both"]
+        pred_image_unaligned = pred_image
+        if scale_inv_eval:
             # estimate scale using least squares
             scale = (gt_image * pred_image).sum() / (pred_image * pred_image).sum()
             pred_image = scale * pred_image
 
-        gt_image = self.field.unnormalise(gt_image)
-        pred_image = self.field.unnormalise(pred_image)
+        # to linear HDR [H, W, 3] (blend for two-bracket mode, unnormalise otherwise)
+        gt_image = self._to_linear_hdr(gt_image)
+        pred_image = self._to_linear_hdr(pred_image)
 
         # converting to grayscale by taking the mean across the color dimension
         gt_image_gray = torch.mean(gt_image, dim=-1)
@@ -338,6 +436,17 @@ class RENIModel(Model):
         images_dict["heatmap"] = combined_log_heatmap
         images_dict["difference"] = difference
 
+        # Peak-aware HDR metrics (G7h); computed on the un-aligned prediction so the
+        # metric function can apply its own robust exposure alignment when needed.
+        peak_metrics = {}
+        if self.config.compute_hdr_peak_metrics:
+            alignment = self.config.hdr_metrics_alignment
+            if alignment == "auto":
+                alignment = "median_ratio" if scale_inv_eval else "none"
+            peak_metrics = compute_hdr_peak_metrics(
+                self._to_linear_hdr(pred_image_unaligned), gt_image, alignment=alignment
+            )
+
         # COMPUTE METRICS
         # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
         gt_image = gt_image.unsqueeze(0).permute(0, 3, 1, 2)
@@ -374,6 +483,8 @@ class RENIModel(Model):
                 metrics_dict["lpips_ldr"] = torch.tensor(float('nan'))
             else:
                 metrics_dict["lpips_ldr"] = self.lpips(pred_image_ldr, gt_image_ldr)
+
+        metrics_dict.update(peak_metrics)
 
         return metrics_dict, images_dict
 

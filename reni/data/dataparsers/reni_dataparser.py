@@ -71,6 +71,21 @@ class RENIDataParserConfig(DataParserConfig):
     """Whether to fit validation images in LDR, still includes metrics against HDR versions."""
     custom_val_folder: Optional[str] = None
     """Path to a custom validation folder, if None, uses the default validation folder."""
+    fixed_gauge_normalisation: bool = False
+    """Normalise each HDRI so its fixed_gauge_percentile luminance equals fixed_gauge_target
+    before any tonemapping/log conversion (fixed gauge replaces the scale-invariant loss)."""
+    fixed_gauge_percentile: float = 0.99
+    """Luminance percentile used by fixed_gauge_normalisation."""
+    fixed_gauge_target: float = 1.0
+    """Target luminance value at fixed_gauge_percentile for fixed_gauge_normalisation."""
+    tonemap_targets: bool = False
+    """Two-bracket target mode: images become 6 channels (extended-Reinhard LDR bracket,
+    log bracket) computed from the linear (gauge-normalised) HDR. Incompatible with
+    convert_to_ldr / convert_to_log_domain / min_max_normalize."""
+    tonemap_m_ldr: float = 16.0
+    """Extended-Reinhard white point M_ldr for the LDR bracket."""
+    tonemap_m_log: float = 10000.0
+    """Log bracket range M_log; log bracket is log(1+E)/log(1+M_log)."""
 
 
 @dataclass
@@ -84,6 +99,16 @@ class RENIDataParser(DataParser):
         self.data: Path = config.data
 
     def _generate_dataparser_outputs(self, split="train"):
+        if self.config.tonemap_targets:
+            assert not self.config.convert_to_ldr, "tonemap_targets is incompatible with convert_to_ldr."
+            assert not self.config.convert_to_log_domain, (
+                "tonemap_targets is incompatible with convert_to_log_domain."
+            )
+            assert self.config.min_max_normalize is None, (
+                "tonemap_targets is incompatible with min_max_normalize."
+            )
+            assert not self.config.val_in_ldr, "tonemap_targets is incompatible with val_in_ldr."
+
         if self.config.use_validation_as_train:
             split = "val"
         elif self.config.use_test_as_train:
@@ -155,6 +180,12 @@ class RENIDataParser(DataParser):
                 "image_height": image_height,
                 "image_width": image_width,
                 "val_in_ldr": self.config.val_in_ldr,
+                "fixed_gauge_normalisation": self.config.fixed_gauge_normalisation,
+                "fixed_gauge_percentile": self.config.fixed_gauge_percentile,
+                "fixed_gauge_target": self.config.fixed_gauge_target,
+                "tonemap_targets": self.config.tonemap_targets,
+                "tonemap_m_ldr": self.config.tonemap_m_ldr,
+                "tonemap_m_log": self.config.tonemap_m_log,
             },
         )
 

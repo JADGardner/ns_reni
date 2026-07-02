@@ -112,6 +112,7 @@ class Decoder(nn.Module):
         num_heads: int,
         num_layers: int,
         out_activation: Optional[nn.Module],
+        out_dim: int = 3,
     ):
         """
         Decoder module.
@@ -123,6 +124,7 @@ class Decoder(nn.Module):
             num_heads (int): The number of heads to use in the attention mechanism.
             num_layers (int): The number of layers in the module.
             out_activation (nn.Module): The activation function to use on the output tensor.
+            out_dim (int): The number of output features (3 for RGB, 6 for two-bracket).
         """
         super().__init__()
         self.residual_projection = nn.Linear(in_dim, hidden_features)  # projection for residual connection
@@ -132,7 +134,7 @@ class Decoder(nn.Module):
                 for i in range(num_layers)
             ]
         )
-        self.fc = nn.Linear(hidden_features, 3)  # 3 for RGB
+        self.fc = nn.Linear(hidden_features, out_dim)
         self.out_activation = out_activation
 
     def forward(self, x: torch.Tensor, conditioning_input: torch.Tensor) -> torch.Tensor:

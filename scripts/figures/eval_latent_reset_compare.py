@@ -97,6 +97,12 @@ def _copy_dataparser_settings(dataparser_config: Any, saved_dp: Dict[str, Any], 
         "train_subset_size",
         "val_subset_size",
         "custom_val_folder",
+        "fixed_gauge_normalisation",
+        "fixed_gauge_percentile",
+        "fixed_gauge_target",
+        "tonemap_targets",
+        "tonemap_m_ldr",
+        "tonemap_m_log",
     ):
         if key in saved_dp and hasattr(dataparser_config, key):
             setattr(dataparser_config, key, saved_dp[key])
@@ -133,6 +139,7 @@ def _copy_field_settings(field_config: Any, saved_field: Dict[str, Any]) -> None
         "num_attention_heads",
         "num_attention_layers",
         "output_activation",
+        "out_features",
         "last_layer_linear",
         "trainable_scale",
         "old_implementation",
@@ -154,6 +161,15 @@ def _copy_loss_settings(model_config: Any, saved_model: Dict[str, Any]) -> None:
         current = dict(model_config.loss_coefficients)
         current.update(saved_model["loss_coefficients"])
         model_config.loss_coefficients = current
+
+    for key in (
+        "luminance_weighted_loss",
+        "luminance_weight_power",
+        "luminance_weight_cap",
+        "blended_recon_domain",
+    ):
+        if key in saved_model and hasattr(model_config, key):
+            setattr(model_config, key, saved_model[key])
 
 
 def _set_eval_latent_steps(model_config: Any, latent_steps: Optional[int]) -> None:

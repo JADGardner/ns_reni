@@ -38,6 +38,7 @@ from nerfstudio.data.datasets.base_dataset import InputDataset
 from nerfstudio.data.utils.data_utils import get_image_mask_tensor_from_path
 
 from reni.utils.colourspace import linear_to_sRGB
+from reni.utils.tonemap import apply_fixed_gauge, encode_two_bracket
 
 
 class RENIDataset(InputDataset):
@@ -148,8 +149,21 @@ class RENIDataset(InputDataset):
         """
         image = torch.from_numpy(self.get_numpy_image(image_idx).astype("float32"))
         image = image[:, :, :3]  # remove alpha channel if present
+        if self._dataparser_outputs.metadata.get("fixed_gauge_normalisation", False):
+            image = apply_fixed_gauge(
+                image,
+                percentile=self._dataparser_outputs.metadata.get("fixed_gauge_percentile", 0.99),
+                target=self._dataparser_outputs.metadata.get("fixed_gauge_target", 1.0),
+            )
         if self._dataparser_outputs.metadata["convert_to_ldr"]:
             image = linear_to_sRGB(image)
+        if self._dataparser_outputs.metadata.get("tonemap_targets", False):
+            # Two-bracket targets: [H, W, 6] = (extended-Reinhard LDR bracket, log bracket).
+            return encode_two_bracket(
+                image,
+                m_ldr=self._dataparser_outputs.metadata.get("tonemap_m_ldr", 16.0),
+                m_log=self._dataparser_outputs.metadata.get("tonemap_m_log", 10000.0),
+            )
         if self._dataparser_outputs.metadata["convert_to_log_domain"]:
             image = torch.log(image + 1e-8)
         if self._dataparser_outputs.metadata["min_max_normalize"]:
