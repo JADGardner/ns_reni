@@ -478,6 +478,18 @@ class RENIField(BaseRENIField):
             eval_scale = torch.ones(self.num_eval_data).type_as(self.eval_scale)
             self.eval_scale.data = eval_scale.data
 
+    def reset_train_latents_to_zero(self):
+        """Reset train latents to the prior origin for a latent-reset training pass."""
+        if self.num_train_data is None:
+            raise ValueError("Cannot reset train latents without train data.")
+
+        with torch.no_grad():
+            self.train_mu.zero_()
+            self.train_logvar.fill_(-5.0)
+
+            if self.config.trainable_scale in [True, "train", "both"]:
+                self.train_scale.fill_(1.0)
+
     def apply_positional_encoding(self, directional_input, conditioning_input):
         # conditioning on just invariant directional input
         if self.config.encoded_input == "Conditioning":

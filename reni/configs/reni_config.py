@@ -4,7 +4,6 @@ RENI configuration file.
 from pathlib import Path
 
 from nerfstudio.configs.base_config import ViewerConfig, MachineConfig
-from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.plugins.types import MethodSpecification
 
 from nerfstudio.engine.optimizers import AdamOptimizerConfig
@@ -19,9 +18,10 @@ from reni.models.reni_model import RENIModelConfig
 from reni.pipelines.reni_pipeline import RENIPipelineConfig
 from reni.illumination_fields.reni_illumination_field import RENIFieldConfig
 from reni.data.reni_pixel_sampler import RENIEquirectangularPixelSamplerConfig
+from reni.engine.trainer import RENITrainerConfig
 
 RENIField = MethodSpecification(
-    config=TrainerConfig(
+    config=RENITrainerConfig(
         method_name="reni",
         experiment_name="reni",
         machine=MachineConfig(),

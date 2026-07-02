@@ -145,6 +145,18 @@ class RENIModel(Model):
         param_groups["field"] = list(self.field.parameters())
         return param_groups
 
+    def reset_train_latents_to_zero(self) -> None:
+        """Reset train latents for a latent-reset training cycle."""
+        if not hasattr(self.field, "reset_train_latents_to_zero"):
+            raise NotImplementedError(
+                f"{type(self.field).__name__} does not support latent-reset training."
+            )
+
+        self.field.reset_train_latents_to_zero()
+
+        if hasattr(self.field, "reset_eval_latents"):
+            self.field.reset_eval_latents()
+
     def get_outputs(self, ray_bundle: RayBundle, rotation: Optional[torch.Tensor] = None, latent_codes: Optional[torch.Tensor] = None, scale: Optional[torch.Tensor] = None):
         if self.field is None:
             raise ValueError("populate_fields() must be called before get_outputs")
