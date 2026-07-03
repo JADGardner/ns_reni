@@ -89,6 +89,7 @@ def evaluate_run(
     device: str,
     latent_steps: int | None,
     seed: int,
+    force_align: bool = False,
 ) -> Dict[str, Any]:
     seed_all(seed)
     run_dir = resolve_run_dir(run_path)
@@ -97,6 +98,8 @@ def evaluate_run(
 
     model_config = _build_test_config(run_dir, data_root, latent_steps)
     model_config.pipeline.model.compute_hdr_peak_metrics = True
+    if force_align:
+        model_config.pipeline.model.force_eval_exposure_alignment = True
     pipeline = model_config.pipeline.setup(
         device=device,
         test_mode="test",
@@ -120,6 +123,7 @@ def evaluate_run(
         "split": split,
         "num_eval_images": num_eval,
         "latent_refit": True,
+        "force_eval_exposure_alignment": force_align,
         "two_bracket": bool(getattr(pipeline.model, "two_bracket", False)),
         "luminance_weighted_loss": bool(model_config.pipeline.model.luminance_weighted_loss),
         "load_stats": load_stats,
@@ -191,13 +195,18 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT,
                         help="Output stem for JSON/CSV files.")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--force-align", nargs="*", default=[],
+                        help="Run labels that get a per-image median-ratio exposure "
+                             "alignment before metrics (parity diagnostic for "
+                             "fixed-gauge models vs the scale-invariant free scale).")
     args = parser.parse_args()
 
     os.environ.setdefault("PYTHONHASHSEED", str(args.seed))
 
     runs = parse_runs(args.run)
     models = {
-        label: evaluate_run(label, path, args.data, args.device, args.latent_steps, args.seed)
+        label: evaluate_run(label, path, args.data, args.device, args.latent_steps, args.seed,
+                            force_align=label in args.force_align)
         for label, path in runs.items()
     }
 

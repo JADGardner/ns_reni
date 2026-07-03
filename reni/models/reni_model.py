@@ -68,6 +68,10 @@ class RENIModelConfig(ModelConfig):
     """Compute peak-aware HDR eval metrics (log RMSE, luminance-weighted RMSE, sun/peak errors)."""
     hdr_metrics_alignment: Literal["auto", "none", "median_ratio"] = "auto"
     """Exposure alignment for peak metrics; auto = median_ratio for scale-invariant models else none."""
+    force_eval_exposure_alignment: bool = False
+    """Grant fixed-gauge models a per-image median-ratio exposure alignment in linear HDR
+    before the standard eval metrics — parity diagnostic against the free least-squares
+    scale that scale-invariant models already receive."""
     eval_latent_optimizer: Dict[str, Any] = to_immutable_dict(
         {
             "eval_latents": {
@@ -389,6 +393,15 @@ class RENIModel(Model):
         # to linear HDR [H, W, 3] (blend for two-bracket mode, unnormalise otherwise)
         gt_image = self._to_linear_hdr(gt_image)
         pred_image = self._to_linear_hdr(pred_image)
+
+        # Diagnostic parity knob: scale-invariant models get a free per-image
+        # exposure above; fixed-gauge models (two-bracket) are scored raw. This
+        # grants them the analogous linear-HDR median-ratio exposure so the
+        # metric gap attributable to the free parameter can be measured.
+        if (not scale_inv_eval) and getattr(self.config, "force_eval_exposure_alignment", False):
+            gt_med = luminance(gt_image).median()
+            pred_med = luminance(pred_image).median().clamp_min(1e-8)
+            pred_image = pred_image * (gt_med / pred_med)
 
         # Log-compressed luminance heatmap. Linear HDR spans orders of
         # magnitude, so a linear min/max colormap crushes everything but the
