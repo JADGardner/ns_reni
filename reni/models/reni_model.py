@@ -390,9 +390,13 @@ class RENIModel(Model):
         gt_image = self._to_linear_hdr(gt_image)
         pred_image = self._to_linear_hdr(pred_image)
 
-        # converting to grayscale by taking the mean across the color dimension
-        gt_image_gray = torch.mean(gt_image, dim=-1)
-        pred_image_gray = torch.mean(pred_image, dim=-1)
+        # Log-compressed luminance heatmap. Linear HDR spans orders of
+        # magnitude, so a linear min/max colormap crushes everything but the
+        # sun to the colormap floor; log1p keeps mid/low-range structure
+        # visible. Planes come from the GT (in log space) so pred stays
+        # comparable within the panel.
+        gt_image_gray = torch.log1p(luminance(gt_image).clamp_min(0.0))
+        pred_image_gray = torch.log1p(luminance(pred_image).clamp_min(0.0))
 
         # reshape to H, W
         gt_image_gray = gt_image_gray.reshape(self.metadata["image_height"], self.metadata["image_width"], 1)
@@ -408,8 +412,8 @@ class RENIModel(Model):
             far_plane=gt_max,
         )
 
-        # create difference image
-        difference = torch.abs(gt_image - pred_image)
+        # difference image, log-compressed for the same reason as the heatmap
+        difference = torch.log1p(torch.abs(gt_image - pred_image))
 
         # i.e. we are not already in LDR space
         if not self.metadata["convert_to_ldr"]:

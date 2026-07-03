@@ -57,6 +57,7 @@ from reni.configs.reni_config import RENIField  # noqa: E402
 from reni.configs.sh_sg_envmap_configs import SHField, SGField  # noqa: E402
 from reni.field_components.field_heads import RENIFieldHeadNames  # noqa: E402
 from reni.utils.colourspace import linear_to_sRGB  # noqa: E402
+from reni.utils.tonemap import luminance as tonemap_luminance  # noqa: E402
 from reni.utils.tonemap import two_bracket_to_linear  # noqa: E402
 from reni.utils.utils import rot_y, rot_z  # noqa: E402
 
@@ -496,11 +497,16 @@ def render_eval_image(model, datamanager, idx: int, device, height: int = 64):
 
     with torch.no_grad():
         outputs = model.get_outputs_for_camera_ray_bundle(ray_bundle, rotation=None)
-        pred = model.field.unnormalise(outputs["rgb"]).reshape(H, W, 3)
-        gt = model.field.unnormalise(gt_raw).reshape(H, W, 3)
+        # _to_linear_hdr handles both the standard log/min-max unnormalise and
+        # the 6-channel two-bracket blend; field.unnormalise alone is wrong
+        # (identity) for two-bracket models.
+        pred = model._to_linear_hdr(outputs["rgb"]).reshape(H, W, 3)
+        gt = model._to_linear_hdr(gt_raw).reshape(H, W, 3)
 
-        gt_gray = torch.mean(gt, dim=-1, keepdim=True)
-        pred_gray = torch.mean(pred, dim=-1, keepdim=True)
+        # Log-compressed BT.709 luminance: linear HDR under a linear min/max
+        # colormap crushes everything but the sun to the colormap floor.
+        gt_gray = torch.log1p(tonemap_luminance(gt).clamp_min(0.0)).unsqueeze(-1)
+        pred_gray = torch.log1p(tonemap_luminance(pred).clamp_min(0.0)).unsqueeze(-1)
         gt_min, gt_max = torch.min(gt_gray), torch.max(gt_gray)
         combined = colormaps.apply_depth_colormap(
             torch.cat([gt_gray, pred_gray], dim=1),

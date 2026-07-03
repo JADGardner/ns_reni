@@ -47,6 +47,7 @@ from reni.utils.utils import find_nerfstudio_project_root
 from reni.field_components.field_heads import RENIFieldHeadNames
 from reni.model_components.shaders import BlinnPhongShader
 from reni.utils.colourspace import linear_to_sRGB
+from reni.utils.tonemap import luminance
 
 
 # Model related configs
@@ -454,7 +455,9 @@ class RENIInverseModel(Model):
             width = self.equirectangular_sampler.width
             ldr_envmap = ldr_envmap.reshape(height, width, 3)
 
-            hdr_mean = torch.mean(hdr_envmap, dim=-1)
+            # Log-compressed luminance heatmap: linear HDR under a linear
+            # min/max colormap crushes everything but the sun.
+            hdr_mean = torch.log1p(luminance(hdr_envmap).clamp_min(0.0))
             hdr_mean = hdr_mean.reshape(height, width, 1)
             hdr_mean_log_heatmap = colormaps.apply_depth_colormap(
                 hdr_mean,
