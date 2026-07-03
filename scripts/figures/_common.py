@@ -57,6 +57,7 @@ from reni.configs.reni_config import RENIField  # noqa: E402
 from reni.configs.sh_sg_envmap_configs import SHField, SGField  # noqa: E402
 from reni.field_components.field_heads import RENIFieldHeadNames  # noqa: E402
 from reni.utils.colourspace import linear_to_sRGB  # noqa: E402
+from reni.utils.tonemap import two_bracket_to_linear  # noqa: E402
 from reni.utils.utils import rot_y, rot_z  # noqa: E402
 
 CHECKPOINTS = REPO_ROOT / "checkpoints"
@@ -258,6 +259,15 @@ def load_model(load_dir: Path, device: str = "cuda:0", load_step: Optional[int] 
         mmn = saved_dp["min_max_normalize"]
         dp.min_max_normalize = tuple(mmn) if isinstance(mmn, list) else mmn
         dp.augment_with_mirror = saved_dp["augment_with_mirror"]
+        # Two-bracket (complementary tonemapping) fits carry fixed-gauge
+        # normalisation and 6-channel tonemap targets instead of min-max/log.
+        # Absent in older configs -> defaults leave the 3-channel path unchanged.
+        dp.fixed_gauge_normalisation = saved_dp.get("fixed_gauge_normalisation", False)
+        dp.fixed_gauge_percentile = saved_dp.get("fixed_gauge_percentile", 0.99)
+        dp.fixed_gauge_target = saved_dp.get("fixed_gauge_target", 1.0)
+        dp.tonemap_targets = saved_dp.get("tonemap_targets", False)
+        dp.tonemap_m_ldr = saved_dp.get("tonemap_m_ldr", 16.0)
+        dp.tonemap_m_log = saved_dp.get("tonemap_m_log", 10000.0)
 
     field_cfg = config["pipeline"]["model"]["field"]
     if "latent_dim" in field_cfg:
@@ -272,6 +282,10 @@ def load_model(load_dir: Path, device: str = "cuda:0", load_step: Optional[int] 
                     "num_attention_layers", "output_activation",
                     "last_layer_linear", "trainable_scale", "old_implementation"):
             setattr(m.field, key, field_cfg[key])
+        # Two-bracket fits emit six sigmoid channels; older configs omit the key
+        # and stay at the 3-channel RGB default.
+        if "out_features" in field_cfg:
+            m.field.out_features = field_cfg["out_features"]
     elif "spherical_harmonic_order" in field_cfg:
         model_config = SHField.config
         _copy_dataparser(model_config)
@@ -445,7 +459,16 @@ def decode_latents(model, ray_samples, latent_code, rotation=None,
                 rotation=rotation,
                 latent_codes=latents,
             )
-            rgb = model.field.unnormalise(outputs[RENIFieldHeadNames.RGB])
+            raw = outputs[RENIFieldHeadNames.RGB]
+            # Two-bracket models emit six sigmoid channels; reconstruct linear
+            # HDR exactly as RENIModel._to_linear_hdr does (bracket inversion +
+            # sigmoid blend, tau/delta at the tonemap module defaults). The
+            # 3-channel path is unchanged.
+            if getattr(model, "two_bracket", False):
+                rgb = two_bracket_to_linear(
+                    raw, m_ldr=model.tonemap_m_ldr, m_log=model.tonemap_m_log)
+            else:
+                rgb = model.field.unnormalise(raw)
             chunks.append(rgb.cpu())
 
     img = torch.cat(chunks, dim=0).reshape(H, W, 3)
