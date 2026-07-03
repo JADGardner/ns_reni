@@ -59,7 +59,6 @@ def main():
     add_common_args(parser, "train_examples")
     parser.add_argument("--model_dir", type=Path, required=True)
     parser.add_argument("--num", type=int, default=10)
-    parser.add_argument("--height", type=int, default=128)
     args = parser.parse_args()
     seed_all(args.seed)
 
