@@ -51,6 +51,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--blended-recon-domain", default="log1p", choices=["log1p", "linear"])
     parser.add_argument("--lum-weight-power", type=float, default=1.0)
     parser.add_argument("--lum-weight-cap", type=float, default=100.0)
+    parser.add_argument("--ldr-bracket-weight", type=float, default=1.0,
+                        help="Loss coefficient for the LDR bracket MSE (two_bracket only). "
+                             ">1 shifts capacity toward the low/mid range the LDR metrics "
+                             "measure, at some cost to highlight fidelity.")
     return parser.parse_args()
 
 
@@ -87,6 +91,10 @@ def apply_variant(config, args) -> None:
     loss_inclusions["log_bracket_mse_loss"] = True
     loss_inclusions["blended_recon_loss"] = args.blended_recon == "on"
     model.loss_inclusions = loss_inclusions
+    if args.ldr_bracket_weight != 1.0:
+        coefficients = dict(model.loss_coefficients)
+        coefficients["ldr_bracket_mse_loss"] = args.ldr_bracket_weight
+        model.loss_coefficients = coefficients
 
 
 def main() -> None:
