@@ -62,22 +62,22 @@ ENV PATH=/usr/local/cuda/bin:$PATH
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 
 # -- PyTorch + CUDA 12.8 ------------------------------------------------------
+# Pinned to 2.8.0: the prebuilt tinycudann wheel below targets pt2.8.0cu128.
 RUN conda run -n research pip install --no-cache-dir \
-    torch torchvision torchaudio \
+    torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
     --extra-index-url https://download.pytorch.org/whl/cu128
 
 # -- Set up LD_LIBRARY_PATH for CUDA libs from torch --------------------------
 ENV LD_LIBRARY_PATH=/opt/conda/envs/research/lib/python3.12/site-packages/torch/lib:/opt/conda/envs/research/lib/python3.12/site-packages/nvidia/cudnn/lib:/opt/conda/envs/research/lib/python3.12/site-packages/nvidia/cublas/lib:$LD_LIBRARY_PATH
 
 # -- CUDA extensions (require devel headers + compilers) ----------------------
-# tiny-cuda-nn: required by nerfstudio hash grid encodings and RENI++ MLP
+# tiny-cuda-nn: required by nerfstudio hash grid encodings and RENI++ MLP.
+# Installed from the prebuilt pt2.8.0/cu128 wheel (miropsota torch_packages_builder)
+# to avoid the fragile source compile.
 ARG CUDA_ARCHITECTURES="90;89;86;80"
-RUN conda run -n research bash -c " \
-    export TCNN_CUDA_ARCHITECTURES='${CUDA_ARCHITECTURES}' && \
-    export FORCE_CUDA=1 && \
-    pip install --no-cache-dir --no-build-isolation \
-        git+https://github.com/NVlabs/tiny-cuda-nn.git#subdirectory=bindings/torch \
-    && pip cache purge && rm -rf /tmp/*"
+RUN conda run -n research pip install --no-cache-dir \
+    --extra-index-url https://miropsota.github.io/torch_packages_builder \
+    "tinycudann==2.0+pt2.8.0cu128"
 
 # -- nerfstudio (mainline) -----------------------------------------------------
 # ns_reni is a nerfstudio extension — install mainline nerfstudio.
