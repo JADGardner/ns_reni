@@ -51,6 +51,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--blended-recon-domain", default="log1p", choices=["log1p", "linear"])
     parser.add_argument("--lum-weight-power", type=float, default=1.0)
     parser.add_argument("--lum-weight-cap", type=float, default=100.0)
+    parser.add_argument("--keep-checkpoints", action="store_true",
+                        help="Retain every 10k checkpoint instead of only the latest "
+                             "(trajectory analysis: psnr_ldr vs step/cycle).")
     parser.add_argument("--ldr-bracket-weight", type=float, default=1.0,
                         help="Loss coefficient for the LDR bracket MSE (two_bracket only). "
                              ">1 shifts capacity toward the low/mid range the LDR metrics "
@@ -110,6 +113,8 @@ def main() -> None:
     config.training_paradigm = args.training_paradigm
     config.latent_reset_cycles = args.latent_reset_cycles
     config.max_num_iterations = args.max_num_iterations
+    if args.keep_checkpoints:
+        config.save_only_latest_checkpoint = False
     apply_variant(config, args)
     config.experiment_name = args.experiment_name or (
         f"reni_{args.training_paradigm}_d{args.latent_dim}"
