@@ -198,6 +198,7 @@ GREEN_FILL, GREEN_STROKE = "#E1F5D9", "#3D8B2F"
 CELL_FILL, CELL_STROKE = "#EAF1FF", (0.23, 0.37, 0.68, 0.55)
 STACK_FILL, STACK_STROKE = "#FFF3D6", (0.79, 0.60, 0.18, 0.60)
 ARROW_COLOR = "#333333"
+VEC_COLOR = "#7C9AD6"  # pastel blue for on-sphere direction/latent vectors
 
 
 def rounded_box(ax, x, y, w, h, facecolor, edgecolor, lw=1.2, rounding=None,
@@ -235,7 +236,7 @@ def draw_query_sphere(ax, cx, cy, r):
               zorder=0)
     draw_axes(ax, cx, cy, r)
     arrow(ax, (cx, cy), (cx + 0.35 * r, cy + 0.56 * r),
-          color="blue", lw=1.15, mutation_scale=13)
+          color=VEC_COLOR, lw=1.3, mutation_scale=13)
     draw_text(ax, cx + 0.44 * r, cy + 0.64 * r, r"$\mathbf{d}$", size=12)
     ax.plot([cx + 0.35 * r, cx + 0.35 * r],
             [cy + 0.56 * r, cy - 0.53 * r],
@@ -259,7 +260,7 @@ def draw_latent_sphere(ax, cx, cy, r):
     ]
     for vx, vy in vectors:
         arrow(ax, (cx, cy), (cx + vx * r, cy + vy * r),
-              color="blue", lw=1.05, mutation_scale=12)
+              color=VEC_COLOR, lw=1.2, mutation_scale=12)
     draw_text(ax, cx + 0.18 * r, cy + 0.50 * r, r"$\mathbf{Z}$", size=13)
     draw_text(ax, cx - 0.85 * r, cy + 0.82 * r, "Latent Code",
               size=12, rotation=48)
@@ -358,10 +359,10 @@ def build_figure(args):
     draw_query_sphere(ax, 1.35, 4.05, 1.05)
     draw_latent_sphere(ax, 1.35, 1.70, 1.05)
 
-    stack_right, stack_mid_y = draw_vector_stack(ax, 3.25, 3.55, 0.34, 0.78)
-    matrix_right, matrix_mid_y = draw_latent_matrix(ax, 2.62, 1.38, cell=0.23)
+    stack_right, stack_mid_y = draw_vector_stack(ax, 3.62, 3.55, 0.36, 0.80)
+    matrix_right, matrix_mid_y = draw_latent_matrix(ax, 3.02, 1.36, cell=0.24)
 
-    box_x, box_y, box_w, box_h = 4.28, 2.23, 1.86, 1.10
+    box_x, box_y, box_w, box_h = 4.82, 2.21, 1.94, 1.14
     box_center_y = box_y + box_h / 2
     upper_input_y = (box_center_y + box_y + box_h) / 2
     lower_input_y = (box_center_y + box_y) / 2
@@ -377,16 +378,16 @@ def build_figure(args):
     mlp_y = 1.65
     mlp_h = 2.25
     mlp_center_y = mlp_y + mlp_h / 2
-    mlp_x0 = 7.05
+    mlp_x0 = 7.62
     mlp_layer_w = 0.27
     arrow(ax, (box_x + box_w, box_y + box_h / 2), (mlp_x0 - 0.03, mlp_center_y),
           lw=1.15, mutation_scale=15)
     draw_text(ax, (box_x + box_w + mlp_x0) / 2, mlp_center_y + 0.13,
               r"$\mathbf{d}'$", size=13)
 
-    mlp_xs = draw_mlp(ax, mlp_x0, mlp_y, mlp_h, layer_w=mlp_layer_w, gap=0.48,
+    mlp_xs = draw_mlp(ax, mlp_x0, mlp_y, mlp_h, layer_w=mlp_layer_w, gap=0.33,
                       n_layers=5)
-    draw_text(ax, 8.55, 4.35,
+    draw_text(ax, 8.85, 4.35,
               "Rotation-Equivariant Conditional\nSpherical Neural Field",
               size=12)
 
