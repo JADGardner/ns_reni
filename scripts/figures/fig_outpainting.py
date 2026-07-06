@@ -190,7 +190,7 @@ def fit_latent(model, gt_norm, mask, device, steps=600, lr=1e-2,
 
     z = torch.zeros(1, model.field.latent_dim, 3, device=device,
                     requires_grad=True)
-    target = gt_fit.reshape(-1, 3).to(device)
+    target = gt_fit.reshape(-1, gt_fit.shape[-1]).to(device)
     visible = torch.nonzero(mask_fit.reshape(-1).bool(), as_tuple=False)
     visible = visible.squeeze(1).to(device)
     if visible.numel() == 0:
@@ -240,15 +240,19 @@ def fit_latent(model, gt_norm, mask, device, steps=600, lr=1e-2,
             )[RENIFieldHeadNames.RGB]
             chunks.append(out_chunk)
         out = torch.cat(chunks, dim=0)
-        pred = model.field.unnormalise(out).reshape(output_height,
-                                                    output_height * 2, 3)
+        if getattr(model, "two_bracket", False):
+            pred = model._to_linear_hdr(out).reshape(output_height,
+                                                     output_height * 2, 3)
+        else:
+            pred = model.field.unnormalise(out).reshape(output_height,
+                                                        output_height * 2, 3)
     return linear_to_sRGB(pred, use_quantile=True).cpu().detach(), \
         float(mse.detach())
 
 
 def perspective_figure(args):
     device = args.device
-    _, datamanager, model = load_model(MODEL_DIRS["reni_pp"][100],
+    _, datamanager, model = load_model(MODEL_DIRS[args.model][100],
                                        device=device)
     n = len(args.image_indices)
     poses = row_poses(args, n)
@@ -273,6 +277,9 @@ def perspective_figure(args):
 
         batch = datamanager.eval_dataset[idx]
         gt_norm = eval_image_tensor(datamanager.eval_dataset, idx, batch=batch)
+        if getattr(model, "two_bracket", False) and gt_norm.shape[-1] != 6:
+            # bracket-form GT may arrive as [H, W, 3, 2]; flatten to [H, W, 6]
+            gt_norm = gt_norm.reshape(H, W, 6)
         completion, fit_mse = fit_latent(model, gt_norm, mask, device,
                                          steps=args.fit_steps,
                                          fit_height=args.fit_height,
@@ -328,6 +335,10 @@ def main():
     add_common_args(parser, "outpainting")
     parser.add_argument("--image_indices", type=int, nargs="+",
                         default=[1, 2, 3, 4, 5, 6])
+    parser.add_argument("--model", default="two_bracket_w3_2cyc",
+                        help="MODEL_DIRS key for the perspective figure "
+                             "(default: thesis two-bracket 2-cycle, the "
+                             "completion-optimal model; reni_pp = paper)")
     parser.add_argument("--mask_mode", choices=["perspective", "dataset"],
                         default="perspective")
     parser.add_argument("--hfov", type=float, default=110.0,
@@ -339,8 +350,6 @@ def main():
                         help="Height used for latent fitting; 0 = output/native")
     parser.add_argument("--fit_rays_per_step", type=int, default=32768,
                         help="Visible rays sampled per fit step; 0 = all visible")
-    parser.add_argument("--decode_chunk", type=int, default=65536,
-                        help="Rays per chunk when decoding the final completion")
     parser.add_argument("--view_seed", type=int, default=None,
                         help="Seed for randomized perspective viewpoints")
     parser.add_argument("--pitch_range", type=float, default=25.0,
