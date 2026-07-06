@@ -33,7 +33,11 @@ def _add_mirror_labels(fig, axs, fontsize):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    add_common_args(parser, "mirror")
+    add_common_args(parser, "mirror_thesis")
+    parser.add_argument("--model", default="two_bracket_w3_1cyc_testfit",
+                        help="MODEL_DIRS key (default: thesis two-bracket 1-cycle "
+                             "test-fit shim; its train latents are the fidelity-"
+                             "optimal decodes; use reni_pp for the paper model)")
     parser.add_argument("--latent_dim", type=int, default=100)
     parser.add_argument("--image_idx", type=int, default=96,
                         help="Train-set latent to decode (paper used 96)")
@@ -43,7 +47,7 @@ def main():
     args = parser.parse_args()
     seed_all(args.seed)
 
-    _, _, model = load_model(MODEL_DIRS["reni_pp"][args.latent_dim],
+    _, _, model = load_model(MODEL_DIRS[args.model][args.latent_dim],
                              device=args.device)
     ray_bundle = equirect_ray_bundle(args.device, idx=0, height=args.height)
     ray_samples = make_ray_samples(model, ray_bundle)
