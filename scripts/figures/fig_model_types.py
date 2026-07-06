@@ -112,19 +112,19 @@ def main():
     # ── Panel 1: condition-by-concatenation (MLP widens toward outputs) ──
     cy = 2.3
     cell_column(ax, 0.72, cy, 4, colors=[BLUE_CELL] * 3 + [DIR_CELL])
-    text(ax, 0.52, cy + 0.25, r"$\mathbf{z}$", size=12)
-    text(ax, 0.42, cy - 0.68, r"$\lambda(\mathbf{d})$", size=11)
+    text(ax, 0.58, cy + 0.25, r"$\mathbf{z}$", size=12)
+    text(ax, 0.50, cy - 0.68, r"$\lambda(\mathbf{d})$", size=11)
     trapezoid(ax, 1.28, 3.05, cy, 0.62, 1.10)
     text(ax, 2.16, cy, "MLP", size=12, color=GREEN_TEXT)
     output_column(ax, 3.20, cy)
-    text(ax, 3.74, cy, "outputs", size=9, rotation=90)
+    text(ax, 3.74, cy, "outputs", size=11, rotation=90)
     text(ax, 2.05, 0.42, "Condition-by-Concat", size=12)
 
     # ── Panel 2: hypernetwork ───────────────────────────────────────────
     hy = 3.35   # hyper row
     my = 1.95   # main row
     cell_column(ax, 4.62, hy, 3, colors=[BLUE_CELL] * 3)
-    text(ax, 4.44, hy, r"$\mathbf{z}$", size=12)
+    text(ax, 4.50, hy, r"$\mathbf{z}$", size=12)
     trapezoid(ax, 5.26, 6.66, hy, 0.36, 0.68,
               facecolor=BLUE_FILL, edgecolor=BLUE_STROKE)
     text(ax, 6.00, hy + 0.16, "Hyper", size=10.5, color=BLUE_TEXT)
@@ -136,10 +136,10 @@ def main():
     trapezoid(ax, 6.90, 8.52, my, 0.55, 1.05)
     text(ax, 7.72, my, "MLP", size=12, color=GREEN_TEXT)
     cell(ax, 5.94, my - 0.21, 0.42, DIR_CELL)
-    text(ax, 5.62, my, r"$\lambda(\mathbf{d})$", size=11)
+    text(ax, 5.70, my, r"$\lambda(\mathbf{d})$", size=11)
     arrow(ax, (6.38, my), (6.88, my))
     output_column(ax, 8.68, my)
-    text(ax, 9.22, my, "outputs", size=9, rotation=90)
+    text(ax, 9.22, my, "outputs", size=11, rotation=90)
     text(ax, 7.05, 0.42, "Hypernetwork", size=12)
 
     # ── Panel 3: attention ──────────────────────────────────────────────
@@ -162,13 +162,13 @@ def main():
     text(ax, 12.16, ay, "MLP", size=9.5, rotation=90, color=GREEN_TEXT)
     # z (keys/values) and lambda(d) (queries)
     cell_column(ax, 9.78, ay + 0.45, 3, colors=[BLUE_CELL] * 3)
-    text(ax, 9.60, ay + 0.45, r"$\mathbf{z}$", size=12)
+    text(ax, 9.66, ay + 0.45, r"$\mathbf{z}$", size=12)
     arrow(ax, (10.20, ay + 0.45), (10.78, ay + 0.45))
     cell(ax, 9.78, ay - 1.00, 0.42, DIR_CELL)
-    text(ax, 9.46, ay - 0.79, r"$\lambda(\mathbf{d})$", size=11)
+    text(ax, 9.54, ay - 0.79, r"$\lambda(\mathbf{d})$", size=11)
     arrow(ax, (10.20, ay - 0.79), (10.78, ay - 0.66))
     output_column(ax, 12.80, ay)
-    text(ax, 13.34, ay, "outputs", size=9, rotation=90)
+    text(ax, 13.34, ay, "outputs", size=11, rotation=90)
     text(ax, 11.62, 0.42, "Attention", size=12)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
