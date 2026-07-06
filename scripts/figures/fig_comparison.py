@@ -126,6 +126,10 @@ def main():
     parser.add_argument("--image_indices", type=int, nargs="+", default=[1, 2, 3, 4])
     parser.add_argument("--labels", action="store_true",
                         help="Bake current LaTeX/TikZ labels into the figure")
+    parser.add_argument("--reni-d100-model", default="two_bracket_w3_1cyc",
+                        help="MODEL_DIRS key for the 300-param RENI++ row "
+                             "(default: the thesis two-bracket headline; use "
+                             "reni_pp for the paper model)")
     parser.add_argument("--label_fontsize", type=float, default=22.0)
     args = parser.parse_args()
     seed_all(args.seed)
@@ -133,6 +137,8 @@ def main():
     specs = {}
     for d, tag in zip((9, 49, 100), RENI_TAGS):
         specs[tag] = MODEL_DIRS["reni_pp"][d]
+    specs[RENI_TAGS[2]] = MODEL_DIRS[args.reni_d100_model][100]
+    print(f"[models] 300-param RENI++ row: {args.reni_d100_model}")
     for o, tag in zip(("2nd", "6th", "9th"), SH_TAGS):
         specs[tag] = MODEL_DIRS["sh"][o]
     for n, tag in zip((30, 150, 300), SG_TAGS):

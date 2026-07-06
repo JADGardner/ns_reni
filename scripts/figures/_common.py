@@ -92,6 +92,9 @@ MODEL_DIRS = {
 # running inside the phd container/repo; override via PHD_OUTPUTS).
 PHD_OUTPUTS = Path(os.environ.get("PHD_OUTPUTS", "/workspace/phd/outputs"))
 MODEL_DIRS["two_bracket_w3_1cyc"] = {100: PHD_OUTPUTS / "reni" / "ldrw3_2cyc_step50000"}
+# test-split refit shim (eval latents fitted to the 21 test images; generated
+# by eval_two_bracket_compare --save-fitted-shim) - use for figure scripts
+MODEL_DIRS["two_bracket_w3_1cyc_testfit"] = {100: PHD_OUTPUTS / "reni" / "_figshim_w3_1cyc"}
 MODEL_DIRS["two_bracket_w3_2cyc"] = {
     100: PHD_OUTPUTS / "reni" / "reni_latent_reset_d100_two_bracket_ldrw3_2cyc"}
 
@@ -507,8 +510,19 @@ def render_eval_image(model, datamanager, idx: int, device, height: int = 64):
         # _to_linear_hdr handles both the standard log/min-max unnormalise and
         # the 6-channel two-bracket blend; field.unnormalise alone is wrong
         # (identity) for two-bracket models.
-        pred = model._to_linear_hdr(outputs["rgb"]).reshape(H, W, 3)
-        gt = model._to_linear_hdr(gt_raw).reshape(H, W, 3)
+        def _to_linear(x):
+            # The camera-bundle path views flat [N, 6] two-bracket outputs
+            # through the flattened bundle's shape (e.g. [N, 3, 2]), which
+            # interleaves channels if consumed dimension-wise. Memory order
+            # is untouched, so a straight reshape restores the true
+            # [R,G,B]_ldr + [R,G,B]_log layout. Log-domain models pass
+            # through to the standard unnormalise.
+            if getattr(model, "two_bracket", False) and x.shape[-1] != 6:
+                x = x.reshape(-1, 6)
+            return model._to_linear_hdr(x)
+
+        pred = _to_linear(outputs["rgb"]).reshape(H, W, 3)
+        gt = _to_linear(gt_raw).reshape(H, W, 3)
 
         # Log-compressed BT.709 luminance: linear HDR under a linear min/max
         # colormap crushes everything but the sun to the colormap floor.

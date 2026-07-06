@@ -90,6 +90,7 @@ def evaluate_run(
     latent_steps: int | None,
     seed: int,
     force_align: bool = False,
+    shim_base: Path | None = None,
 ) -> Dict[str, Any]:
     seed_all(seed)
     run_dir = resolve_run_dir(run_path)
@@ -115,6 +116,26 @@ def evaluate_run(
     num_eval = len(pipeline.datamanager.eval_dataset)
     print(f"[eval] {label}: split={split}, images={num_eval}, load={load_stats}")
     metrics = pipeline.get_average_eval_image_metrics(step=1, optimise_latents=True)
+
+    if shim_base is not None:
+        # Snapshot the checkpoint with the freshly REFIT test-split eval
+        # latents (and the matching test config) so figure scripts can load
+        # this model with correct per-test-image illumination latents.
+        import yaml as _yaml
+        shim = shim_base / f"_figshim_{label}"
+        (shim / "nerfstudio_models").mkdir(parents=True, exist_ok=True)
+        ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        fitted = {k: v.cpu() for k, v in pipeline.model.state_dict().items()}
+        replaced = 0
+        for k in list(ckpt["pipeline"].keys()):
+            if k.startswith("_model.field.eval"):
+                fk = k[len("_model."):]
+                if fk in fitted:
+                    ckpt["pipeline"][k] = fitted[fk]
+                    replaced += 1
+        torch.save(ckpt, shim / "nerfstudio_models" / checkpoint.name)
+        (shim / "config.yml").write_text(_yaml.dump(model_config))
+        print(f"[shim] {label}: {replaced} eval tensors -> {shim}")
 
     result = {
         "label": label,
@@ -190,6 +211,10 @@ def main() -> None:
                         help="Run to evaluate; repeatable.")
     parser.add_argument("--data", type=Path, default=REPO_ROOT / "data" / "RENI_HDR")
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--save-fitted-shim", type=Path, default=None,
+                        help="Base dir: save each run's checkpoint with the "
+                             "refit test latents as _figshim_<label>/ for "
+                             "figure scripts")
     parser.add_argument("--latent-steps", type=int, default=None,
                         help="Override eval latent optimisation steps; default uses the model config.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT,
@@ -206,7 +231,8 @@ def main() -> None:
     runs = parse_runs(args.run)
     models = {
         label: evaluate_run(label, path, args.data, args.device, args.latent_steps, args.seed,
-                            force_align=label in args.force_align)
+                            force_align=label in args.force_align,
+                            shim_base=args.save_fitted_shim)
         for label, path in runs.items()
     }
 
