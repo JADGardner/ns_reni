@@ -151,6 +151,25 @@ def envmap_sphere_image(
     return rgba
 
 
+def sphere_shadow_image(size: int = 240, max_alpha: float = 0.38) -> np.ndarray:
+    """Soft radial shadow disc (transparent black, gaussian-ish falloff)."""
+    yy, xx = np.mgrid[-1:1:size * 1j, -1:1:size * 1j]
+    rr = np.sqrt(xx**2 + yy**2)
+    alpha = np.clip(1.0 - rr, 0.0, 1.0) ** 1.8 * max_alpha
+    rgba = np.zeros((size, size, 4), dtype=np.float32)
+    rgba[..., 3] = alpha
+    return rgba
+
+
+def draw_sphere_shadow(ax, cx, cy, r, dx=0.12, dy=-0.16, scale=1.05,
+                       zorder=-2):
+    s = scale * r
+    ax.imshow(sphere_shadow_image(),
+              extent=(cx + dx * r - s, cx + dx * r + s,
+                      cy + dy * r - s, cy + dy * r + s),
+              zorder=zorder)
+
+
 def gray_sphere_image(size: int = 420) -> np.ndarray:
     yy, xx = np.mgrid[-1:1:size * 1j, -1:1:size * 1j]
     rr = xx**2 + yy**2
@@ -232,6 +251,7 @@ def draw_axes(ax, cx, cy, r):
 
 
 def draw_query_sphere(ax, cx, cy, r):
+    draw_sphere_shadow(ax, cx, cy, r)
     ax.imshow(gray_sphere_image(), extent=(cx - r, cx + r, cy - r, cy + r),
               zorder=0)
     draw_axes(ax, cx, cy, r)
@@ -251,6 +271,7 @@ def draw_query_sphere(ax, cx, cy, r):
 
 
 def draw_latent_sphere(ax, cx, cy, r):
+    draw_sphere_shadow(ax, cx, cy, r)
     ax.imshow(gray_sphere_image(), extent=(cx - r, cx + r, cy - r, cy + r),
               zorder=0)
     draw_axes(ax, cx, cy, r)
@@ -311,9 +332,8 @@ def draw_mlp(ax, x0, y0, h, layer_w=0.28, gap=0.48, n_layers=5):
 
 
 def draw_output_sphere(ax, sphere_img, cx, cy, r, red_line_start_x):
+    draw_sphere_shadow(ax, cx, cy, r, zorder=0)
     ax.imshow(sphere_img, extent=(cx - r, cx + r, cy - r, cy + r), zorder=1)
-    ax.add_patch(Circle((cx, cy), r, fill=False, edgecolor="0.15",
-                        linewidth=1.0, zorder=2))
     curve_start = (cx + 0.06 * r, cy)
     ax.plot([red_line_start_x, curve_start[0]], [cy, cy],
             color="red", linestyle=(0, (8, 7)), linewidth=1.4, zorder=3)
