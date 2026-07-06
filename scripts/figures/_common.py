@@ -95,6 +95,7 @@ MODEL_DIRS["two_bracket_w3_1cyc"] = {100: PHD_OUTPUTS / "reni" / "ldrw3_2cyc_ste
 # test-split refit shim (eval latents fitted to the 21 test images; generated
 # by eval_two_bracket_compare --save-fitted-shim) - use for figure scripts
 MODEL_DIRS["two_bracket_w3_1cyc_testfit"] = {100: PHD_OUTPUTS / "reni" / "_figshim_w3_1cyc"}
+MODEL_DIRS["two_bracket_w3_2cyc_testfit"] = {100: PHD_OUTPUTS / "reni" / "_figshim_w3_2cyc"}
 MODEL_DIRS["two_bracket_w3_2cyc"] = {
     100: PHD_OUTPUTS / "reni" / "reni_latent_reset_d100_two_bracket_ldrw3_2cyc"}
 
@@ -233,7 +234,9 @@ def _remap_workspace_path(p: Path) -> Path:
     return p
 
 
-def load_model(load_dir: Path, device: str = "cuda:0", load_step: Optional[int] = None):
+def load_model(load_dir: Path, device: str = "cuda:0", load_step: Optional[int] = None,
+               eval_image_width: Optional[int] = None,
+               data_override: Optional[Path] = None):
     """Load a RENI++/RENI/SH/SG pipeline from a nerfstudio checkpoint dir.
 
     Returns (pipeline, datamanager, model). Ported from
@@ -279,6 +282,13 @@ def load_model(load_dir: Path, device: str = "cuda:0", load_step: Optional[int] 
         dp.tonemap_targets = saved_dp.get("tonemap_targets", False)
         dp.tonemap_m_ldr = saved_dp.get("tonemap_m_ldr", 16.0)
         dp.tonemap_m_log = saved_dp.get("tonemap_m_log", 10000.0)
+        if eval_image_width is not None:
+            # higher-res GT/eval images for figures (fits/decodes scale with it)
+            dp.resize_image_width = eval_image_width
+        if data_override is not None:
+            # e.g. the hi-res figure dataset built from
+            # artifacts/reni_hdr_test_highres_mapping.json
+            dp.data = Path(data_override)
 
     field_cfg = config["pipeline"]["model"]["field"]
     if "latent_dim" in field_cfg:

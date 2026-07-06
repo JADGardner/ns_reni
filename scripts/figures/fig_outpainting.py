@@ -15,6 +15,7 @@ the masked-fit checkpoint).
 """
 
 import argparse
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -253,7 +254,9 @@ def fit_latent(model, gt_norm, mask, device, steps=600, lr=1e-2,
 def perspective_figure(args):
     device = args.device
     _, datamanager, model = load_model(MODEL_DIRS[args.model][100],
-                                       device=device)
+                                       device=device,
+                                       eval_image_width=args.eval_width,
+                                       data_override=args.data_dir)
     n = len(args.image_indices)
     poses = row_poses(args, n)
     print(f"[views] hfov={args.hfov:.0f} "
@@ -335,7 +338,14 @@ def main():
     add_common_args(parser, "outpainting")
     parser.add_argument("--image_indices", type=int, nargs="+",
                         default=[1, 2, 3, 4, 5, 6])
-    parser.add_argument("--model", default="two_bracket_w3_2cyc",
+    parser.add_argument("--eval-width", type=int, default=512,
+                        help="Eval image width for GT/fits (dataset resize)")
+    parser.add_argument("--data-dir", type=Path,
+                        default=Path("/home/james/data/RENI_HDR_hires_figs"),
+                        help="Dataset root (default: hi-res figure test set "
+                             "from the highres mapping; low-res train/val "
+                             "splits symlinked for datamanager setup)")
+    parser.add_argument("--model", default="two_bracket_w3_2cyc_testfit",
                         help="MODEL_DIRS key for the perspective figure "
                              "(default: thesis two-bracket 2-cycle, the "
                              "completion-optimal model; reni_pp = paper)")
