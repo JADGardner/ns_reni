@@ -88,6 +88,13 @@ MODEL_DIRS = {
            for n in (30, 108, 150, 300)},
 }
 
+# Thesis-era checkpoints living in the phd umbrella outputs (present when
+# running inside the phd container/repo; override via PHD_OUTPUTS).
+PHD_OUTPUTS = Path(os.environ.get("PHD_OUTPUTS", "/workspace/phd/outputs"))
+MODEL_DIRS["two_bracket_w3_1cyc"] = {100: PHD_OUTPUTS / "reni" / "ldrw3_2cyc_step50000"}
+MODEL_DIRS["two_bracket_w3_2cyc"] = {
+    100: PHD_OUTPUTS / "reni" / "reni_latent_reset_d100_two_bracket_ldrw3_2cyc"}
+
 _EVAL_MAPPING = None
 
 

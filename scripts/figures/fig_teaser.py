@@ -123,6 +123,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_args(parser, "teaser")
     parser.add_argument("--latent_dim", type=int, default=100)
+    parser.add_argument("--model", default="two_bracket_w3_2cyc",
+                        choices=sorted(MODEL_DIRS),
+                        help="MODEL_DIRS key; default = dual-exposure two-bracket, 2 reset cycles")
     parser.add_argument("--recon-latent-idx", type=int, default=10,
                         help="Train latent decoded in the right-hand 0/90 deg "
                              "reconstruction panels and shown in the vector plots")
@@ -139,7 +142,7 @@ def main():
     args = parser.parse_args()
     seed_all(args.seed)
 
-    _, _, model = load_model(MODEL_DIRS["reni_pp"][args.latent_dim],
+    _, _, model = load_model(MODEL_DIRS[args.model][args.latent_dim],
                              device=args.device)
     ray_bundle = equirect_ray_bundle(args.device, idx=0, height=args.height)
     ray_samples = make_ray_samples(model, ray_bundle)
