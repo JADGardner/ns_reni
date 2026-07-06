@@ -124,19 +124,19 @@ def main():
     hy = 3.35   # hyper row
     my = 1.95   # main row
     cell_column(ax, 5.05, hy, 3, colors=[BLUE_CELL] * 3)
-    text(ax, 4.80, hy + 0.55, r"$\mathbf{z}$", size=10)
+    text(ax, 4.82, hy, r"$\mathbf{z}$", size=10)
     trapezoid(ax, 5.70, 7.15, hy, 0.68, 0.34,
               facecolor=BLUE_FILL, edgecolor=BLUE_STROKE)
     text(ax, 6.40, hy + 0.14, "Hyper", size=9, color=BLUE_TEXT)
     text(ax, 6.40, hy - 0.18, "MLP", size=9, color=BLUE_TEXT)
-    # weights flow into the main MLP
-    arrow(ax, (7.15, hy), (8.10, my + 0.95),
-          connectionstyle="arc3,rad=-0.35", lw=1.2)
-    text(ax, 7.90, 2.95, r"$\mathbf{W}$", size=10)
+    # weights flow into the main MLP: right, then straight down (elbow)
+    arrow(ax, (7.15, hy), (8.28, my + 0.84),
+          connectionstyle="angle,angleA=0,angleB=90,rad=0.15", lw=1.2)
+    text(ax, 8.62, hy, r"$\mathbf{W}$", size=10)
     trapezoid(ax, 7.45, 9.10, my, 0.55, 1.05)
     text(ax, 8.28, my, "MLP", size=10, color=GREEN_TEXT)
     cell(ax, 6.42, my - 0.21, 0.42, DIR_CELL)
-    text(ax, 6.30, my - 0.62, r"$\lambda(\mathbf{d})$", size=9)
+    text(ax, 6.06, my, r"$\lambda(\mathbf{d})$", size=9)
     arrow(ax, (6.86, my), (7.43, my))
     output_column(ax, 9.28, my)
     text(ax, 9.85, my, "outputs", size=8, rotation=90)
@@ -154,20 +154,19 @@ def main():
         (11.50, ay - 0.85), 0.95, 1.70,
         boxstyle="round,pad=0,rounding_size=0.05",
         facecolor=BLUE_FILL, edgecolor=BLUE_STROKE, linewidth=1.0))
-    text(ax, 11.97, ay, "Attention", size=8, rotation=90, color=BLUE_TEXT)
+    text(ax, 11.72, ay + 0.60, "K", size=9, color=BLUE_TEXT)
+    text(ax, 11.72, ay + 0.18, "V", size=9, color=BLUE_TEXT)
+    text(ax, 11.72, ay - 0.62, "Q", size=9, color=BLUE_TEXT)
     # small MLP trapezoid feeding the outputs
     trapezoid(ax, 12.62, 13.22, ay, 0.55, 0.28)
     text(ax, 12.90, ay, "MLP", size=8, rotation=90, color=GREEN_TEXT)
     # z (keys/values) and lambda(d) (queries)
     cell_column(ax, 10.42, ay + 0.45, 3, colors=[BLUE_CELL] * 3)
-    text(ax, 10.16, ay + 1.05, r"$\mathbf{z}$", size=10)
-    arrow(ax, (10.84, ay + 0.45), (11.28, ay + 0.45))
-    text(ax, 11.10, ay + 0.72, "K", size=8)
-    text(ax, 11.10, ay + 0.20, "V", size=8)
+    text(ax, 10.18, ay + 0.45, r"$\mathbf{z}$", size=10)
+    arrow(ax, (10.84, ay + 0.45), (11.48, ay + 0.45))
     cell(ax, 10.42, ay - 1.00, 0.42, DIR_CELL)
-    text(ax, 10.30, ay - 1.40, r"$\lambda(\mathbf{d})$", size=9)
-    arrow(ax, (10.84, ay - 0.79), (11.28, ay - 0.60))
-    text(ax, 11.10, ay - 0.86, "Q", size=8)
+    text(ax, 10.06, ay - 0.79, r"$\lambda(\mathbf{d})$", size=9)
+    arrow(ax, (10.84, ay - 0.79), (11.48, ay - 0.66))
     output_column(ax, 13.58, ay)
     text(ax, 14.15, ay, "outputs", size=8, rotation=90)
     text(ax, 12.35, 0.42, "Attention", size=10)
