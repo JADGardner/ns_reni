@@ -356,8 +356,8 @@ def build_figure(args):
     ax.set_aspect("equal")
     ax.axis("off")
 
-    draw_query_sphere(ax, 1.35, 4.05, 1.05)
-    draw_latent_sphere(ax, 1.35, 1.70, 1.05)
+    draw_query_sphere(ax, 1.35, 4.18, 1.05)
+    draw_latent_sphere(ax, 1.35, 1.52, 1.05)
 
     stack_right, stack_mid_y = draw_vector_stack(ax, 3.62, 3.55, 0.36, 0.80)
     matrix_top_cx, matrix_top_y = draw_latent_matrix(ax, 3.02, 1.36, cell=0.24)
