@@ -32,20 +32,27 @@ from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Polygon
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Palette: latent cells match the source PDF's blue-violet / salmon inputs;
-# network bodies stay light grey; strokes softened per the house style.
-BLUE_CELL = "#A9AEDB"
-RED_CELL = "#D98A85"
-CELL_STROKE = (0.0, 0.0, 0.0, 0.55)
-NET_FILL = "#F2F2F2"
-NET_STROKE = "#333333"
+# SphereJEPA palette (as in fig_model_overview): pastel fills with saturated
+# matching strokes. Cross-figure semantics: blue = latent (z), pale yellow =
+# direction input (lambda(d)), green = network bodies.
+BLUE_CELL, BLUE_CELL_STROKE = "#EAF1FF", (0.23, 0.37, 0.68, 0.55)
+DIR_CELL, DIR_CELL_STROKE = "#FFF3D6", (0.79, 0.60, 0.18, 0.60)
+CELL_STROKE = (0.0, 0.0, 0.0, 0.35)
+GREEN_FILL, GREEN_STROKE, GREEN_TEXT = "#E1F5D9", "#3D8B2F", "#1F4914"
+BLUE_FILL, BLUE_STROKE, BLUE_TEXT = "#D7E5FF", "#3A5FAD", "#0B2A66"
+CONTAINER_FILL, CONTAINER_STROKE = "#F4F4F4", (0.0, 0.0, 0.0, 0.40)
+NET_FILL = GREEN_FILL
+NET_STROKE = GREEN_STROKE
 ARROW_COLOR = "#333333"
 
 
-def cell(ax, x, y, s, facecolor, rounding=0.05):
+def cell(ax, x, y, s, facecolor, rounding=0.05, edgecolor=None):
+    if edgecolor is None:
+        edgecolor = {BLUE_CELL: BLUE_CELL_STROKE, DIR_CELL: DIR_CELL_STROKE}.get(
+            facecolor, CELL_STROKE)
     ax.add_patch(FancyBboxPatch(
         (x, y), s, s, boxstyle=f"round,pad=0,rounding_size={rounding}",
-        facecolor=facecolor, edgecolor=CELL_STROKE, linewidth=0.9))
+        facecolor=facecolor, edgecolor=edgecolor, linewidth=0.9))
 
 
 def cell_column(ax, x, y_center, n, s=0.42, colors=None, gap=0.03):
@@ -58,11 +65,13 @@ def cell_column(ax, x, y_center, n, s=0.42, colors=None, gap=0.03):
     return x, y_center
 
 
-def trapezoid(ax, x0, x1, y_center, half_h0, half_h1):
+def trapezoid(ax, x0, x1, y_center, half_h0, half_h1,
+              facecolor=None, edgecolor=None):
     ax.add_patch(Polygon(
         [(x0, y_center - half_h0), (x0, y_center + half_h0),
          (x1, y_center + half_h1), (x1, y_center - half_h1)],
-        closed=True, facecolor=NET_FILL, edgecolor=NET_STROKE, linewidth=1.1,
+        closed=True, facecolor=facecolor or NET_FILL,
+        edgecolor=edgecolor or NET_STROKE, linewidth=1.2,
         joinstyle="round"))
 
 
@@ -73,9 +82,9 @@ def arrow(ax, start, end, connectionstyle="arc3", lw=1.1):
         connectionstyle=connectionstyle))
 
 
-def text(ax, x, y, s, size=9, rotation=0, **kw):
+def text(ax, x, y, s, size=9, rotation=0, color="black", **kw):
     ax.text(x, y, s, fontsize=size, rotation=rotation,
-            ha="center", va="center", color="black", **kw)
+            ha="center", va="center", color=color, **kw)
 
 
 def output_column(ax, x, y_center, n=7, s=0.36):
@@ -102,11 +111,11 @@ def main():
 
     # ── Panel 1: condition-by-concatenation ────────────────────────────
     cy = 2.3
-    cell_column(ax, 0.72, cy, 4, colors=[BLUE_CELL] * 3 + [RED_CELL])
+    cell_column(ax, 0.72, cy, 4, colors=[BLUE_CELL] * 3 + [DIR_CELL])
     text(ax, 0.45, cy + 0.25, r"$\mathbf{z}$", size=10)
     text(ax, 0.38, cy - 0.70, r"$\lambda(\mathbf{d})$", size=9)
     trapezoid(ax, 1.30, 3.10, cy, 1.10, 0.62)
-    text(ax, 2.20, cy, "MLP", size=10)
+    text(ax, 2.20, cy, "MLP", size=10, color=GREEN_TEXT)
     output_column(ax, 3.28, cy)
     text(ax, 3.85, cy, "outputs", size=8, rotation=90)
     text(ax, 2.10, 0.42, "Condition-by-Concat", size=10)
@@ -116,16 +125,17 @@ def main():
     my = 1.95   # main row
     cell_column(ax, 5.05, hy, 3, colors=[BLUE_CELL] * 3)
     text(ax, 4.80, hy + 0.55, r"$\mathbf{z}$", size=10)
-    trapezoid(ax, 5.70, 7.15, hy, 0.68, 0.34)
-    text(ax, 6.40, hy + 0.14, "Hyper", size=9)
-    text(ax, 6.40, hy - 0.18, "MLP", size=9)
+    trapezoid(ax, 5.70, 7.15, hy, 0.68, 0.34,
+              facecolor=BLUE_FILL, edgecolor=BLUE_STROKE)
+    text(ax, 6.40, hy + 0.14, "Hyper", size=9, color=BLUE_TEXT)
+    text(ax, 6.40, hy - 0.18, "MLP", size=9, color=BLUE_TEXT)
     # weights flow into the main MLP
     arrow(ax, (7.15, hy), (8.10, my + 0.95),
           connectionstyle="arc3,rad=-0.35", lw=1.2)
     text(ax, 7.90, 2.95, r"$\mathbf{W}$", size=10)
     trapezoid(ax, 7.45, 9.10, my, 0.55, 1.05)
-    text(ax, 8.28, my, "MLP", size=10)
-    cell(ax, 6.42, my - 0.21, 0.42, RED_CELL)
+    text(ax, 8.28, my, "MLP", size=10, color=GREEN_TEXT)
+    cell(ax, 6.42, my - 0.21, 0.42, DIR_CELL)
     text(ax, 6.30, my - 0.62, r"$\lambda(\mathbf{d})$", size=9)
     arrow(ax, (6.86, my), (7.43, my))
     output_column(ax, 9.28, my)
@@ -137,24 +147,24 @@ def main():
     container = FancyBboxPatch(
         (11.30, ay - 1.05), 2.10, 2.10,
         boxstyle="round,pad=0,rounding_size=0.18",
-        facecolor=NET_FILL, edgecolor=NET_STROKE, linewidth=1.1)
+        facecolor=CONTAINER_FILL, edgecolor=CONTAINER_STROKE, linewidth=1.1)
     ax.add_patch(container)
     # attention block
     ax.add_patch(FancyBboxPatch(
         (11.50, ay - 0.85), 0.95, 1.70,
         boxstyle="round,pad=0,rounding_size=0.05",
-        facecolor="white", edgecolor=NET_STROKE, linewidth=1.0))
-    text(ax, 11.97, ay, "Attention", size=8, rotation=90)
+        facecolor=BLUE_FILL, edgecolor=BLUE_STROKE, linewidth=1.0))
+    text(ax, 11.97, ay, "Attention", size=8, rotation=90, color=BLUE_TEXT)
     # small MLP trapezoid feeding the outputs
     trapezoid(ax, 12.62, 13.22, ay, 0.55, 0.28)
-    text(ax, 12.90, ay, "MLP", size=8, rotation=90)
+    text(ax, 12.90, ay, "MLP", size=8, rotation=90, color=GREEN_TEXT)
     # z (keys/values) and lambda(d) (queries)
     cell_column(ax, 10.42, ay + 0.45, 3, colors=[BLUE_CELL] * 3)
     text(ax, 10.16, ay + 1.05, r"$\mathbf{z}$", size=10)
     arrow(ax, (10.84, ay + 0.45), (11.28, ay + 0.45))
     text(ax, 11.10, ay + 0.72, "K", size=8)
     text(ax, 11.10, ay + 0.20, "V", size=8)
-    cell(ax, 10.42, ay - 1.00, 0.42, RED_CELL)
+    cell(ax, 10.42, ay - 1.00, 0.42, DIR_CELL)
     text(ax, 10.30, ay - 1.40, r"$\lambda(\mathbf{d})$", size=9)
     arrow(ax, (10.84, ay - 0.79), (11.28, ay - 0.60))
     text(ax, 11.10, ay - 0.86, "Q", size=8)
