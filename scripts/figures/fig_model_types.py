@@ -1,0 +1,175 @@
+"""Programmatic conditioning-methods figure (thesis Fig: model_types).
+
+Recreates Figures/model_types.pdf with the labels baked in (they were
+previously TikZ overlay nodes in the chapter): the three neural-field
+conditioning schemes compared in RENI++ — condition-by-concatenation,
+hypernetwork, and attention.
+
+Run from the ns_reni repo root (CPU, no checkpoint needed):
+
+    PYTHONPATH=. python scripts/figures/fig_model_types.py
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+matplotlib.rcParams.update({
+    "font.family": "serif",
+    "font.serif": [
+        "Nimbus Roman", "Times New Roman", "Times",
+        "Liberation Serif", "STIXGeneral", "DejaVu Serif",
+    ],
+    "mathtext.fontset": "stix",
+})
+
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Polygon
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Palette: latent cells match the source PDF's blue-violet / salmon inputs;
+# network bodies stay light grey; strokes softened per the house style.
+BLUE_CELL = "#A9AEDB"
+RED_CELL = "#D98A85"
+CELL_STROKE = (0.0, 0.0, 0.0, 0.55)
+NET_FILL = "#F2F2F2"
+NET_STROKE = "#333333"
+ARROW_COLOR = "#333333"
+
+
+def cell(ax, x, y, s, facecolor, rounding=0.05):
+    ax.add_patch(FancyBboxPatch(
+        (x, y), s, s, boxstyle=f"round,pad=0,rounding_size={rounding}",
+        facecolor=facecolor, edgecolor=CELL_STROKE, linewidth=0.9))
+
+
+def cell_column(ax, x, y_center, n, s=0.42, colors=None, gap=0.03):
+    """n stacked cells centred on y_center; returns (top_y, bottom_y)."""
+    total = n * s + (n - 1) * gap
+    y0 = y_center + total / 2 - s
+    for i in range(n):
+        c = colors[i] if colors else "white"
+        cell(ax, x, y0 - i * (s + gap), s, c)
+    return x, y_center
+
+
+def trapezoid(ax, x0, x1, y_center, half_h0, half_h1):
+    ax.add_patch(Polygon(
+        [(x0, y_center - half_h0), (x0, y_center + half_h0),
+         (x1, y_center + half_h1), (x1, y_center - half_h1)],
+        closed=True, facecolor=NET_FILL, edgecolor=NET_STROKE, linewidth=1.1,
+        joinstyle="round"))
+
+
+def arrow(ax, start, end, connectionstyle="arc3", lw=1.1):
+    ax.add_patch(FancyArrowPatch(
+        start, end, arrowstyle="-|>", mutation_scale=13, linewidth=lw,
+        color=ARROW_COLOR, shrinkA=0, shrinkB=0,
+        connectionstyle=connectionstyle))
+
+
+def text(ax, x, y, s, size=9, rotation=0, **kw):
+    ax.text(x, y, s, fontsize=size, rotation=rotation,
+            ha="center", va="center", color="black", **kw)
+
+
+def output_column(ax, x, y_center, n=7, s=0.36):
+    total = n * s + (n - 1) * 0.03
+    y0 = y_center + total / 2 - s
+    for i in range(n):
+        cell(ax, x, y0 - i * (s + 0.03), s, "white", rounding=0.04)
+    return x + s
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path,
+                        default=REPO_ROOT / "publication" / "figures" / "model_types")
+    parser.add_argument("--dpi", type=int, default=300)
+    parser.add_argument("--svg", action="store_true")
+    args = parser.parse_args()
+
+    fig, ax = plt.subplots(figsize=(14.4, 4.4), dpi=args.dpi)
+    ax.set_xlim(0, 14.4)
+    ax.set_ylim(0, 4.4)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    # ── Panel 1: condition-by-concatenation ────────────────────────────
+    cy = 2.3
+    cell_column(ax, 0.72, cy, 4, colors=[BLUE_CELL] * 3 + [RED_CELL])
+    text(ax, 0.45, cy + 0.25, r"$\mathbf{z}$", size=10)
+    text(ax, 0.38, cy - 0.70, r"$\lambda(\mathbf{d})$", size=9)
+    trapezoid(ax, 1.30, 3.10, cy, 1.10, 0.62)
+    text(ax, 2.20, cy, "MLP", size=10)
+    output_column(ax, 3.28, cy)
+    text(ax, 3.85, cy, "outputs", size=8, rotation=90)
+    text(ax, 2.10, 0.42, "Condition-by-Concat", size=10)
+
+    # ── Panel 2: hypernetwork ───────────────────────────────────────────
+    hy = 3.35   # hyper row
+    my = 1.95   # main row
+    cell_column(ax, 5.05, hy, 3, colors=[BLUE_CELL] * 3)
+    text(ax, 4.80, hy + 0.55, r"$\mathbf{z}$", size=10)
+    trapezoid(ax, 5.70, 7.15, hy, 0.68, 0.34)
+    text(ax, 6.40, hy + 0.14, "Hyper", size=9)
+    text(ax, 6.40, hy - 0.18, "MLP", size=9)
+    # weights flow into the main MLP
+    arrow(ax, (7.15, hy), (8.10, my + 0.95),
+          connectionstyle="arc3,rad=-0.35", lw=1.2)
+    text(ax, 7.90, 2.95, r"$\mathbf{W}$", size=10)
+    trapezoid(ax, 7.45, 9.10, my, 0.55, 1.05)
+    text(ax, 8.28, my, "MLP", size=10)
+    cell(ax, 6.42, my - 0.21, 0.42, RED_CELL)
+    text(ax, 6.30, my - 0.62, r"$\lambda(\mathbf{d})$", size=9)
+    arrow(ax, (6.86, my), (7.43, my))
+    output_column(ax, 9.28, my)
+    text(ax, 9.85, my, "outputs", size=8, rotation=90)
+    text(ax, 7.60, 0.42, "Hypernetwork", size=10)
+
+    # ── Panel 3: attention ──────────────────────────────────────────────
+    ay = 2.15
+    container = FancyBboxPatch(
+        (11.30, ay - 1.05), 2.10, 2.10,
+        boxstyle="round,pad=0,rounding_size=0.18",
+        facecolor=NET_FILL, edgecolor=NET_STROKE, linewidth=1.1)
+    ax.add_patch(container)
+    # attention block
+    ax.add_patch(FancyBboxPatch(
+        (11.50, ay - 0.85), 0.95, 1.70,
+        boxstyle="round,pad=0,rounding_size=0.05",
+        facecolor="white", edgecolor=NET_STROKE, linewidth=1.0))
+    text(ax, 11.97, ay, "Attention", size=8, rotation=90)
+    # small MLP trapezoid feeding the outputs
+    trapezoid(ax, 12.62, 13.22, ay, 0.55, 0.28)
+    text(ax, 12.90, ay, "MLP", size=8, rotation=90)
+    # z (keys/values) and lambda(d) (queries)
+    cell_column(ax, 10.42, ay + 0.45, 3, colors=[BLUE_CELL] * 3)
+    text(ax, 10.16, ay + 1.05, r"$\mathbf{z}$", size=10)
+    arrow(ax, (10.84, ay + 0.45), (11.28, ay + 0.45))
+    text(ax, 11.10, ay + 0.72, "K", size=8)
+    text(ax, 11.10, ay + 0.20, "V", size=8)
+    cell(ax, 10.42, ay - 1.00, 0.42, RED_CELL)
+    text(ax, 10.30, ay - 1.40, r"$\lambda(\mathbf{d})$", size=9)
+    arrow(ax, (10.84, ay - 0.79), (11.28, ay - 0.60))
+    text(ax, 11.10, ay - 0.86, "Q", size=8)
+    output_column(ax, 13.58, ay)
+    text(ax, 14.15, ay, "outputs", size=8, rotation=90)
+    text(ax, 12.35, 0.42, "Attention", size=10)
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(f"{args.output}.png", dpi=args.dpi, bbox_inches="tight",
+                pad_inches=0.02)
+    fig.savefig(f"{args.output}.pdf", bbox_inches="tight", pad_inches=0.02)
+    if args.svg:
+        fig.savefig(f"{args.output}.svg", bbox_inches="tight", pad_inches=0.02)
+    print(f"[saved] {args.output}.png / .pdf")
+
+
+if __name__ == "__main__":
+    main()
