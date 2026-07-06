@@ -48,7 +48,7 @@ def main():
     parser.add_argument("--interp_seed", type=int, default=54,
                         help="Seed for the random-sample rows (paper used 54)")
     parser.add_argument("--random_source", choices=("normal", "train_mu"),
-                        default="normal",
+                        default="train_mu",
                         help="Source for the two random interpolation rows. "
                              "'normal' preserves the paper figure; 'train_mu' "
                              "samples fitted training latents, which is better "
