@@ -13,8 +13,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import torch
 
-from _common import (MODEL_DIRS, add_common_args, add_figure_label,
-                     axis_center, decode_latents, equirect_ray_bundle,
+from _common import (MODEL_DIRS, add_common_args, axis_center, decode_latents, equirect_ray_bundle,
                      load_model, make_ray_samples, save_figure, seed_all)
 
 
@@ -24,14 +23,6 @@ def _resolve_model_dir(path: Path) -> Path:
     if path.name == "nerfstudio_models":
         return path.parent
     return path
-
-
-def _add_interpolation_labels(fig, axs, fontsize):
-    labels = ("Random samples", "Random samples", "Fitted latents")
-    for row, label in enumerate(labels):
-        x = axs[row, 0].get_position().x0 - 0.018
-        y = axis_center(axs[row, 1 if row < 2 else 0])[1]
-        add_figure_label(fig, x, y, label, fontsize, rotation=90)
 
 
 def main():
@@ -53,9 +44,6 @@ def main():
                              "'normal' preserves the paper figure; 'train_mu' "
                              "samples fitted training latents, which is better "
                              "for latent-reset checkpoints.")
-    parser.add_argument("--labels", action="store_true",
-                        help="Bake row labels into the generated figure")
-    parser.add_argument("--label_fontsize", type=float, default=10.0)
     args = parser.parse_args()
 
     model_dir = _resolve_model_dir(args.model_dir) if args.model_dir else \
@@ -111,8 +99,6 @@ def main():
         axs[2, col].axis("off")
 
     plt.tight_layout()
-    if args.labels:
-        _add_interpolation_labels(fig, axs, args.label_fontsize)
     save_figure(fig, args.output, svg=args.svg)
 
 
