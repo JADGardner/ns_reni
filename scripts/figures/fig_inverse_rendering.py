@@ -87,7 +87,11 @@ def _add_inverse_text(ax, x, y, text, fontsize, rotation=0):
     )
 
 
-def _add_inverse_rendering_labels(ax):
+def _add_inverse_rendering_labels(ax, psnr_by_spec=None):
+    """psnr_by_spec: {spec_idx: ((sh,reni) per config row)} overriding the baked
+    paper numbers INVERSE_PSNR (used when re-running with new models)."""
+    if psnr_by_spec is None:
+        psnr_by_spec = INVERSE_PSNR
     title_fs = 1200
     method_fs = 900
     row_fs = 1150
@@ -146,7 +150,7 @@ def _add_inverse_rendering_labels(ax):
         _add_inverse_text(ax, _tikz_to_collage_xy(reni_x, 0)[0], method_y,
                           "RENI++", method_fs)
         for row_idx, y in enumerate(psnr_y):
-            sh_value, reni_value = INVERSE_PSNR[spec_idx][row_idx]
+            sh_value, reni_value = psnr_by_spec[spec_idx][row_idx]
             _add_inverse_text(ax, _tikz_to_collage_xy(sh_x, 0)[0], y,
                               sh_value, tiny_fs)
             _add_inverse_text(ax, _tikz_to_collage_xy(reni_x, 0)[0], y,
@@ -211,6 +215,11 @@ def load_inverse_model(load_dir: Path, device: str,
     saved_model = config["pipeline"]["model"]
     model_config.pipeline.model.illumination_field_ckpt_path = \
         _remap_field_ckpt(saved_model["illumination_field_ckpt_path"])
+    # Two-bracket decoders emit six sigmoid channels blended to linear HDR; the
+    # flags are absent in the paper (3-channel) configs and default off.
+    model_config.pipeline.model.two_bracket = saved_model.get("two_bracket", False)
+    model_config.pipeline.model.tonemap_m_ldr = saved_model.get("tonemap_m_ldr", 16.0)
+    model_config.pipeline.model.tonemap_m_log = saved_model.get("tonemap_m_log", 10000.0)
     fld = saved_model["illumination_field"]
     if "latent_dim" in fld:
         keys = ("conditioning", "invariant_function", "equivariance",
@@ -219,8 +228,9 @@ def load_inverse_model(load_dir: Path, device: str,
                 "mapping_layers", "mapping_features", "num_attention_heads",
                 "num_attention_layers", "output_activation",
                 "last_layer_linear", "trainable_scale", "old_implementation")
-        model_config.pipeline.model.illumination_field = RENIFieldConfig(
-            **{k: fld[k] for k in keys})
+        field_kwargs = {k: fld[k] for k in keys}
+        field_kwargs["out_features"] = fld.get("out_features", 3)
+        model_config.pipeline.model.illumination_field = RENIFieldConfig(**field_kwargs)
     elif "spherical_harmonic_order" in fld:
         model_config.pipeline.model.illumination_field = \
             SphericalHarmonicIlluminationFieldConfig(
@@ -314,9 +324,7 @@ def _render_inverse_envmap(model, image_idx: int, width: int, device: str,
                     ray_samples=chunk,
                     latent_codes=latents,
                 )
-            hdr = model.illumination_field.unnormalise(
-                outputs[RENIFieldHeadNames.RGB],
-            )
+            hdr = model._illum_to_linear(outputs[RENIFieldHeadNames.RGB])
             chunks.append(hdr.cpu())
 
     hdr_envmap = torch.cat(chunks, dim=0).reshape(height, width, 3)
@@ -360,7 +368,7 @@ def generate_images(model_paths, device, normal_resolution=None,
                 with torch.no_grad():
                     out = pipeline.model.get_outputs_for_camera_ray_bundle(
                         ray_bundle, batch)
-                _, images = pipeline.model.get_image_metrics_and_images(
+                cell_metrics, images = pipeline.model.get_image_metrics_and_images(
                     out, batch)
                 rgb = images["img"]
                 W = rgb.shape[1]
@@ -378,14 +386,29 @@ def generate_images(model_paths, device, normal_resolution=None,
                 pred_rgb[~mask.repeat(1, 1, 3)] = 1.0
                 outputs[f"{i}_{0.2 * s:1f}"] = {
                     "gt_rgb": gt_rgb.cpu(), "predicted_rgb": pred_rgb.cpu(),
-                    "gt_envmap": gt_env.cpu(), "pred_envmap": pred_env.cpu()}
+                    "gt_envmap": gt_env.cpu(), "pred_envmap": pred_env.cpu(),
+                    "psnr": float(cell_metrics.get("psnr", float("nan")))}
         all_outputs[name] = outputs
         del pipeline, dm, model
         torch.cuda.empty_cache()
     return all_outputs
 
 
-def compose(out, sh_key, reni_key, add_labels=False):
+def _recompute_psnr_labels(out, sh_key, reni_key):
+    """Build the {spec_idx: ((sh,reni) per config)} label dict from the freshly
+    rendered cells so the baked PSNRs match the models actually shown."""
+    psnr_by_spec = {}
+    for spec_idx, s in enumerate(SPECULARS):
+        rows = []
+        for i in range(4):
+            sh = out[sh_key][f"{i}_{s}"]["psnr"]
+            reni = out[reni_key][f"{i}_{s}"]["psnr"]
+            rows.append((f"{sh:.2f} dB", f"{reni:.2f} dB"))
+        psnr_by_spec[spec_idx] = tuple(rows)
+    return psnr_by_spec
+
+
+def compose(out, sh_key, reni_key, add_labels=False, psnr_by_spec=None):
     """Collage layout ported verbatim from inverse_task.ipynb."""
     plt.rc("font", family="serif")
     dpi = 1
@@ -434,7 +457,7 @@ def compose(out, sh_key, reni_key, add_labels=False):
                     850 + idx * bx, 2000.0 - 500 - i * 500, P["pred_rgb"],
                     128)
     if add_labels:
-        _add_inverse_rendering_labels(ax)
+        _add_inverse_rendering_labels(ax, psnr_by_spec=psnr_by_spec)
     return fig, dpi
 
 
@@ -443,6 +466,17 @@ def main():
     add_common_args(parser, "inverse_rendering")
     parser.add_argument("--labels", action="store_true",
                         help="Bake current LaTeX/TikZ labels into the figure")
+    parser.add_argument("--sh_inverse_model", type=Path,
+                        default=PAPER_MODELS / "inverse_task" / "spherical_harmonics" / "9th_order",
+                        help="SH inverse-task run dir (contains nerfstudio_models); "
+                             "default = paper archive, unchanged")
+    parser.add_argument("--reni_inverse_model", type=Path,
+                        default=PAPER_MODELS / "inverse_task" / "reni_plus_plus" / "latent_dim_100",
+                        help="RENI++ inverse-task run dir; point at a two-bracket "
+                             "fit (fit_inverse_two_bracket.py) for the thesis figure")
+    parser.add_argument("--recompute_labels", action="store_true",
+                        help="Recompute the baked PSNR labels from the rendered "
+                             "cells (needed when the RENI++ model differs from the paper)")
     parser.add_argument("--normal_resolution", type=int, default=None,
                         help="Optional bunny/teapot render resolution; "
                              "defaults to the checkpoint/data parser value")
@@ -453,19 +487,19 @@ def main():
     args = parser.parse_args()
     seed_all(args.seed)
 
-    model_paths = [
-        PAPER_MODELS / "inverse_task" / "spherical_harmonics" / "9th_order",
-        PAPER_MODELS / "inverse_task" / "reni_plus_plus" / "latent_dim_100",
-    ]
+    sh_key = str(args.sh_inverse_model).rstrip("/").split("/")[-1]
+    reni_key = str(args.reni_inverse_model).rstrip("/").split("/")[-1]
     out = generate_images(
-        model_paths,
+        [args.sh_inverse_model, args.reni_inverse_model],
         args.device,
         normal_resolution=args.normal_resolution,
         envmap_width=args.envmap_width,
         envmap_chunk=args.envmap_chunk,
     )
-    fig, dpi = compose(out, "9th_order", "latent_dim_100",
-                       add_labels=args.labels)
+    psnr_by_spec = _recompute_psnr_labels(out, sh_key, reni_key) \
+        if args.recompute_labels else None
+    fig, dpi = compose(out, sh_key, reni_key, add_labels=args.labels,
+                       psnr_by_spec=psnr_by_spec)
     save_figure(fig, args.output, svg=args.svg, dpi=dpi)
 
 

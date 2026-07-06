@@ -47,7 +47,7 @@ from reni.utils.utils import find_nerfstudio_project_root
 from reni.field_components.field_heads import RENIFieldHeadNames
 from reni.model_components.shaders import BlinnPhongShader
 from reni.utils.colourspace import linear_to_sRGB
-from reni.utils.tonemap import luminance
+from reni.utils.tonemap import luminance, two_bracket_to_linear
 
 
 # Model related configs
@@ -83,6 +83,13 @@ class RENIInverseModelConfig(ModelConfig):
     """Loss coefficients for each loss"""
     print_nan: bool = False
     """Whether to print nan values in loss dict"""
+    two_bracket: bool = False
+    """Illumination decoder emits two-bracket targets ([..., 6] sigmoid brackets);
+    decoded to linear HDR via the two-bracket blend instead of field.unnormalise."""
+    tonemap_m_ldr: float = 16.0
+    """Two-bracket extended-Reinhard bracket ceiling (only used if two_bracket)."""
+    tonemap_m_log: float = 10000.0
+    """Two-bracket log bracket ceiling (only used if two_bracket)."""
 
 
 class RENIInverseModel(Model):
@@ -203,6 +210,18 @@ class RENIInverseModel(Model):
             param_groups["illumination_latents"] = [self.illumination_latents]
         return param_groups
 
+    def _illum_to_linear(self, rgb: torch.Tensor) -> torch.Tensor:
+        """Map decoded illumination-field output to linear HDR light colours.
+
+        Two-bracket decoders emit six sigmoid channels, blended to linear HDR
+        with the closed-form two-bracket reconstruction; standard decoders are
+        inverted with the field's own unnormalise.
+        """
+        if getattr(self.config, "two_bracket", False):
+            return two_bracket_to_linear(rgb, m_ldr=self.config.tonemap_m_ldr,
+                                         m_log=self.config.tonemap_m_log)
+        return self.illumination_field.unnormalise(rgb)
+
     def get_illumination_shader(self, camera_indices: torch.Tensor):
         """Generate samples and sample illumination field"""
         illumination_ray_samples = self.illumination_sampler()  # [num_illumination_directions, 3]
@@ -248,8 +267,8 @@ class RENIInverseModel(Model):
             )
         hdr_illumination_colours = illumination_field_outputs[
             RENIFieldHeadNames.RGB
-        ]  # [num_unique_camera_indices * num_illumination_directions, 3]
-        hdr_illumination_colours = self.illumination_field.unnormalise(
+        ]  # [num_unique_camera_indices * num_illumination_directions, 3 or 6]
+        hdr_illumination_colours = self._illum_to_linear(
             hdr_illumination_colours
         )  # [num_unique_camera_indices * num_illumination_directions, 3]
         hdr_illumination_colours = hdr_illumination_colours.reshape(
@@ -448,7 +467,7 @@ class RENIInverseModel(Model):
                     ray_samples=ray_samples, latent_codes=illumination_latents
                 )
             hdr_envmap = illumination_field_outputs[RENIFieldHeadNames.RGB]
-            hdr_envmap = self.illumination_field.unnormalise(hdr_envmap)  # N, 3
+            hdr_envmap = self._illum_to_linear(hdr_envmap)  # N, 3
             ldr_envmap = linear_to_sRGB(hdr_envmap, use_quantile=True)  # N, 3
             # reshape to H, W, 3
             height = self.equirectangular_sampler.height
