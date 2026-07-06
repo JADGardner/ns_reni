@@ -2,27 +2,22 @@
 
 Given the same 120x120 deg field-of-view crop of each RENI_HDR test environment
 map, compare InverseRenderNet's 2nd-order SH lighting prediction against RENI++
-outpainting (latent-code optimisation over the visible crop). Emits the 5-column
-comparison figure (thesis Fig 2.x) and the LaTeX metrics table.
+crop outpainting (latent-code optimisation over the visible crop). Emits the
+5-column comparison figure (thesis Fig 2.x) and the LaTeX metrics table.
 
-The evaluation pipeline is reused from ``publication/inversenet_vs_reni_comparison.py``;
-only the figure and table are re-done in the shared fig_ style.
+RENI++ side (thesis two-bracket, default two_bracket_w3_2cyc, the completion-
+optimal model): a fresh latent is optimised on the visible crop in the model's
+two-bracket target space (bracket-space MSE + cosine on the visible pixels, the
+frozen decoder), decoded to linear HDR via the two-bracket blend
+(model._to_linear_hdr) and given a per-image least-squares exposure scale
+against the true-scale GT. This mirrors scripts/figures/fig_outpainting.py's
+fit_latent and replicates the trainable per-image scale the original paper fit
+used. The InverseRenderNet (SH) baseline, the FoV crop extraction and the metric
+function are reused verbatim from publication/inversenet_vs_reni_comparison.py,
+so the SH numbers are unchanged; both methods are scored against the same
+true-scale GT read from the raw test EXRs.
 
-    PYTHONPATH=. python scripts/figures/fig_inversenet_comparison.py
-    PYTHONPATH=. python scripts/figures/fig_inversenet_comparison.py --labels \
-        --output publication/figures/inversenet_comparison_labeled
-
-NaN-CELL FIX: the reused publication module imports LPIPS as
-``from torchmetrics.image.lpips import LearnedPerceptualImagePatchSimilarity``,
-but torchmetrics>=1.x exposes it at ``torchmetrics.image`` (module is ``lpip``,
-not ``lpips``). The wrong path silently set ``HAS_LPIPS=False`` so LPIPS was
-never computed and the table printed ``float('nan')``. Here we instantiate LPIPS
-via the correct import and only emit the LPIPS column when it is genuinely
-available and finite (otherwise the column is dropped, not filled with nan).
-
-KNOWN COST: reusing ``run_evaluation`` re-fits the RENI++ eval latents once per
-evaluated image (the fit optimises all eval latents jointly regardless of the
-target index), so runtime scales with the number of figure rows x fit steps.
+    PYTHONPATH=.:scripts/figures python scripts/figures/fig_inversenet_comparison.py --labels
 """
 
 import argparse
@@ -33,11 +28,15 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 
-from _common import (REPO_ROOT, add_common_args, add_figure_label, axis_center,
-                     save_figure, seed_all)
+from _common import (MODEL_DIRS, REPO_ROOT, add_common_args, add_figure_label,
+                     axis_center, equirect_ray_bundle, load_model,
+                     read_clean_exr, save_figure, seed_all)
+from reni.field_components.field_heads import RENIFieldHeadNames
 from reni.utils.colourspace import linear_to_sRGB
+from reni.utils.tonemap import apply_fixed_gauge, encode_two_bracket
 
 # torch>=2.6 defaults weights_only=True; the reused loader / nerfstudio trainer
 # and the paper checkpoints (which pickle numpy scalars) predate that. Restore
@@ -49,31 +48,88 @@ def _torch_load_compat(*args, **kwargs):  # noqa: E302
 torch.load = _torch_load_compat
 
 sys.path.insert(0, str(REPO_ROOT / "publication"))
-from inversenet_vs_reni_comparison import InverseRenderNetVsRENI  # noqa: E402
+# Reused, UNCHANGED InverseRenderNet baseline machinery.
+from inversenet_vs_reni_comparison import (InverseRenderNetVsRENI,  # noqa: E402
+                                          compute_metrics, extract_fov_crop,
+                                          generate_fov_mask)
+from reni.baselines.inversenet import (InverseRenderNet,  # noqa: E402
+                                       load_pytorch_weights)
+from reni.utils.checkpoint_locator import find_checkpoint  # noqa: E402
 
 COL_LABELS = ["Ground Truth", "Input Crop", "RENI++ Conditioning",
               "InverseRenderNet (SH)", "RENI++ (Outpainting)"]
 
 
-def _make_deterministic_eval(dm):
-    """Make next_eval_image deterministic (idx % n over the fixed-order loader).
+def _make_irn(inversenet_weights, device, envmap_width):
+    """InverseRenderNet baseline via the reused class's run_inversenet (SH
+    remapping unchanged), without triggering its RENI++ trainer setup."""
+    irn = InverseRenderNetVsRENI.__new__(InverseRenderNetVsRENI)
+    irn.device = device
+    irn.envmap_width = envmap_width
+    irn.envmap_height = envmap_width // 2
+    irn.inversenet = InverseRenderNet().to(device)
+    irn.inversenet.eval()
+    load_pytorch_weights(irn.inversenet, str(find_checkpoint(inversenet_weights)))
+    return irn
 
-    nerfstudio's VanillaDataManager.next_eval_image pops a RANDOM eval image and
-    ignores the index argument, so the same image can appear on multiple figure
-    rows (and the requested row index is meaningless). RENI's own datamanager
-    resolves this with ``idx % len(eval_dataset)``; we reproduce that here so
-    each requested row is a distinct, reproducible eval image and the fit loop
-    cycles predictably through all images.
+
+def _fit_reni_latent(model, gt_target, mask, device, steps=2500, lr=1e-2,
+                     kld_weight=1e-4, decode_chunk=65536):
+    """Optimise a single latent over the visible (masked) pixels and decode the
+    full envmap in linear HDR.
+
+    Mirrors fig_outpainting.fit_latent (bracket-space MSE + cosine on the frozen
+    decoder), but returns the linear-HDR envmap so the caller can exposure-align
+    and score it. gt_target is the model's normalised target [H, W, C] (six
+    channels for two-bracket, three otherwise); mask is [H, W] with 1 = visible.
     """
-    loader = getattr(dm, "fixed_indices_eval_dataloader", None)
-    if loader is None:
-        print("[eval] no fixed_indices_eval_dataloader; leaving random next_eval_image")
-        return None
-    pairs = list(loader)
-    n = len(pairs)
-    dm.next_eval_image = lambda idx: pairs[idx % n]
-    print(f"[eval] deterministic next_eval_image over {n} fixed eval images")
-    return n
+    H, W = gt_target.shape[:2]
+    ray_bundle = equirect_ray_bundle(device, idx=0, height=H)
+    z = torch.zeros(1, model.field.latent_dim, 3, device=device, requires_grad=True)
+    target = gt_target.reshape(-1, gt_target.shape[-1]).to(device)
+    visible = torch.nonzero(mask.reshape(-1).bool(), as_tuple=False).squeeze(1).to(device)
+    if visible.numel() == 0:
+        raise ValueError("FoV mask contains no visible rays")
+    optimiser = torch.optim.Adam([z], lr=lr)
+
+    for _ in range(steps):
+        optimiser.zero_grad()
+        fit_samples = model.create_ray_samples(
+            ray_bundle.origins[visible],
+            ray_bundle.directions[visible],
+            ray_bundle.camera_indices[visible],
+        )
+        latents = z.repeat(fit_samples.shape[0], 1, 1)
+        out = model.field.forward(fit_samples, rotation=None,
+                                  latent_codes=latents)[RENIFieldHeadNames.RGB]
+        mse = F.mse_loss(out, target[visible])
+        cosine = 1 - F.cosine_similarity(out, target[visible], dim=-1).mean()
+        kld = z.pow(2).mean()
+        loss = 10.0 * mse + cosine + kld_weight * kld
+        loss.backward()
+        optimiser.step()
+
+    with torch.no_grad():
+        chunks = []
+        for start in range(0, len(ray_bundle), decode_chunk):
+            end = start + decode_chunk
+            sample_chunk = model.create_ray_samples(
+                ray_bundle.origins[start:end],
+                ray_bundle.directions[start:end],
+                ray_bundle.camera_indices[start:end],
+            )
+            latents = z.repeat(sample_chunk.shape[0], 1, 1)
+            chunks.append(model.field.forward(
+                sample_chunk, rotation=None,
+                latent_codes=latents)[RENIFieldHeadNames.RGB])
+        out = torch.cat(chunks, dim=0)
+        if getattr(model, "two_bracket", False):
+            if out.shape[-1] != 6:
+                out = out.reshape(-1, 6)
+            pred = model._to_linear_hdr(out).reshape(H, W, 3)
+        else:
+            pred = model.field.unnormalise(out).reshape(H, W, 3)
+    return pred
 
 
 def _resize_crop(crop_img, eq_h):
@@ -157,16 +213,23 @@ def _write_table(metrics, out_stem: Path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    add_common_args(parser, "inversenet_comparison")
+    add_common_args(parser, "inversenet_comparison_thesis")
+    parser.add_argument("--model", default="two_bracket_w3_2cyc",
+                        help="MODEL_DIRS key for the RENI++ decoder (default: "
+                             "thesis two-bracket 2-cycle, the completion-optimal "
+                             "model; use reni_pp for the paper model)")
     parser.add_argument("--data_dir", type=str, default="data/RENI_HDR/test")
     parser.add_argument("--inversenet_weights", type=str,
                         default="checkpoints/inverserendernet/model_ckpt.pth")
+    parser.add_argument("--table_output", type=Path,
+                        default=REPO_ROOT / "publication" / "tables" / "inversenet_comparison_thesis",
+                        help="Output stem for the LaTeX metrics table")
     parser.add_argument("--crop_fov", type=float, default=120.0)
     parser.add_argument("--crop_v_fov", type=float, default=120.0)
     parser.add_argument("--azimuth", type=float, default=80.0)
     parser.add_argument("--elevation", type=float, default=-10.0)
+    parser.add_argument("--crop_size", type=int, default=256)
     parser.add_argument("--reni_fit_steps", type=int, default=2500)
-    parser.add_argument("--custom_val_folder", type=str, default=None)
     parser.add_argument("--image_indices", type=int, nargs="+", default=[0, 1, 2, 3, 4],
                         help="Test-image rows shown in the figure / metric set")
     parser.add_argument("--labels", action="store_true",
@@ -175,51 +238,98 @@ def main():
     args = parser.parse_args()
     seed_all(args.seed)
 
-    # Fail clearly if the InverseRenderNet weights are missing rather than
-    # silently running an uninitialised network (the class only warns).
-    from reni.utils.checkpoint_locator import find_checkpoint
-    try:
-        find_checkpoint(args.inversenet_weights)
-    except FileNotFoundError as e:
-        raise SystemExit(f"InverseRenderNet weights not found: {e}")
+    device = args.device
+    data_dir = (REPO_ROOT / args.data_dir) if not Path(args.data_dir).is_absolute() \
+        else Path(args.data_dir)
+    exr_paths = sorted(data_dir.glob("*.exr"))
+    if not exr_paths:
+        raise SystemExit(f"No test EXRs under {data_dir}")
+    indices = [i for i in args.image_indices if i < len(exr_paths)]
+    if not indices:
+        indices = list(range(min(5, len(exr_paths))))
 
-    comparison = InverseRenderNetVsRENI(
-        data_dir=args.data_dir,
-        inversenet_weights=args.inversenet_weights,
-        output_dir=str(args.output.parent),
-        device=args.device,
-        crop_h_fov=args.crop_fov,
-        crop_v_fov=args.crop_v_fov,
-        crop_azimuth=args.azimuth,
-        crop_elevation=args.elevation,
-        reni_fit_steps=args.reni_fit_steps,
-        custom_val_folder=args.custom_val_folder,
-    )
-    if comparison.reni_model is None:
-        raise SystemExit("RENI++ failed to load; see traceback above.")
-    _make_deterministic_eval(comparison.datamanager)
+    model_dir = MODEL_DIRS[args.model][100]
+    print(f"[model] RENI++ decoder: {args.model} -> {model_dir}")
+    _, _, model = load_model(model_dir, device=device)
+    model.eval()
 
-    # Fix the nan LPIPS cell: instantiate LPIPS via the correct import path.
+    irn = _make_irn(args.inversenet_weights, device, envmap_width=128)
+
+    # LPIPS for compute_metrics (correct torchmetrics path; the reused module's
+    # import path was wrong, silently dropping the column).
     try:
         from torchmetrics.image import LearnedPerceptualImagePatchSimilarity
-        comparison.lpips = LearnedPerceptualImagePatchSimilarity(
-            normalize=True).to(args.device)
-        print("[lpips] enabled (torchmetrics.image.LearnedPerceptualImagePatchSimilarity)")
+        lpips = LearnedPerceptualImagePatchSimilarity(normalize=True).to(device)
+        print("[lpips] enabled")
     except Exception as e:  # noqa: BLE001
-        comparison.lpips = None
+        lpips = None
         print(f"[lpips] unavailable, column will be dropped: {e!r}")
 
-    metrics, images_data = comparison.run_evaluation(image_indices=args.image_indices)
+    W = 128
+    H = W // 2
+    metrics = {"InverseRenderNet": [], "RENI++": []}
+    images_data = {"gt": [], "crop": [], "conditioning": [],
+                   "InverseRenderNet": [], "RENI++": []}
 
-    n_available = len(images_data.get("gt", []))
-    if n_available == 0:
-        raise SystemExit("No test images were evaluated.")
-    indices = list(range(n_available))
+    for i in indices:
+        raw = read_clean_exr(exr_paths[i])  # true-scale linear HDR [64,128,3]
+        raw_t = torch.from_numpy(raw)
 
-    fig = _plot(images_data, indices, add_labels=args.labels,
+        crop, _ = extract_fov_crop(
+            raw, h_fov_deg=args.crop_fov, v_fov_deg=args.crop_v_fov,
+            azimuth_deg=args.azimuth, elevation_deg=args.elevation,
+            output_size=(args.crop_size, args.crop_size))
+        mask_np = generate_fov_mask(
+            (H, W), h_fov_deg=args.crop_fov, v_fov_deg=args.crop_v_fov,
+            azimuth_deg=args.azimuth, elevation_deg=args.elevation)
+        mask_t = torch.from_numpy(mask_np)
+
+        # InverseRenderNet (SH) baseline — unchanged.
+        inversenet_envmap = irn.run_inversenet(crop, target_width=W)
+
+        # RENI++ crop outpainting in the model's two-bracket target space.
+        if getattr(model, "two_bracket", False):
+            gauge = apply_fixed_gauge(raw_t, percentile=0.99, target=1.0)
+            gt_target = encode_two_bracket(gauge, m_ldr=model.tonemap_m_ldr,
+                                           m_log=model.tonemap_m_log)
+        else:
+            gt_target = raw_t  # (paper path would need its own normalisation)
+        reni_pred = _fit_reni_latent(model, gt_target, mask_t, device,
+                                     steps=args.reni_fit_steps)
+        # Per-image least-squares exposure scale to the true-scale GT (the
+        # scale-relative model's analogue of the paper fit's trainable scale).
+        raw_dev = raw_t.to(device)
+        scale = (raw_dev * reni_pred).sum() / (reni_pred * reni_pred).sum().clamp_min(1e-8)
+        reni_envmap = (scale * reni_pred).cpu().numpy()
+
+        conditioning = raw * mask_np[..., np.newaxis]
+
+        images_data["gt"].append(raw)
+        images_data["crop"].append(crop)
+        images_data["conditioning"].append(conditioning)
+        images_data["InverseRenderNet"].append(inversenet_envmap)
+        images_data["RENI++"].append(reni_envmap)
+
+        metrics["InverseRenderNet"].append(
+            compute_metrics(raw, inversenet_envmap, lpips, device))
+        metrics["RENI++"].append(
+            compute_metrics(raw, reni_envmap, lpips, device))
+        print(f"[eval] {exr_paths[i].name}: "
+              f"IRN PSNR={metrics['InverseRenderNet'][-1]['PSNR']:.2f} "
+              f"RENI++ PSNR={metrics['RENI++'][-1]['PSNR']:.2f}")
+
+    avg_metrics = {}
+    for method, method_metrics in metrics.items():
+        avg_metrics[method] = {
+            key: float(np.mean([m[key] for m in method_metrics]))
+            for key in method_metrics[0].keys()
+        }
+
+    # figure rows are the evaluated images in order (images_data is idx 0..n-1)
+    fig = _plot(images_data, list(range(len(indices))), add_labels=args.labels,
                 label_fontsize=args.label_fontsize)
     save_figure(fig, args.output, svg=args.svg, dpi=200)
-    _write_table(metrics, args.output)
+    _write_table(avg_metrics, args.table_output)
 
 
 if __name__ == "__main__":
