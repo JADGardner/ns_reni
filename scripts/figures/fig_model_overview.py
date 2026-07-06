@@ -261,7 +261,7 @@ def draw_latent_sphere(ax, cx, cy, r):
     for vx, vy in vectors:
         arrow(ax, (cx, cy), (cx + vx * r, cy + vy * r),
               color=VEC_COLOR, lw=1.2, mutation_scale=12)
-    draw_text(ax, cx + 0.18 * r, cy + 0.50 * r, r"$\mathbf{Z}$", size=13)
+    draw_text(ax, cx + 0.34 * r, cy + 0.50 * r, r"$\mathbf{Z}$", size=13)
     draw_text(ax, cx - 0.85 * r, cy + 0.82 * r, "Latent Code",
               size=12, rotation=48)
 
@@ -292,9 +292,9 @@ def draw_latent_matrix(ax, x, y, cell=0.22):
                     cell - gap, cell - gap,
                     facecolor=CELL_FILL, edgecolor=CELL_STROKE, lw=0.8)
     draw_text(ax, x + 2.65 * cell, y - 0.18, r"$3\times N$", size=12)
-    right_x = x + 5.35 * cell + cell
-    center_y = y + 1.5 * cell
-    return right_x, center_y
+    top_center_x = x + (5.35 + 1.0) * cell / 2
+    top_y = y + 3 * cell
+    return top_center_x, top_y
 
 
 def draw_mlp(ax, x0, y0, h, layer_w=0.28, gap=0.48, n_layers=5):
@@ -360,7 +360,7 @@ def build_figure(args):
     draw_latent_sphere(ax, 1.35, 1.70, 1.05)
 
     stack_right, stack_mid_y = draw_vector_stack(ax, 3.62, 3.55, 0.36, 0.80)
-    matrix_right, matrix_mid_y = draw_latent_matrix(ax, 3.02, 1.36, cell=0.24)
+    matrix_top_cx, matrix_top_y = draw_latent_matrix(ax, 3.02, 1.36, cell=0.24)
 
     box_x, box_y, box_w, box_h = 4.82, 2.21, 1.94, 1.14
     box_center_y = box_y + box_h / 2
@@ -368,7 +368,7 @@ def build_figure(args):
     lower_input_y = (box_center_y + box_y) / 2
     arrow(ax, (stack_right + 0.04, stack_mid_y), (box_x, upper_input_y),
           color=ARROW_COLOR, lw=1.1, mutation_scale=14)
-    arrow(ax, (matrix_right + 0.04, matrix_mid_y), (box_x, lower_input_y),
+    arrow(ax, (matrix_top_cx, matrix_top_y + 0.04), (box_x, lower_input_y),
           color=ARROW_COLOR, lw=1.1, mutation_scale=14)
     rounded_box(ax, box_x, box_y, box_w, box_h, facecolor=BLUE_FILL,
                 edgecolor=BLUE_STROKE, lw=1.4, rounding=0.10)
