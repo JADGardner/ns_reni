@@ -137,8 +137,9 @@ def main():
                         help="Line width of the latent quiver arrows")
     parser.add_argument("--base_image", type=Path,
                         default=REPO_ROOT / "publication" / "figures" / "teaser_base.png")
-    parser.add_argument("--labels", action="store_true",
-                        help="Bake current LaTeX/TikZ labels into the figure")
+    parser.add_argument("--labels", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="Bake labels into the figure (--no-labels to disable)")
     args = parser.parse_args()
     seed_all(args.seed)
 
@@ -171,9 +172,15 @@ def main():
                                                     height=args.height,
                                                     chunk_size=args.decode_chunk)}
         else:
-            # Interpolated train latents as plausible random samples
-            z = torch.lerp(model.field.train_mu[i].unsqueeze(0),
-                           model.field.train_mu[i + 1].unsqueeze(0), 0.5)
+            # Plausible random samples: interpolate a random pair of train
+            # latents at a random blend. Deterministic per --seed (seed_all
+            # above), so different seeds give different left-hand skies.
+            n = model.field.train_mu.shape[0]
+            a, b = torch.randint(0, n, (2,)).tolist()
+            tblend = 0.3 + 0.4 * torch.rand(()).item()
+            z = torch.lerp(model.field.train_mu[a].unsqueeze(0),
+                           model.field.train_mu[b].unsqueeze(0), tblend)
+            print(f"[sample {i}] train latents {a}<->{b} t={tblend:.2f}")
             images[i] = {"pred_img": decode_latents(model, ray_samples,
                                                     z.to(args.device),
                                                     height=args.height,
