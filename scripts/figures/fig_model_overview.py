@@ -34,7 +34,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import patheffects
 from matplotlib.path import Path as MplPath
-from matplotlib.patches import Circle, FancyArrowPatch, Rectangle
+from matplotlib.patches import Circle, FancyArrowPatch, FancyBboxPatch, Rectangle
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -190,6 +190,28 @@ def draw_text(ax, x, y, text, size=12, rotation=0, ha="center", va="center",
     return ax.text(x, y, text, **defaults)
 
 
+# SphereJEPA figure palette (scripts/sphere_jepa/figures/svg_pieces.py):
+# pastel fills with saturated matching strokes, rx = 12/130 of block height,
+# cell rounding = 18% of cell, soft rgba(0,0,0,0.3) strokes on grids.
+BLUE_FILL, BLUE_STROKE, BLUE_TEXT = "#D7E5FF", "#3A5FAD", "#0B2A66"
+GREEN_FILL, GREEN_STROKE = "#E1F5D9", "#3D8B2F"
+CELL_FILL, CELL_STROKE = "#EAF1FF", (0.23, 0.37, 0.68, 0.55)
+STACK_FILL, STACK_STROKE = "#FFF3D6", (0.79, 0.60, 0.18, 0.60)
+ARROW_COLOR = "#333333"
+
+
+def rounded_box(ax, x, y, w, h, facecolor, edgecolor, lw=1.2, rounding=None,
+                zorder=2):
+    rounding = rounding if rounding is not None else 0.18 * min(w, h)
+    patch = FancyBboxPatch(
+        (x, y), w, h,
+        boxstyle=f"round,pad=0,rounding_size={rounding}",
+        facecolor=facecolor, edgecolor=edgecolor, linewidth=lw, zorder=zorder,
+    )
+    ax.add_patch(patch)
+    return patch
+
+
 def draw_axes(ax, cx, cy, r):
     origin = (cx, cy)
     endpoints = {
@@ -245,29 +267,33 @@ def draw_latent_sphere(ax, cx, cy, r):
 
 def draw_vector_stack(ax, x, y, w, h):
     labels = [r"$x$", r"$y$", r"$z$"]
+    gap = 0.02
     for i, label in enumerate(labels):
         yy = y + (2 - i) * h / 3
-        ax.add_patch(Rectangle((x, yy), w, h / 3, facecolor="#f5f5f5",
-                               edgecolor="0.25", linewidth=0.9))
+        rounded_box(ax, x, yy + gap / 2, w, h / 3 - gap,
+                    facecolor=STACK_FILL, edgecolor=STACK_STROKE, lw=0.9)
         draw_text(ax, x + w / 2, yy + h / 6, label, size=11)
+    return x + w, y + h / 2
 
 
 def draw_latent_matrix(ax, x, y, cell=0.22):
+    gap = 0.018
     for row in range(3):
         for col in range(4):
-            ax.add_patch(Rectangle(
-                (x + col * cell, y + (2 - row) * cell),
-                cell, cell, facecolor="#f5f5f5", edgecolor="0.25",
-                linewidth=0.8,
-            ))
+            rounded_box(ax, x + col * cell + gap / 2,
+                        y + (2 - row) * cell + gap / 2,
+                        cell - gap, cell - gap,
+                        facecolor=CELL_FILL, edgecolor=CELL_STROKE, lw=0.8)
     draw_text(ax, x + 4.55 * cell, y + 1.5 * cell, "...", size=17)
     for row in range(3):
-        ax.add_patch(Rectangle(
-            (x + 5.35 * cell, y + (2 - row) * cell),
-            cell, cell, facecolor="#f5f5f5", edgecolor="0.25",
-            linewidth=0.8,
-        ))
+        rounded_box(ax, x + 5.35 * cell + gap / 2,
+                    y + (2 - row) * cell + gap / 2,
+                    cell - gap, cell - gap,
+                    facecolor=CELL_FILL, edgecolor=CELL_STROKE, lw=0.8)
     draw_text(ax, x + 2.65 * cell, y - 0.18, r"$3\times N$", size=12)
+    right_x = x + 5.35 * cell + cell
+    center_y = y + 1.5 * cell
+    return right_x, center_y
 
 
 def draw_mlp(ax, x0, y0, h, layer_w=0.28, gap=0.48, n_layers=5):
@@ -275,8 +301,8 @@ def draw_mlp(ax, x0, y0, h, layer_w=0.28, gap=0.48, n_layers=5):
     for i in range(n_layers):
         x = x0 + i * (layer_w + gap)
         xs.append(x)
-        ax.add_patch(Rectangle((x, y0), layer_w, h, facecolor="#f7f7f7",
-                               edgecolor="0.2", linewidth=1.0))
+        rounded_box(ax, x, y0, layer_w, h, facecolor=GREEN_FILL,
+                    edgecolor=GREEN_STROKE, lw=1.1, rounding=0.07)
         if i:
             arrow(ax, (xs[i - 1] + layer_w, y0 + h / 2),
                   (x, y0 + h / 2), lw=1.1, mutation_scale=13)
@@ -332,19 +358,21 @@ def build_figure(args):
     draw_query_sphere(ax, 1.35, 4.05, 1.05)
     draw_latent_sphere(ax, 1.35, 1.70, 1.05)
 
-    draw_vector_stack(ax, 3.25, 3.55, 0.34, 0.78)
-    draw_latent_matrix(ax, 2.92, 1.38, cell=0.23)
+    stack_right, stack_mid_y = draw_vector_stack(ax, 3.25, 3.55, 0.34, 0.78)
+    matrix_right, matrix_mid_y = draw_latent_matrix(ax, 2.62, 1.38, cell=0.23)
 
     box_x, box_y, box_w, box_h = 4.28, 2.23, 1.86, 1.10
     box_center_y = box_y + box_h / 2
     upper_input_y = (box_center_y + box_y + box_h) / 2
     lower_input_y = (box_center_y + box_y) / 2
-    arrow(ax, (3.60, 3.94), (box_x, upper_input_y), lw=1.1, mutation_scale=14)
-    arrow(ax, (3.62, 2.04), (box_x, lower_input_y), lw=1.1, mutation_scale=14)
-    ax.add_patch(Rectangle((box_x, box_y), box_w, box_h, facecolor="white",
-                           edgecolor="0.2", linewidth=1.2))
+    arrow(ax, (stack_right + 0.04, stack_mid_y), (box_x, upper_input_y),
+          color=ARROW_COLOR, lw=1.1, mutation_scale=14)
+    arrow(ax, (matrix_right + 0.04, matrix_mid_y), (box_x, lower_input_y),
+          color=ARROW_COLOR, lw=1.1, mutation_scale=14)
+    rounded_box(ax, box_x, box_y, box_w, box_h, facecolor=BLUE_FILL,
+                edgecolor=BLUE_STROKE, lw=1.4, rounding=0.10)
     draw_text(ax, box_x + box_w / 2, box_y + box_h / 2,
-              "Invariant\nTransformation", size=12)
+              "Invariant\nTransformation", size=12, color=BLUE_TEXT)
 
     mlp_y = 1.65
     mlp_h = 2.25
