@@ -185,7 +185,7 @@ def _plot(images_data, indices, add_labels=False, label_fontsize=15.0):
             add_figure_label(
                 fig,
                 axis_center(axes[0, col])[0],
-                axes[0, col].get_position().y1 + 0.01,
+                axes[0, col].get_position().y1 + 0.035,
                 text,
                 label_fontsize,
             )

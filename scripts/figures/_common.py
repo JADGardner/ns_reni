@@ -94,8 +94,18 @@ PHD_OUTPUTS = Path(os.environ.get("PHD_OUTPUTS", "/workspace/phd/outputs"))
 MODEL_DIRS["two_bracket_w3_1cyc"] = {100: PHD_OUTPUTS / "reni" / "ldrw3_2cyc_step50000"}
 # test-split refit shim (eval latents fitted to the 21 test images; generated
 # by eval_two_bracket_compare --save-fitted-shim) - use for figure scripts
-MODEL_DIRS["two_bracket_w3_1cyc_testfit"] = {100: PHD_OUTPUTS / "reni" / "_figshim_w3_1cyc"}
-MODEL_DIRS["two_bracket_w3_2cyc_testfit"] = {100: PHD_OUTPUTS / "reni" / "_figshim_w3_2cyc"}
+MODEL_DIRS["two_bracket_w3_1cyc_testfit"] = {
+    100: PHD_OUTPUTS / "reni" / "_figshim_w3_1cyc",
+    9: PHD_OUTPUTS / "reni" / "_figshim_w3_1cyc_d9",
+    36: PHD_OUTPUTS / "reni" / "_figshim_w3_1cyc_d36",
+    49: PHD_OUTPUTS / "reni" / "_figshim_w3_1cyc_d49",
+}
+MODEL_DIRS["two_bracket_w3_2cyc_testfit"] = {
+    100: PHD_OUTPUTS / "reni" / "_figshim_w3_2cyc",
+    9: PHD_OUTPUTS / "reni" / "_figshim_w3_2cyc_d9",
+    36: PHD_OUTPUTS / "reni" / "_figshim_w3_2cyc_d36",
+    49: PHD_OUTPUTS / "reni" / "_figshim_w3_2cyc_d49",
+}
 MODEL_DIRS["two_bracket_w3_2cyc"] = {
     100: PHD_OUTPUTS / "reni" / "reni_latent_reset_d100_two_bracket_ldrw3_2cyc"}
 
@@ -569,12 +579,15 @@ def render_eval_image(model, datamanager, idx: int, device, height: int = 64):
     }
 
 
-def collect_model_outputs(model_specs, image_indices, device, height: int = 64):
+def collect_model_outputs(model_specs, image_indices, device, height: int = 64,
+                          eval_image_width=None, data_override=None):
     """Run render_eval_image over several models. model_specs: {name: path}."""
     all_outputs = {}
     for name, path in model_specs.items():
         print(f"[load] {name}: {path}")
-        _, datamanager, model = load_model(Path(path), device=device)
+        _, datamanager, model = load_model(Path(path), device=device,
+                                           eval_image_width=eval_image_width,
+                                           data_override=data_override)
         all_outputs[name] = {
             idx: render_eval_image(model, datamanager, idx, device, height)
             for idx in image_indices
@@ -613,7 +626,15 @@ def save_figure(fig, out_stem: Path, svg: bool = False, dpi: int = 200):
     out_stem = Path(out_stem)
     out_stem.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(f"{out_stem}.png", dpi=dpi, bbox_inches="tight")
-    fig.savefig(f"{out_stem}.pdf", bbox_inches="tight")
+    if max(fig.get_size_inches()) > 100:
+        # pixel-unit canvas (e.g. fig_inverse_rendering's dpi=1 layout): a
+        # direct PDF would inherit the pixel count as inches and overflow
+        # LaTeX's dimension limit. Re-embed the rendered PNG at 300 dpi.
+        from PIL import Image
+        Image.open(f"{out_stem}.png").convert("RGB").save(
+            f"{out_stem}.pdf", resolution=300.0)
+    else:
+        fig.savefig(f"{out_stem}.pdf", bbox_inches="tight")
     if svg:
         fig.savefig(f"{out_stem}.svg", bbox_inches="tight")
     print(f"[saved] {out_stem}.png / .pdf" + (" / .svg" if svg else ""))
