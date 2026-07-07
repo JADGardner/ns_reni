@@ -7,6 +7,7 @@ size showing RENI++ (image + heatmap), SH, and SG reconstructions.
 """
 
 import argparse
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -126,26 +127,38 @@ def main():
     parser.add_argument("--image_indices", type=int, nargs="+", default=[1, 2, 3, 4])
     parser.add_argument("--labels", action="store_true",
                         help="Bake current LaTeX/TikZ labels into the figure")
-    parser.add_argument("--reni-d100-model", default="two_bracket_w3_1cyc",
-                        help="MODEL_DIRS key for the 300-param RENI++ row "
-                             "(default: the thesis two-bracket headline; use "
-                             "reni_pp for the paper model)")
+    parser.add_argument("--reni-model", default="two_bracket_w3_1cyc_testfit",
+                        help="MODEL_DIRS key for ALL RENI++ rows (D=9/49/100); "
+                             "use reni_pp for the paper ladder")
+    parser.add_argument("--eval-width", type=int, default=512,
+                        help="Eval image width (hi-res figure test set)")
+    parser.add_argument("--data-dir", type=Path,
+                        default=Path("/home/james/data/RENI_HDR_hires_figs"),
+                        help="Dataset root override for GT images")
     parser.add_argument("--label_fontsize", type=float, default=22.0)
     args = parser.parse_args()
     seed_all(args.seed)
 
     specs = {}
     for d, tag in zip((9, 49, 100), RENI_TAGS):
-        specs[tag] = MODEL_DIRS["reni_pp"][d]
-    specs[RENI_TAGS[2]] = MODEL_DIRS[args.reni_d100_model][100]
-    print(f"[models] 300-param RENI++ row: {args.reni_d100_model}")
+        specs[tag] = MODEL_DIRS[args.reni_model][d]
+    print(f"[models] RENI++ ladder: {args.reni_model} (D=9/49/100)")
     for o, tag in zip(("2nd", "6th", "9th"), SH_TAGS):
         specs[tag] = MODEL_DIRS["sh"][o]
     for n, tag in zip((30, 150, 300), SG_TAGS):
         specs[tag] = MODEL_DIRS["sg"][n]
 
-    outputs = collect_model_outputs(specs, args.image_indices, args.device,
-                                    height=args.height)
+    # hi-res dataset only for the RENI rows (GT + refit targets); SH/SG
+    # decode analytically from stored coefficients, and loading them at
+    # 512px would cache the train split too (~20 GB per model, OOM).
+    reni_specs = {k: v for k, v in specs.items() if k in RENI_TAGS}
+    basis_specs = {k: v for k, v in specs.items() if k not in RENI_TAGS}
+    outputs = collect_model_outputs(reni_specs, args.image_indices, args.device,
+                                    height=args.height,
+                                    eval_image_width=args.eval_width,
+                                    data_override=args.data_dir)
+    outputs.update(collect_model_outputs(basis_specs, args.image_indices,
+                                         args.device, height=args.height))
     fig = plot_images_quadrants(outputs, args.image_indices,
                                 add_labels=args.labels,
                                 label_fontsize=args.label_fontsize)
