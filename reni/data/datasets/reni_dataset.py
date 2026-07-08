@@ -83,6 +83,8 @@ class RENIDataset(InputDataset):
         self.metadata["image_height"] = self._dataparser_outputs.metadata["image_height"]
         self.metadata["image_width"] = self._dataparser_outputs.metadata["image_width"]
         self.metadata["augment_with_mirror"] = self._dataparser_outputs.metadata["augment_with_mirror"]
+        self.metadata["num_original_images"] = self._dataparser_outputs.metadata.get(
+            "num_original_images", len(self._dataparser_outputs.image_filenames))
         self.metadata["augment_with_rotation"] = self._dataparser_outputs.metadata["augment_with_rotation"]
         self.metadata["apply_eval_rotation"] = self._dataparser_outputs.metadata["apply_eval_rotation"]
         self.metadata["val_in_ldr"] = self._dataparser_outputs.metadata["val_in_ldr"]
@@ -118,9 +120,14 @@ class RENIDataset(InputDataset):
             image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
 
         if self.metadata["augment_with_mirror"] and self.split == "train":
-            # then every image after the halfway point is a copy of the first half and
-            # we need to reverse the order of the columns
-            if image_idx >= len(self) // 2:
+            # Mirror only the appended duplicate copies. Using the dataparser's
+            # original count (rather than len//2) keeps this a no-op when an
+            # UNDOUBLED list is wrapped in train mode, as the use_test_as_train
+            # eval-fitting path does: the halfway arithmetic used to flip the
+            # second half of the 21 test images during eval latent fitting.
+            num_originals = self.metadata.get("num_original_images",
+                                              len(self) // 2)
+            if image_idx >= num_originals:
                 image = image[:, ::-1, :]
         
         if self.metadata["apply_eval_rotation"] is not False and self.split in ["val", "test"]:

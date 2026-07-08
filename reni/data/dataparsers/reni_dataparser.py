@@ -129,6 +129,7 @@ class RENIDataParser(DataParser):
             image_filenames = image_filenames[: self.config.val_subset_size]
 
         # TODO just set as flag and have dataset do the doubling
+        num_original_images = len(image_filenames)
         if self.config.augment_with_mirror and split == "train":
             # just double the number of images and reni_dataset.py will handle the mirroring
             image_filenames = image_filenames + image_filenames
@@ -174,6 +175,7 @@ class RENIDataParser(DataParser):
                 "convert_to_ldr": self.config.convert_to_ldr,
                 "convert_to_log_domain": self.config.convert_to_log_domain,
                 "augment_with_mirror": self.config.augment_with_mirror,
+                "num_original_images": num_original_images,
                 "augment_with_rotation": self.config.augment_with_rotation,
                 "apply_eval_rotation": self.config.apply_eval_rotation,
                 "min_max_normalize": self.config.min_max_normalize,
