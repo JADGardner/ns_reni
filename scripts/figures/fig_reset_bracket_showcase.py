@@ -35,10 +35,10 @@ def main():
                              "colours.")
     parser.add_argument("--models", nargs="+",
                         default=["reni_pp", "two_bracket_w3_1cyc_testfit",
-                                 "latent_reset_4cyc"])
+                                 "two_bracket_4cyc"])
     parser.add_argument("--labels", nargs="+",
-                        default=["RENI++", "two-bracket\nlatent-reset",
-                                 "latent-reset\n(4 cycles)"])
+                        default=["RENI++", "two-bracket\n(1 cycle)",
+                                 "two-bracket\n(4 cycles)"])
     args = parser.parse_args()
 
     N, C = args.num_samples, args.columns

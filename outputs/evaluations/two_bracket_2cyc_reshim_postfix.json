@@ -1,0 +1,134 @@
+{
+  "runs": {
+    "w3_2cyc": "/workspace/phd/outputs/reni/reni_latent_reset_d100_two_bracket_ldrw3_2cyc",
+    "w3_2cyc_d9": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d9",
+    "w3_2cyc_d36": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d36",
+    "w3_2cyc_d49": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d49"
+  },
+  "data": "/workspace/phd/code/ns_reni/data/RENI_HDR",
+  "device": "cuda:0",
+  "latent_steps_override": null,
+  "seed": 42,
+  "models": {
+    "w3_2cyc": {
+      "label": "w3_2cyc",
+      "run_dir": "/workspace/phd/outputs/reni/reni_latent_reset_d100_two_bracket_ldrw3_2cyc/reni/2026-07-04_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_latent_reset_d100_two_bracket_ldrw3_2cyc/reni/2026-07-04_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "num_eval_images": 21,
+      "latent_refit": true,
+      "force_eval_exposure_alignment": false,
+      "two_bracket": true,
+      "luminance_weighted_loss": false,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "psnr_hdr": 13.9630765914917,
+        "ssim_hdr": 0.9305112957954407,
+        "lpips_hdr": 0.2350844442844391,
+        "psnr_ldr": 21.606348037719727,
+        "ssim_ldr": 0.5286563634872437,
+        "lpips_ldr": 0.5296169519424438,
+        "log_rmse_hdr": 0.6455634832382202,
+        "lum_weighted_rmse_hdr": 10.389869689941406,
+        "peak_intensity_rel_error": 0.5092555284500122,
+        "peak_angle_error_deg": 7.708268165588379,
+        "peak_argmax_angle_error_deg": 13.277358055114746
+      }
+    },
+    "w3_2cyc_d9": {
+      "label": "w3_2cyc_d9",
+      "run_dir": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d9/reni/2026-07-04_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d9/reni/2026-07-04_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "num_eval_images": 21,
+      "latent_refit": true,
+      "force_eval_exposure_alignment": false,
+      "two_bracket": true,
+      "luminance_weighted_loss": false,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "psnr_hdr": 11.53857421875,
+        "ssim_hdr": 0.8908100128173828,
+        "lpips_hdr": 0.3849834203720093,
+        "psnr_ldr": 18.208616256713867,
+        "ssim_ldr": 0.43467068672180176,
+        "lpips_ldr": 0.6208573579788208,
+        "log_rmse_hdr": 0.8447575569152832,
+        "lum_weighted_rmse_hdr": 11.05708122253418,
+        "peak_intensity_rel_error": 0.7003352046012878,
+        "peak_angle_error_deg": 13.349215507507324,
+        "peak_argmax_angle_error_deg": 18.22320556640625
+      }
+    },
+    "w3_2cyc_d36": {
+      "label": "w3_2cyc_d36",
+      "run_dir": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d36/reni/2026-07-04_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d36/reni/2026-07-04_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "num_eval_images": 21,
+      "latent_refit": true,
+      "force_eval_exposure_alignment": false,
+      "two_bracket": true,
+      "luminance_weighted_loss": false,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "psnr_hdr": 12.839755058288574,
+        "ssim_hdr": 0.9168794751167297,
+        "lpips_hdr": 0.2918170988559723,
+        "psnr_ldr": 20.185373306274414,
+        "ssim_ldr": 0.4855440557003021,
+        "lpips_ldr": 0.5818111896514893,
+        "log_rmse_hdr": 0.7264102101325989,
+        "lum_weighted_rmse_hdr": 10.518107414245605,
+        "peak_intensity_rel_error": 0.5925164222717285,
+        "peak_angle_error_deg": 8.878376960754395,
+        "peak_argmax_angle_error_deg": 15.645679473876953
+      }
+    },
+    "w3_2cyc_d49": {
+      "label": "w3_2cyc_d49",
+      "run_dir": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d49/reni/2026-07-04_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d49/reni/2026-07-04_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "num_eval_images": 21,
+      "latent_refit": true,
+      "force_eval_exposure_alignment": false,
+      "two_bracket": true,
+      "luminance_weighted_loss": false,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "psnr_hdr": 13.349597930908203,
+        "ssim_hdr": 0.9226312041282654,
+        "lpips_hdr": 0.2538716793060303,
+        "psnr_ldr": 20.851701736450195,
+        "ssim_ldr": 0.5059328675270081,
+        "lpips_ldr": 0.5583993792533875,
+        "log_rmse_hdr": 0.6910613179206848,
+        "lum_weighted_rmse_hdr": 10.438213348388672,
+        "peak_intensity_rel_error": 0.541617214679718,
+        "peak_angle_error_deg": 7.330472469329834,
+        "peak_argmax_angle_error_deg": 13.394999504089355
+      }
+    }
+  }
+}

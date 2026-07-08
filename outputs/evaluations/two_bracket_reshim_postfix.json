@@ -1,0 +1,134 @@
+{
+  "runs": {
+    "w3_1cyc": "/workspace/phd/outputs/reni/ldrw3_2cyc_step50000",
+    "w3_1cyc_d9": "/workspace/phd/outputs/reni/w3_1cyc_d9_step50000",
+    "w3_1cyc_d36": "/workspace/phd/outputs/reni/w3_1cyc_d36_step50000",
+    "w3_1cyc_d49": "/workspace/phd/outputs/reni/w3_1cyc_d49_step50000"
+  },
+  "data": "/workspace/phd/code/ns_reni/data/RENI_HDR",
+  "device": "cuda:0",
+  "latent_steps_override": null,
+  "seed": 42,
+  "models": {
+    "w3_1cyc": {
+      "label": "w3_1cyc",
+      "run_dir": "/workspace/phd/outputs/reni/ldrw3_2cyc_step50000",
+      "checkpoint": "/workspace/phd/outputs/reni/ldrw3_2cyc_step50000/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "num_eval_images": 21,
+      "latent_refit": true,
+      "force_eval_exposure_alignment": false,
+      "two_bracket": true,
+      "luminance_weighted_loss": false,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "psnr_hdr": 14.385765075683594,
+        "ssim_hdr": 0.9344215393066406,
+        "lpips_hdr": 0.20307418704032898,
+        "psnr_ldr": 21.94625473022461,
+        "ssim_ldr": 0.53679358959198,
+        "lpips_ldr": 0.5132991075515747,
+        "log_rmse_hdr": 0.6350600123405457,
+        "lum_weighted_rmse_hdr": 10.089067459106445,
+        "peak_intensity_rel_error": 0.4462607204914093,
+        "peak_angle_error_deg": 5.9626030921936035,
+        "peak_argmax_angle_error_deg": 12.29139232635498
+      }
+    },
+    "w3_1cyc_d9": {
+      "label": "w3_1cyc_d9",
+      "run_dir": "/workspace/phd/outputs/reni/w3_1cyc_d9_step50000",
+      "checkpoint": "/workspace/phd/outputs/reni/w3_1cyc_d9_step50000/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "num_eval_images": 21,
+      "latent_refit": true,
+      "force_eval_exposure_alignment": false,
+      "two_bracket": true,
+      "luminance_weighted_loss": false,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "psnr_hdr": 11.300535202026367,
+        "ssim_hdr": 0.8928022980690002,
+        "lpips_hdr": 0.41956475377082825,
+        "psnr_ldr": 18.131229400634766,
+        "ssim_ldr": 0.4254285395145416,
+        "lpips_ldr": 0.6544377207756042,
+        "log_rmse_hdr": 0.8546778559684753,
+        "lum_weighted_rmse_hdr": 11.169066429138184,
+        "peak_intensity_rel_error": 0.7400262355804443,
+        "peak_angle_error_deg": 20.963109970092773,
+        "peak_argmax_angle_error_deg": 26.83809471130371
+      }
+    },
+    "w3_1cyc_d36": {
+      "label": "w3_1cyc_d36",
+      "run_dir": "/workspace/phd/outputs/reni/w3_1cyc_d36_step50000",
+      "checkpoint": "/workspace/phd/outputs/reni/w3_1cyc_d36_step50000/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "num_eval_images": 21,
+      "latent_refit": true,
+      "force_eval_exposure_alignment": false,
+      "two_bracket": true,
+      "luminance_weighted_loss": false,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "psnr_hdr": 12.921716690063477,
+        "ssim_hdr": 0.9196416139602661,
+        "lpips_hdr": 0.29521870613098145,
+        "psnr_ldr": 20.450057983398438,
+        "ssim_ldr": 0.48741763830184937,
+        "lpips_ldr": 0.5721768140792847,
+        "log_rmse_hdr": 0.7176356315612793,
+        "lum_weighted_rmse_hdr": 10.718801498413086,
+        "peak_intensity_rel_error": 0.5860536694526672,
+        "peak_angle_error_deg": 6.193974018096924,
+        "peak_argmax_angle_error_deg": 12.794256210327148
+      }
+    },
+    "w3_1cyc_d49": {
+      "label": "w3_1cyc_d49",
+      "run_dir": "/workspace/phd/outputs/reni/w3_1cyc_d49_step50000",
+      "checkpoint": "/workspace/phd/outputs/reni/w3_1cyc_d49_step50000/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "num_eval_images": 21,
+      "latent_refit": true,
+      "force_eval_exposure_alignment": false,
+      "two_bracket": true,
+      "luminance_weighted_loss": false,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "psnr_hdr": 13.3623046875,
+        "ssim_hdr": 0.9227864146232605,
+        "lpips_hdr": 0.2664009630680084,
+        "psnr_ldr": 20.917068481445312,
+        "ssim_ldr": 0.5023049116134644,
+        "lpips_ldr": 0.5502661466598511,
+        "log_rmse_hdr": 0.6947864890098572,
+        "lum_weighted_rmse_hdr": 10.424532890319824,
+        "peak_intensity_rel_error": 0.54108065366745,
+        "peak_angle_error_deg": 7.917904853820801,
+        "peak_argmax_angle_error_deg": 12.861685752868652
+      }
+    }
+  }
+}
