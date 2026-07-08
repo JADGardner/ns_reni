@@ -22,7 +22,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_args(parser, "hdr_reconstruction")
     parser.add_argument("--latent_dim", type=int, default=100)
-    parser.add_argument("--indices", type=int, nargs="+", default=[2, 7, 15])
+    parser.add_argument("--indices", type=int, nargs="+", default=[2, 11, 15])
     parser.add_argument("--models", nargs=2,
                         default=["reni_pp", "two_bracket_w3_1cyc_testfit"])
     parser.add_argument("--labels", nargs=2,
