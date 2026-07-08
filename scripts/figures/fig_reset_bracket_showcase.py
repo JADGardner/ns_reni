@@ -75,12 +75,19 @@ def main():
                                  chunk_size=args.decode_chunk)
             axs[r, c].imshow(img.numpy())
             axs[r, c].set_xticks([]); axs[r, c].set_yticks([])
-        axs[mi * rows_per_model, 0].set_ylabel(label, fontsize=11)
 
         del model
         torch.cuda.empty_cache()
 
-    plt.tight_layout()
+    plt.tight_layout(rect=(0.035, 0, 1, 1))
+    # model labels centred on each model's block of rows
+    for mi, label in enumerate(args.labels):
+        r0 = mi * rows_per_model
+        r1 = r0 + rows_per_model - 1
+        y_mid = (axs[r0, 0].get_position().y1
+                 + axs[r1, 0].get_position().y0) / 2
+        fig.text(0.02, y_mid, label, rotation=90, ha="center", va="center",
+                 fontsize=12)
     save_figure(fig, args.output, svg=args.svg)
 
 
