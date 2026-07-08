@@ -9,6 +9,7 @@ which tonemapped views hide).
 """
 
 import argparse
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import torch
@@ -26,6 +27,9 @@ def main():
                         default=["reni_pp", "two_bracket_w3_1cyc_testfit"])
     parser.add_argument("--labels", nargs=2,
                         default=["RENI++", "two-bracket\nlatent-reset"])
+    parser.add_argument("--data-dir", type=Path,
+                        default=Path("/home/james/data/RENI_HDR_hires_figs"))
+    parser.add_argument("--eval-width", type=int, default=512)
     args = parser.parse_args()
 
     n_idx = len(args.indices)
@@ -36,7 +40,9 @@ def main():
     results = {}
     for key in args.models:
         _, datamanager, model = load_model(MODEL_DIRS[key][args.latent_dim],
-                                           device=args.device)
+                                           device=args.device,
+                                           eval_image_width=args.eval_width,
+                                           data_override=args.data_dir)
         for idx in args.indices:
             results[(key, idx)] = render_eval_image(model, datamanager, idx,
                                                     args.device)
