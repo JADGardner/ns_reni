@@ -27,16 +27,25 @@ def main():
     parser.add_argument("--sample_seed", type=int, default=54)
     parser.add_argument("--random_source", choices=("normal", "train_mu"),
                         default="normal")
-    parser.add_argument("--models", nargs=2,
-                        default=["reni_pp", "two_bracket_w3_1cyc_testfit"])
-    parser.add_argument("--labels", nargs=2,
-                        default=["RENI++", "two-bracket\nlatent-reset"])
+    parser.add_argument("--calibrate_prior", action="store_true",
+                        help="Scale N(0, I) draws by each model's empirical "
+                             "training-latent std. Latent-reset cycles "
+                             "contract the latents far below unit scale, so "
+                             "uncalibrated draws decode to degenerate flat "
+                             "colours.")
+    parser.add_argument("--models", nargs="+",
+                        default=["reni_pp", "two_bracket_w3_1cyc_testfit",
+                                 "latent_reset_4cyc"])
+    parser.add_argument("--labels", nargs="+",
+                        default=["RENI++", "two-bracket\nlatent-reset",
+                                 "latent-reset\n(4 cycles)"])
     args = parser.parse_args()
 
     N, C = args.num_samples, args.columns
+    M = len(args.models)
     rows_per_model = (N + C - 1) // C
-    fig, axs = plt.subplots(2 * rows_per_model, C,
-                            figsize=(2.4 * C, 1.45 * 2 * rows_per_model))
+    fig, axs = plt.subplots(M * rows_per_model, C,
+                            figsize=(2.4 * C, 1.45 * M * rows_per_model))
 
     for mi, (key, label) in enumerate(zip(args.models, args.labels)):
         _, _, model = load_model(MODEL_DIRS[key][args.latent_dim],
@@ -51,8 +60,13 @@ def main():
             indices = torch.randperm(bank.shape[0], device=bank.device)[:N]
             latents = [bank[i].unsqueeze(0) for i in indices]
         else:
-            latents = [torch.randn(1, model.field.latent_dim, 3,
-                                   device=args.device) for _ in range(N)]
+            scale = 1.0
+            if args.calibrate_prior:
+                scale = model.field.train_mu.detach().std().item()
+                print(f"[{key}] prior scale calibrated to {scale:.3f}")
+            latents = [scale * torch.randn(1, model.field.latent_dim, 3,
+                                           device=args.device)
+                       for _ in range(N)]
 
         for i, z in enumerate(latents):
             r = mi * rows_per_model + i // C

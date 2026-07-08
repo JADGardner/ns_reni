@@ -108,6 +108,10 @@ MODEL_DIRS["two_bracket_w3_2cyc_testfit"] = {
 }
 MODEL_DIRS["two_bracket_w3_2cyc"] = {
     100: PHD_OUTPUTS / "reni" / "reni_latent_reset_d100_two_bracket_ldrw3_2cyc"}
+# 4-cycle latent-reset (log-domain, the best D=300-convention decoder)
+MODEL_DIRS["latent_reset_4cyc"] = {
+    100: REPO_ROOT / "outputs" / "reni_latent_reset_4_rerun" / "reni"
+    / "2026-07-01_4cycles_rerun"}
 
 _EVAL_MAPPING = None
 
