@@ -121,7 +121,7 @@ def main():
     text(ax, 2.05, 0.42, "Condition-by-Concat", size=12)
 
     # ── Panel 2: hypernetwork ───────────────────────────────────────────
-    hx = -0.30  # equalise the rendered whitespace between neighbouring panels
+    hx = -0.22  # centre the panel between the neighbouring conditioning diagrams
     hy = 3.35   # hyper row
     my = 1.95   # main row
     cell_column(ax, 4.62 + hx, hy, 3, colors=[BLUE_CELL] * 3)
