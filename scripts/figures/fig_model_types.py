@@ -121,26 +121,27 @@ def main():
     text(ax, 2.05, 0.42, "Condition-by-Concat", size=12)
 
     # ── Panel 2: hypernetwork ───────────────────────────────────────────
+    hx = -0.22  # centre the panel between the neighbouring outer labels
     hy = 3.35   # hyper row
     my = 1.95   # main row
-    cell_column(ax, 4.62, hy, 3, colors=[BLUE_CELL] * 3)
-    text(ax, 4.50, hy, r"$\mathbf{z}$", size=12)
-    trapezoid(ax, 5.26, 6.66, hy, 0.36, 0.68,
+    cell_column(ax, 4.62 + hx, hy, 3, colors=[BLUE_CELL] * 3)
+    text(ax, 4.50 + hx, hy, r"$\mathbf{z}$", size=12)
+    trapezoid(ax, 5.26 + hx, 6.66 + hx, hy, 0.36, 0.68,
               facecolor=BLUE_FILL, edgecolor=BLUE_STROKE)
-    text(ax, 6.00, hy + 0.16, "Hyper", size=10.5, color=BLUE_TEXT)
-    text(ax, 6.00, hy - 0.20, "MLP", size=10.5, color=BLUE_TEXT)
+    text(ax, 6.00 + hx, hy + 0.16, "Hyper", size=10.5, color=BLUE_TEXT)
+    text(ax, 6.00 + hx, hy - 0.20, "MLP", size=10.5, color=BLUE_TEXT)
     # weights flow into the main MLP: right, then straight down (elbow)
-    arrow(ax, (6.66, hy), (7.72, my + 0.86),
+    arrow(ax, (6.66 + hx, hy), (7.72 + hx, my + 0.86),
           connectionstyle="angle,angleA=0,angleB=90,rad=0.15", lw=1.2)
-    text(ax, 8.04, hy, r"$\mathbf{W}$", size=12)
-    trapezoid(ax, 6.90, 8.52, my, 0.55, 1.05)
-    text(ax, 7.72, my, "MLP", size=12, color=GREEN_TEXT)
-    cell(ax, 5.94, my - 0.21, 0.42, DIR_CELL)
-    text(ax, 5.70, my, r"$\lambda(\mathbf{d})$", size=11)
-    arrow(ax, (6.38, my), (6.88, my))
-    output_column(ax, 8.68, my)
-    text(ax, 9.22, my, "outputs", size=11, rotation=90)
-    text(ax, 7.05, 0.42, "Hypernetwork", size=12)
+    text(ax, 8.04 + hx, hy, r"$\mathbf{W}$", size=12)
+    trapezoid(ax, 6.90 + hx, 8.52 + hx, my, 0.55, 1.05)
+    text(ax, 7.72 + hx, my, "MLP", size=12, color=GREEN_TEXT)
+    cell(ax, 5.94 + hx, my - 0.21, 0.42, DIR_CELL)
+    text(ax, 5.70 + hx, my, r"$\lambda(\mathbf{d})$", size=11)
+    arrow(ax, (6.38 + hx, my), (6.88 + hx, my))
+    output_column(ax, 8.68 + hx, my)
+    text(ax, 9.22 + hx, my, "outputs", size=11, rotation=90)
+    text(ax, 7.05 + hx, 0.42, "Hypernetwork", size=12)
 
     # ── Panel 3: attention ──────────────────────────────────────────────
     ay = 2.15
