@@ -1,8 +1,10 @@
-"""Programmatic RENI++ model overview figure.
+"""Programmatic RENI++ gravity-axis invariant model overview.
 
-Recreates the conditional spherical neural field overview diagram without
-TikZ or external drawing tools. The output sphere is textured from an EXR
-environment map, which can be overridden with --envmap.
+The diagram follows ``RENIField.vn_invariance`` for the SO(2) model. It shows
+the axial/planar decomposition, the direction-relative inner products, the
+Vector Neuron frame used to make the planar latent invariant, and the two
+inputs to the attention decoder. The output sphere is textured from an EXR
+environment map, which can be overridden with ``--envmap``.
 
 Run from the ns_reni repo root:
 
@@ -34,7 +36,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import patheffects
 from matplotlib.path import Path as MplPath
-from matplotlib.patches import Circle, FancyArrowPatch, FancyBboxPatch, Rectangle
+from matplotlib.patches import (
+    FancyArrowPatch,
+    FancyBboxPatch,
+    Polygon,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -202,9 +208,13 @@ def arrow(ax, start, end, color="black", lw=1.4, style="-|>",
     return patch
 
 
+TEXT_SCALE = 1.15
+
+
 def draw_text(ax, x, y, text, size=12, rotation=0, ha="center", va="center",
               **kwargs):
-    defaults = dict(fontsize=size, rotation=rotation, ha=ha, va=va, color="black")
+    defaults = dict(fontsize=size * TEXT_SCALE, rotation=rotation, ha=ha,
+                    va=va, color="black")
     defaults.update(kwargs)
     return ax.text(x, y, text, **defaults)
 
@@ -287,50 +297,6 @@ def draw_latent_sphere(ax, cx, cy, r):
               size=12, rotation=48)
 
 
-def draw_vector_stack(ax, x, y, w, h):
-    labels = [r"$x$", r"$y$", r"$z$"]
-    gap = 0.02
-    for i, label in enumerate(labels):
-        yy = y + (2 - i) * h / 3
-        rounded_box(ax, x, yy + gap / 2, w, h / 3 - gap,
-                    facecolor=STACK_FILL, edgecolor=STACK_STROKE, lw=0.9)
-        draw_text(ax, x + w / 2, yy + h / 6, label, size=11)
-    return x + w, y + h / 2
-
-
-def draw_latent_matrix(ax, x, y, cell=0.22):
-    gap = 0.018
-    for row in range(3):
-        for col in range(4):
-            rounded_box(ax, x + col * cell + gap / 2,
-                        y + (2 - row) * cell + gap / 2,
-                        cell - gap, cell - gap,
-                        facecolor=CELL_FILL, edgecolor=CELL_STROKE, lw=0.8)
-    draw_text(ax, x + 4.55 * cell, y + 1.5 * cell, "...", size=17)
-    for row in range(3):
-        rounded_box(ax, x + 5.35 * cell + gap / 2,
-                    y + (2 - row) * cell + gap / 2,
-                    cell - gap, cell - gap,
-                    facecolor=CELL_FILL, edgecolor=CELL_STROKE, lw=0.8)
-    draw_text(ax, x + 2.65 * cell, y - 0.18, r"$3\times N$", size=12)
-    top_center_x = x + (5.35 + 1.0) * cell / 2
-    top_y = y + 3 * cell
-    return top_center_x, top_y
-
-
-def draw_mlp(ax, x0, y0, h, layer_w=0.28, gap=0.48, n_layers=5):
-    xs = []
-    for i in range(n_layers):
-        x = x0 + i * (layer_w + gap)
-        xs.append(x)
-        rounded_box(ax, x, y0, layer_w, h, facecolor=GREEN_FILL,
-                    edgecolor=GREEN_STROKE, lw=1.1, rounding=0.07)
-        if i:
-            arrow(ax, (xs[i - 1] + layer_w, y0 + h / 2),
-                  (x, y0 + h / 2), lw=1.1, mutation_scale=13)
-    return xs
-
-
 def draw_output_sphere(ax, sphere_img, cx, cy, r, red_line_start_x):
     draw_sphere_shadow(ax, cx, cy, r, zorder=0)
     ax.imshow(sphere_img, extent=(cx - r, cx + r, cy - r, cy + r), zorder=1)
@@ -360,6 +326,272 @@ def draw_output_sphere(ax, sphere_img, cx, cy, r, red_line_start_x):
     ))
 
 
+def draw_tensor(
+    ax,
+    x,
+    y,
+    rows,
+    cols,
+    *,
+    cell=0.22,
+    gap=0.035,
+    facecolor=CELL_FILL,
+    edgecolor=CELL_STROKE,
+    tail=False,
+    zorder=3,
+):
+    """Draw a small tensor glyph and return its bounding box.
+
+    ``tail`` replaces the final columns with an ellipsis and one last column,
+    which keeps the latent dimension legible without implying a small model.
+    """
+    shown_cols = cols
+    if tail:
+        shown_cols = cols + 2
+
+    for row in range(rows):
+        for col in range(cols):
+            rounded_box(
+                ax,
+                x + col * (cell + gap),
+                y + (rows - 1 - row) * (cell + gap),
+                cell,
+                cell,
+                facecolor=facecolor,
+                edgecolor=edgecolor,
+                lw=0.8,
+                rounding=0.035,
+                zorder=zorder,
+            )
+        if tail:
+            rounded_box(
+                ax,
+                x + (cols + 1) * (cell + gap),
+                y + (rows - 1 - row) * (cell + gap),
+                cell,
+                cell,
+                facecolor=facecolor,
+                edgecolor=edgecolor,
+                lw=0.8,
+                rounding=0.035,
+                zorder=zorder,
+            )
+
+    if tail:
+        draw_text(
+            ax,
+            x + (cols + 0.45) * (cell + gap),
+            y + (rows * cell + (rows - 1) * gap) / 2,
+            r"$\cdots$",
+            size=15,
+            zorder=zorder + 1,
+        )
+
+    width = shown_cols * cell + (shown_cols - 1) * gap
+    height = rows * cell + (rows - 1) * gap
+    return {
+        "left": x,
+        "right": x + width,
+        "bottom": y,
+        "top": y + height,
+        "cx": x + width / 2,
+        "cy": y + height / 2,
+    }
+
+
+def draw_vn_glyph(ax, x, y, w=0.72, h=0.72):
+    """Horizontal Vector Neuron branch, wide at input and narrow at output."""
+    points = [
+        (x, y),
+        (x, y + h),
+        (x + w, y + 0.72 * h),
+        (x + w, y + 0.28 * h),
+    ]
+    ax.add_patch(
+        Polygon(
+            points,
+            closed=True,
+            facecolor=BLUE_STROKE,
+            edgecolor=BLUE_TEXT,
+            linewidth=1.0,
+            zorder=3,
+        )
+    )
+    draw_text(ax, x + 0.39 * w, y + h / 2, "VN", size=12,
+              color="white", zorder=4)
+    return x + w, y + h / 2
+
+
+def draw_directional_invariant(ax, d_parallel, d_perp, z_perp):
+    """Draw the SO(2) directional invariant used as the decoder query."""
+    # The inner-product operands repeat the relevant decomposed inputs so the
+    # matrix operation remains readable when the figure is scaled in LaTeX.
+    zt = draw_tensor(ax, 4.18, 4.76, 3, 2, cell=0.19, gap=0.025,
+                     facecolor=CELL_FILL, edgecolor=CELL_STROKE)
+    draw_text(ax, zt["cx"], zt["top"] + 0.16,
+              r"$\mathbf{Z}_{\perp}^{\mathsf{T}}$", size=13)
+    draw_text(ax, zt["cx"], zt["bottom"] - 0.14,
+              r"$N_z\!\times\!2$", size=10, color="#555555")
+
+    draw_text(ax, 4.85, zt["cy"], r"$\times$", size=18)
+    dp = draw_tensor(ax, 5.16, 4.89, 2, 1, cell=0.22, gap=0.035,
+                     facecolor=CELL_FILL, edgecolor=CELL_STROKE)
+    draw_text(ax, dp["cx"], dp["top"] + 0.16,
+              r"$\mathbf{d}_{\perp}$", size=13)
+    draw_text(ax, 5.62, zt["cy"], r"$=$", size=17)
+    inner = draw_tensor(ax, 5.91, 4.76, 3, 1, cell=0.19, gap=0.025,
+                        facecolor=STACK_FILL, edgecolor=STACK_STROKE)
+    draw_text(ax, inner["cx"], inner["top"] + 0.16,
+              r"$\mathbf{Z}_{\perp}^{\mathsf{T}}\mathbf{d}_{\perp}$",
+              size=13)
+    draw_text(ax, inner["cx"], inner["bottom"] - 0.14,
+              r"$N_z\!\times\!1$", size=10, color="#555555")
+
+    norm_x, norm_y, norm_w, norm_h = 6.45, 4.40, 1.18, 0.52
+    rounded_box(ax, norm_x, norm_y, norm_w, norm_h,
+                facecolor=STACK_FILL, edgecolor=STACK_STROKE,
+                lw=1.0, rounding=0.08)
+    draw_text(ax, norm_x + norm_w / 2, norm_y + norm_h / 2,
+              r"$\Vert\mathbf{d}_{\perp}\Vert_2$", size=13)
+
+    # Assemble (d_parallel, Z_perp^T d_perp, ||d_perp||) as one invariant
+    # directional input. Different cell heights distinguish the N_z block.
+    out_x = 8.04
+    top_cell = draw_tensor(ax, out_x, 5.72, 1, 1, cell=0.28,
+                           facecolor=STACK_FILL, edgecolor=STACK_STROKE)
+    middle = draw_tensor(ax, out_x, 4.91, 3, 1, cell=0.20, gap=0.025,
+                         facecolor=STACK_FILL, edgecolor=STACK_STROKE)
+    bottom_cell = draw_tensor(ax, out_x, 4.43, 1, 1, cell=0.28,
+                              facecolor=STACK_FILL, edgecolor=STACK_STROKE)
+    draw_text(ax, out_x + 0.50, top_cell["cy"], r"$d_{\parallel}$",
+              size=12, ha="left")
+    draw_text(ax, out_x + 0.50, middle["cy"],
+              r"$\mathbf{Z}_{\perp}^{\mathsf{T}}\mathbf{d}_{\perp}$",
+              size=12, ha="left")
+    draw_text(ax, out_x + 0.50, bottom_cell["cy"],
+              r"$\Vert\mathbf{d}_{\perp}\Vert_2$", size=12, ha="left")
+    draw_text(ax, 8.65, 4.06,
+              r"$\mathbf{z}_{d,\mathbf{g}}\in\mathbb{R}^{N_z+2}$",
+              size=13)
+
+    # Routed dependencies. The lower latent branch supplies Z_perp.
+    arrow(ax, (d_parallel["right"] + 0.05, d_parallel["cy"]),
+          (top_cell["left"] - 0.05, top_cell["cy"]),
+          lw=1.0, mutation_scale=12,
+          connectionstyle="arc3,rad=-0.04")
+    arrow(ax, (d_perp["right"] + 0.05, d_perp["cy"]),
+          (dp["left"] - 0.05, dp["cy"]), lw=1.0, mutation_scale=12)
+    arrow(ax, (z_perp["right"] + 0.04, z_perp["cy"]),
+          (zt["left"] - 0.04, zt["cy"]), lw=0.95, mutation_scale=11,
+          connectionstyle="angle,angleA=0,angleB=90,rad=5")
+    arrow(ax, (inner["right"] + 0.05, inner["cy"]),
+          (middle["left"] - 0.05, middle["cy"]),
+          lw=1.0, mutation_scale=12)
+    arrow(ax, (d_perp["right"] + 0.05, d_perp["cy"] - 0.06),
+          (norm_x - 0.05, norm_y + norm_h / 2),
+          lw=0.95, mutation_scale=11,
+          connectionstyle="arc3,rad=0.08")
+    arrow(ax, (norm_x + norm_w + 0.05, norm_y + norm_h / 2),
+          (bottom_cell["left"] - 0.05, bottom_cell["cy"]),
+          lw=1.0, mutation_scale=12)
+    return {
+        "left": out_x,
+        "right": 9.55,
+        "cy": 5.18,
+    }
+
+
+def draw_latent_invariant(ax, z_parallel, z_perp):
+    """Draw the VN planar frame and axial bypass used for conditioning."""
+    # Z_perp takes a copy path and an equivariant VN path that predicts Q_2.
+    vn_right, vn_cy = draw_vn_glyph(ax, 4.34, 1.98, w=0.72, h=0.72)
+    arrow(ax, (z_perp["right"] + 0.05, z_perp["cy"] + 0.10),
+          (4.34 - 0.05, vn_cy), lw=1.0, mutation_scale=12,
+          connectionstyle="arc3,rad=-0.12")
+
+    basis = draw_tensor(ax, 5.38, 2.03, 2, 2, cell=0.22, gap=0.03,
+                        facecolor=CELL_FILL, edgecolor=CELL_STROKE)
+    arrow(ax, (vn_right + 0.05, vn_cy),
+          (basis["left"] - 0.05, basis["cy"]),
+          lw=1.0, mutation_scale=12)
+    draw_text(ax, basis["cx"], basis["top"] + 0.17,
+              r"$\mathbf{Q}_2(\mathbf{Z}_{\perp})^{\mathsf{T}}$", size=12)
+    draw_text(ax, 6.16, basis["cy"], r"$\times$", size=17)
+
+    copied = draw_tensor(ax, 6.48, 1.86, 2, 3, cell=0.20, gap=0.025,
+                         facecolor=CELL_FILL, edgecolor=CELL_STROKE, tail=True)
+    draw_text(ax, copied["cx"], copied["top"] + 0.17,
+              r"$\mathbf{Z}_{\perp}$", size=12)
+    arrow(ax, (z_perp["right"] + 0.05, z_perp["cy"] - 0.12),
+          (copied["left"] - 0.05, copied["cy"]),
+          lw=0.95, mutation_scale=11,
+          connectionstyle="angle,angleA=0,angleB=90,rad=5")
+    draw_text(ax, 5.65, 1.29, "copy", size=10, color="#555555")
+
+    draw_text(ax, 7.82, copied["cy"], r"$=$", size=17)
+    planar_inv = draw_tensor(
+        ax, 8.16, 1.86, 2, 3, cell=0.20, gap=0.025,
+        facecolor=STACK_FILL, edgecolor=STACK_STROKE, tail=True,
+    )
+    draw_text(ax, planar_inv["cx"], planar_inv["top"] + 0.17,
+              r"$\mathrm{VNInv}_2(\mathbf{Z}_{\perp})$", size=12)
+
+    # Reattach the axial component, which is already SO(2)-invariant.
+    latent_out = draw_tensor(
+        ax, 9.72, 1.72, 3, 3, cell=0.20, gap=0.025,
+        facecolor=STACK_FILL, edgecolor=STACK_STROKE, tail=True,
+    )
+    draw_text(ax, latent_out["cx"], latent_out["bottom"] - 0.22,
+              r"$\mathbf{Z}_{\mathbf{g},\mathrm{inv}}\in"
+              r"\mathbb{R}^{3\times N_z}$", size=13)
+    arrow(ax, (planar_inv["right"] + 0.05, planar_inv["cy"]),
+          (latent_out["left"] - 0.05, latent_out["bottom"] + 0.31),
+          lw=1.0, mutation_scale=12)
+    bypass_x = z_parallel["right"] + 0.27
+    bypass_y = 3.12
+    ax.plot(
+        [z_parallel["right"] + 0.05, bypass_x, bypass_x, latent_out["left"] - 0.38],
+        [z_parallel["cy"], z_parallel["cy"], bypass_y, bypass_y],
+        color=ARROW_COLOR,
+        linewidth=0.95,
+        zorder=1,
+    )
+    arrow(ax, (latent_out["left"] - 0.38, bypass_y),
+          (latent_out["left"] - 0.05, latent_out["top"] - 0.10),
+          lw=0.95, mutation_scale=11)
+    return latent_out
+
+
+def draw_attention_decoder(ax, x, y, w, h):
+    rounded_box(ax, x, y, w, h, facecolor="#F5F5F5",
+                edgecolor="#8C8C8C", lw=1.2, rounding=0.14, zorder=2)
+    draw_text(ax, x + w / 2, y + h - 0.27, "Attention Decoder", size=14)
+    attn_x, attn_y, attn_w, attn_h = x + 0.27, y + 0.48, 1.08, 1.12
+    rounded_box(ax, attn_x, attn_y, attn_w, attn_h,
+                facecolor=BLUE_FILL, edgecolor=BLUE_STROKE,
+                lw=1.1, rounding=0.10, zorder=3)
+    draw_text(ax, attn_x + attn_w / 2, attn_y + attn_h / 2,
+              "Multi-Head\nAttention", size=10, color=BLUE_TEXT)
+    ffn_x, ffn_y, ffn_w, ffn_h = x + 1.58, y + 0.48, 0.72, 1.12
+    rounded_box(ax, ffn_x, ffn_y, ffn_w, ffn_h,
+                facecolor=GREEN_FILL, edgecolor=GREEN_STROKE,
+                lw=1.1, rounding=0.10, zorder=3)
+    draw_text(ax, ffn_x + ffn_w / 2, ffn_y + ffn_h / 2,
+              "FFN", size=12)
+    arrow(ax, (attn_x + attn_w, attn_y + attn_h / 2),
+          (ffn_x - 0.04, ffn_y + ffn_h / 2),
+          lw=1.0, mutation_scale=12)
+    draw_text(ax, x + w / 2, y + 0.22,
+              r"$\times\,N_{\mathrm{layer}}$", size=11, color="#555555")
+    return {
+        "left": x,
+        "right": x + w,
+        "query_y": attn_y + 0.77 * attn_h,
+        "condition_y": attn_y + 0.27 * attn_h,
+        "output_y": ffn_y + ffn_h / 2,
+    }
+
+
 def build_figure(args):
     envmap = read_exr(args.envmap)
     output_sphere = envmap_sphere_image(
@@ -370,69 +602,117 @@ def build_figure(args):
         roll=args.sphere_roll,
     )
 
-    fig, ax = plt.subplots(figsize=(14, 5.5), dpi=args.dpi)
-    ax.set_xlim(0, 14)
-    ax.set_ylim(0, 5.5)
+    fig, ax = plt.subplots(figsize=(16.8, 7.2), dpi=args.dpi)
+    ax.set_xlim(0, 16.8)
+    ax.set_ylim(0, 7.2)
     ax.set_aspect("equal")
     ax.axis("off")
 
-    draw_query_sphere(ax, 1.35, 4.18, 1.05)
-    draw_latent_sphere(ax, 1.35, 1.52, 1.05)
+    # Column headings and colour key.
+    draw_text(ax, 1.35, 6.92, "Equivariant Inputs", size=15,
+              fontweight="bold")
+    draw_text(ax, 6.55, 6.92, "Gravity-Axis Invariants", size=15,
+              fontweight="bold")
+    draw_text(ax, 12.68, 6.92, "Conditional Decoder", size=15,
+              fontweight="bold")
+    ax.plot([0.15, 3.25], [6.69, 6.69], color="#B0B0B0", linewidth=0.8)
+    ax.plot([3.55, 10.75], [6.69, 6.69], color="#B0B0B0", linewidth=0.8)
+    ax.plot([11.05, 16.65], [6.69, 6.69], color="#B0B0B0", linewidth=0.8)
+    rounded_box(ax, 6.80, 6.37, 0.20, 0.20, CELL_FILL, CELL_STROKE,
+                lw=0.7, rounding=0.03)
+    draw_text(ax, 7.11, 6.47, "rotates in the horizontal plane", size=10,
+              ha="left", color="#555555")
+    rounded_box(ax, 10.18, 6.37, 0.20, 0.20, STACK_FILL, STACK_STROKE,
+                lw=0.7, rounding=0.03)
+    draw_text(ax, 10.49, 6.47, "invariant", size=10, ha="left",
+              color="#555555")
 
-    stack_right, stack_mid_y = draw_vector_stack(ax, 3.62, 3.55, 0.36, 0.80)
-    matrix_top_cx, matrix_top_y = draw_latent_matrix(ax, 3.02, 1.36, cell=0.24)
+    # Inputs and their decomposition about the thesis-wide gravity axis g=e_y.
+    draw_query_sphere(ax, 1.18, 5.33, 0.76)
+    draw_latent_sphere(ax, 1.18, 1.88, 0.76)
+    draw_text(ax, 1.18, 4.25, r"$\mathbf{g}=\mathbf{e}_y$", size=12)
 
-    box_x, box_y, box_w, box_h = 4.82, 2.21, 1.94, 1.14
-    box_center_y = box_y + box_h / 2
-    upper_input_y = (box_center_y + box_y + box_h) / 2
-    lower_input_y = (box_center_y + box_y) / 2
-    arrow(ax, (stack_right + 0.04, stack_mid_y), (box_x, upper_input_y),
-          color=ARROW_COLOR, lw=1.1, mutation_scale=14)
-    arrow(ax, (matrix_top_cx, matrix_top_y + 0.04), (box_x, lower_input_y),
-          color=ARROW_COLOR, lw=1.1, mutation_scale=14)
-    rounded_box(ax, box_x, box_y, box_w, box_h, facecolor=BLUE_FILL,
-                edgecolor=BLUE_STROKE, lw=1.4, rounding=0.10)
-    draw_text(ax, box_x + box_w / 2, box_y + box_h / 2,
-              "Invariant\nTransformation", size=12, color=BLUE_TEXT)
+    split_x = 2.18
+    arrow(ax, (1.95, 5.33), (split_x, 5.33), lw=1.0, mutation_scale=12)
+    ax.plot([split_x, split_x], [5.02, 5.90], color=ARROW_COLOR, linewidth=1.0)
+    d_parallel = draw_tensor(
+        ax, 2.53, 5.76, 1, 1, cell=0.30,
+        facecolor=STACK_FILL, edgecolor=STACK_STROKE,
+    )
+    draw_text(ax, d_parallel["cx"], d_parallel["top"] + 0.18,
+              r"$d_{\parallel}=\mathbf{g}^{\mathsf{T}}\mathbf{d}$", size=12)
+    d_perp = draw_tensor(
+        ax, 2.53, 4.82, 2, 1, cell=0.27, gap=0.035,
+        facecolor=CELL_FILL, edgecolor=CELL_STROKE,
+    )
+    draw_text(ax, d_perp["cx"], d_perp["bottom"] - 0.18,
+              r"$\mathbf{d}_{\perp}=\mathbf{B}_{\mathbf{g}}\mathbf{d}$", size=12)
+    arrow(ax, (split_x, 5.86), (d_parallel["left"] - 0.04, d_parallel["cy"]),
+          lw=0.9, mutation_scale=11)
+    arrow(ax, (split_x, 5.06), (d_perp["left"] - 0.04, d_perp["cy"]),
+          lw=0.9, mutation_scale=11)
 
-    mlp_y = 1.65
-    mlp_h = 2.25
-    mlp_center_y = mlp_y + mlp_h / 2
-    mlp_x0 = 7.62
-    mlp_layer_w = 0.27
-    arrow(ax, (box_x + box_w, box_y + box_h / 2), (mlp_x0 - 0.03, mlp_center_y),
-          lw=1.15, mutation_scale=15)
-    draw_text(ax, (box_x + box_w + mlp_x0) / 2, mlp_center_y + 0.13,
-              r"$\mathbf{d}'$", size=13)
-
-    mlp_xs = draw_mlp(ax, mlp_x0, mlp_y, mlp_h, layer_w=mlp_layer_w, gap=0.33,
-                      n_layers=5)
-    draw_text(ax, 8.85, 4.35,
-              "Rotation-Equivariant Conditional\nSpherical Neural Field",
+    arrow(ax, (1.95, 1.88), (split_x, 1.88), lw=1.0, mutation_scale=12)
+    ax.plot([split_x, split_x], [1.28, 2.58], color=ARROW_COLOR, linewidth=1.0)
+    z_parallel = draw_tensor(
+        ax, 2.53, 2.43, 1, 3, cell=0.20, gap=0.025,
+        facecolor=STACK_FILL, edgecolor=STACK_STROKE, tail=True,
+    )
+    draw_text(ax, z_parallel["cx"], z_parallel["top"] + 0.18,
+              r"$\mathbf{Z}_{\parallel}=\mathbf{g}^{\mathsf{T}}\mathbf{Z}$",
               size=12)
+    z_perp = draw_tensor(
+        ax, 2.53, 1.12, 2, 3, cell=0.20, gap=0.025,
+        facecolor=CELL_FILL, edgecolor=CELL_STROKE, tail=True,
+    )
+    draw_text(ax, z_perp["cx"], z_perp["bottom"] - 0.20,
+              r"$\mathbf{Z}_{\perp}=\mathbf{B}_{\mathbf{g}}\mathbf{Z}$",
+              size=12)
+    arrow(ax, (split_x, 2.53), (z_parallel["left"] - 0.04, z_parallel["cy"]),
+          lw=0.9, mutation_scale=11)
+    arrow(ax, (split_x, 1.31), (z_perp["left"] - 0.04, z_perp["cy"]),
+          lw=0.9, mutation_scale=11)
 
-    z_start_x = box_x + box_w / 2
-    z_end_x = mlp_xs[2] + mlp_layer_w / 2
-    z_y = 1.02
-    ax.plot([z_start_x, z_start_x, z_end_x],
-            [box_y, z_y, z_y], color="black", linewidth=1.0)
-    arrow(ax, (z_end_x, z_y), (z_end_x, mlp_y),
-          lw=1.0, mutation_scale=13)
-    draw_text(ax, (z_start_x + z_end_x) / 2, z_y + 0.17,
-              r"$\mathbf{Z}'$", size=13)
+    directional = draw_directional_invariant(ax, d_parallel, d_perp, z_perp)
+    latent = draw_latent_invariant(ax, z_parallel, z_perp)
 
-    last_layer_x = mlp_xs[-1] + mlp_layer_w
-    c_x = 11.18
-    arrow(ax, (last_layer_x, mlp_center_y), (c_x - 0.20, mlp_center_y),
-          lw=1.15, mutation_scale=15)
-    draw_text(ax, c_x, mlp_center_y, r"$\mathbf{C}$", size=13)
-    sphere_cx = 12.85
-    draw_output_sphere(ax, output_sphere, sphere_cx, mlp_center_y, 0.95,
-                       red_line_start_x=c_x + 0.22)
+    # Only the directional invariant receives the NeRF positional encoding.
+    lambda_x, lambda_y, lambda_w, lambda_h = 10.08, 4.91, 0.58, 0.58
+    rounded_box(ax, lambda_x, lambda_y, lambda_w, lambda_h,
+                facecolor="#FFF0C8", edgecolor="#D1A94B",
+                lw=1.0, rounding=0.09)
+    draw_text(ax, lambda_x + lambda_w / 2, lambda_y + lambda_h / 2,
+              r"$\lambda$", size=16)
+    arrow(ax, (directional["right"] + 0.03, directional["cy"]),
+          (lambda_x - 0.04, lambda_y + lambda_h / 2),
+          lw=1.0, mutation_scale=12)
+
+    decoder = draw_attention_decoder(ax, 11.28, 2.72, 2.42, 2.22)
+    arrow(ax, (lambda_x + lambda_w + 0.04, lambda_y + lambda_h / 2),
+          (decoder["left"] - 0.04, decoder["query_y"]),
+          lw=1.05, mutation_scale=13)
+    draw_text(ax, 10.94, decoder["query_y"] + 0.13, r"$Q$", size=12)
+    arrow(ax, (latent["right"] + 0.04, latent["cy"]),
+          (decoder["left"] - 0.04, decoder["condition_y"]),
+          lw=1.05, mutation_scale=13,
+          connectionstyle="arc3,rad=0.08")
+    draw_text(ax, 10.94, decoder["condition_y"] - 0.15,
+              r"$K,V$", size=12)
+
+    c_x = 14.08
+    arrow(ax, (decoder["right"] + 0.04, decoder["output_y"]),
+          (c_x - 0.22, decoder["output_y"]), lw=1.1, mutation_scale=14)
+    draw_text(ax, c_x, decoder["output_y"],
+              r"$\hat{\mathbf{c}}(\mathbf{d})$", size=13)
+    sphere_cx = 15.64
+    draw_output_sphere(ax, output_sphere, sphere_cx, decoder["output_y"], 0.88,
+                       red_line_start_x=c_x + 0.30)
+    draw_text(ax, sphere_cx, 2.24,
+              r"$f_{\boldsymbol{\Theta}}(\mathbf{d},\mathbf{Z})$", size=13)
 
     if args.envmap_label:
         label = args.envmap.name
-        text = draw_text(ax, sphere_cx, 1.55, label, size=7)
+        text = draw_text(ax, sphere_cx, 1.98, label, size=7)
         text.set_path_effects([patheffects.withStroke(linewidth=2, foreground="white")])
 
     return fig
