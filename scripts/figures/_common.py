@@ -20,6 +20,7 @@ Checkpoint layout expected under <repo>/checkpoints/ (all committed):
 import os
 import re
 import csv
+import random
 from pathlib import Path
 from typing import Optional
 
@@ -216,6 +217,7 @@ def eval_image_tensor(dataset, idx: int, batch=None):
 
 
 def seed_all(seed: int):
+    random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)

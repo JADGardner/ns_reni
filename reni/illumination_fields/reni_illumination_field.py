@@ -29,7 +29,7 @@ from reni.field_components.film_siren import FiLMSiren
 from reni.field_components.activations import ExpLayer
 from reni.field_components.transformer_decoder import Decoder
 from reni.field_components.field_heads import RENIFieldHeadNames
-from reni.field_components.vn_layers import VNInvariant, VNLinear
+from reni.field_components.vn_layers import VNInvariant, VNLinear, VNReLU
 
 from nerfstudio.cameras.rays import RaySamples
 from nerfstudio.field_components.encodings import NeRFEncoding
@@ -45,8 +45,12 @@ class RENIFieldConfig(BaseRENIFieldConfig):
     """Type of equivariance to use"""
     axis_of_invariance: Literal["x", "y", "z"] = "y"
     """Which axis should SO2 equivariance be invariant to"""
-    invariant_function: Literal["GramMatrix", "VN"] = "GramMatrix"
-    """Type of invariant function to use"""
+    invariant_function: Literal["GramMatrix", "VN", "VNJoint"] = "GramMatrix"
+    """Type of invariant function to use. VN predicts a Vector Neuron frame
+    per latent channel (conditioning reduces to per-channel norms); VNJoint
+    predicts one shared frame from all channels and reads each channel out
+    against it, keeping the same conditioning dimensionality while retaining
+    inter-channel structure."""
     conditioning: Literal["FiLM", "Concat", "Attention"] = "Concat"
     """Type of conditioning to use"""
     positional_encoding: Literal["NeRF"] = "NeRF"
@@ -134,6 +138,13 @@ class RENIField(BaseRENIField):
 
         if self.config.invariant_function == "GramMatrix":
             self.invariant_function = self.gram_matrix_invariance
+        elif self.config.invariant_function == "VNJoint":
+            dim_coor = 2 if self.config.equivariance == "SO2" else 3
+            self.vn_joint_frame = nn.Sequential(
+                VNLinear(dim_in=self.latent_dim, dim_out=dim_coor, bias_epsilon=0),
+                VNReLU(dim_coor),
+            )
+            self.invariant_function = self.vn_joint_invariance
         else:
             self.vn_proj_in = nn.Sequential(
                 Rearrange("... c -> ... 1 c"), VNLinear(dim_in=1, dim_out=1, bias_epsilon=0)
@@ -152,6 +163,9 @@ class RENIField(BaseRENIField):
                 for param in self.vn_proj_in.parameters():
                     param.requires_grad = False
                 for param in self.vn_invar.parameters():
+                    param.requires_grad = False
+            if self.config.invariant_function == "VNJoint":
+                for param in self.vn_joint_frame.parameters():
                     param.requires_grad = False
 
     @contextlib.contextmanager
@@ -174,6 +188,10 @@ class RENIField(BaseRENIField):
                 param.requires_grad = False
             for param in self.vn_invar.parameters():
                 param.requires_grad = False
+        if self.config.invariant_function == "VNJoint":
+            prev_state_joint = {k: p.requires_grad for k, p in self.vn_joint_frame.named_parameters()}
+            for param in self.vn_joint_frame.parameters():
+                param.requires_grad = False
         if self.config.trainable_scale in [True, "train", "both"] and self.num_train_data is not None:
             prev_state_scale = self.train_scale.requires_grad
             self.train_scale.requires_grad = False
@@ -191,6 +209,9 @@ class RENIField(BaseRENIField):
                     param.requires_grad_(prev_state_proj_in[name])
                 for name, param in self.vn_invar.named_parameters():
                     param.requires_grad_(prev_state_invar[name])
+            if self.config.invariant_function == "VNJoint":
+                for name, param in self.vn_joint_frame.named_parameters():
+                    param.requires_grad_(prev_state_joint[name])
             if self.config.trainable_scale in [True, "train", "both"] and self.num_train_data is not None:
                 self.train_scale.requires_grad_(prev_state_scale)
             self.fixed_decoder = prev_decoder_state
@@ -249,6 +270,70 @@ class RENIField(BaseRENIField):
             z = self.vn_proj_in(Z)  # [num_rays, latent_dim, 1, 3]
             z_invar = self.vn_invar(z)  # [num_rays, latent_dim, 3]
             conditioning_input = z_invar.flatten(1)  # [num_rays, latent_dim * 3]
+            innerprod = torch.sum(Z * D.unsqueeze(1), dim=-1)  # [num_rays, latent_dim]
+            return innerprod, conditioning_input
+
+    def vn_joint_invariance(
+        self, Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2", axis_of_invariance: int = 1
+    ):
+        """Generates an invariant representation from latent code Z and direction coordinates D.
+
+        Same contract as vn_invariance, but the Vector Neuron frame is predicted
+        jointly from ALL latent channels and every channel is read out against
+        that shared frame. The conditioning keeps the same
+        [num_rays, latent_dim * 3] shape while additionally retaining
+        inter-channel structure (relative angles); the per-channel variant
+        reduces each channel to a function of its norm.
+
+        Args:
+            Z (torch.Tensor): Latent code (num_rays x latent_dim x 3)
+            D (torch.Tensor): Direction coordinates (num_rays x 3)
+            equivariance (str): Type of equivariance to use. Options are 'None', 'SO2', and 'SO3'
+            axis_of_invariance (int): The axis of rotation invariance. Should be 0 (x-axis), 1 (y-axis), or 2 (z-axis).
+        Returns:
+            torch.Tensor: Invariant representation
+        """
+        assert 0 <= axis_of_invariance < 3, "axis_of_invariance should be 0, 1, or 2."
+        other_axes = [i for i in range(3) if i != axis_of_invariance]
+
+        if equivariance == "None":
+            # get inner product between latent code and direction coordinates
+            innerprod = torch.sum(Z * D.unsqueeze(1), dim=-1)  # [num_rays, latent_dim]
+            z_input = Z.flatten(start_dim=1)  # [num_rays, latent_dim * 3]
+            return innerprod, z_input
+
+        if equivariance == "SO2":
+            z_other = torch.stack((Z[:, :, other_axes[0]], Z[:, :, other_axes[1]]), -1)  # [num_rays, latent_dim, 2]
+            d_other = torch.stack((D[:, other_axes[0]], D[:, other_axes[1]]), -1).unsqueeze(1)  # [num_rays, 2]
+            d_other = d_other.expand_as(z_other)  # size becomes [num_rays, latent_dim, 2]
+
+            # One shared planar frame predicted from all channels; each channel
+            # is expressed in that frame, so relative angles between channels
+            # survive into the conditioning.
+            frame = self.vn_joint_frame(z_other)  # [num_rays, 2, 2] rows are frame vectors
+            z_other_invar = torch.einsum("bnc,boc->bno", z_other, frame)  # [num_rays, latent_dim, 2]
+
+            # Get invariant component of Z along the axis of invariance
+            z_invar = Z[:, :, axis_of_invariance].unsqueeze(-1)  # [num_rays, latent_dim, 1]
+
+            innerprod = (z_other * d_other).sum(dim=-1)  # [num_rays, latent_dim]
+
+            # Compute norm along the axes orthogonal to the axis of invariance
+            d_other_norm = torch.sqrt(D[:, other_axes[0]] ** 2 + D[:, other_axes[1]] ** 2).unsqueeze(
+                -1
+            )  # [num_rays, 1]
+
+            # Get invariant component of D along the axis of invariance
+            d_invar = D[:, axis_of_invariance].unsqueeze(-1)  # [num_rays, 1]
+
+            directional_input = torch.cat((innerprod, d_invar, d_other_norm), 1)  # [num_rays, latent_dim + 2]
+            conditioning_input = torch.cat((z_other_invar, z_invar), dim=-1).flatten(1)  # [num_rays, latent_dim * 3]
+
+            return directional_input, conditioning_input
+
+        if equivariance == "SO3":
+            frame = self.vn_joint_frame(Z)  # [num_rays, 3, 3]
+            conditioning_input = torch.einsum("bnc,boc->bno", Z, frame).flatten(1)  # [num_rays, latent_dim * 3]
             innerprod = torch.sum(Z * D.unsqueeze(1), dim=-1)  # [num_rays, latent_dim]
             return innerprod, conditioning_input
 
@@ -324,6 +409,11 @@ class RENIField(BaseRENIField):
         """Sets up the network architecture"""
         base_input_dims = {
             "VN": {
+                "None": {"direction": self.latent_dim, "conditioning": self.latent_dim * 3},
+                "SO2": {"direction": self.latent_dim + 2, "conditioning": self.latent_dim * 3},
+                "SO3": {"direction": self.latent_dim, "conditioning": self.latent_dim * 3},
+            },
+            "VNJoint": {
                 "None": {"direction": self.latent_dim, "conditioning": self.latent_dim * 3},
                 "SO2": {"direction": self.latent_dim + 2, "conditioning": self.latent_dim * 3},
                 "SO3": {"direction": self.latent_dim, "conditioning": self.latent_dim * 3},

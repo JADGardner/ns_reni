@@ -105,7 +105,13 @@ def _copy_dataparser_settings(dataparser_config: Any, saved_dp: Dict[str, Any], 
         "tonemap_m_log",
     ):
         if key in saved_dp and hasattr(dataparser_config, key):
-            setattr(dataparser_config, key, saved_dp[key])
+            value = saved_dp[key]
+            # Removing PyYAML's python-specific tuple tag makes archived
+            # fixed log ranges load as lists. RENIDataset distinguishes a
+            # fixed (min, max) tuple from its string-computed modes.
+            if key == "min_max_normalize" and isinstance(value, list):
+                value = tuple(value)
+            setattr(dataparser_config, key, value)
 
     if "fit_val_in_ldr" in saved_dp and hasattr(dataparser_config, "val_in_ldr"):
         dataparser_config.val_in_ldr = saved_dp["fit_val_in_ldr"]
@@ -211,14 +217,24 @@ def _model_state_from_checkpoint(checkpoint: Path, device: str) -> Dict[str, tor
     return model_state
 
 
-def _load_decoder_state(pipeline: Any, checkpoint: Path, device: str) -> Dict[str, int]:
+def _load_decoder_state(
+    pipeline: Any,
+    checkpoint: Path,
+    device: str,
+    preserve_eval_latents: bool = False,
+) -> Dict[str, int]:
     checkpoint_state = _model_state_from_checkpoint(checkpoint, device)
     target_state = pipeline.model.state_dict()
     filtered = {}
     skipped = {"latent_bank": 0, "missing_key": 0, "shape": 0}
 
     for key, value in checkpoint_state.items():
-        if key in LATENT_BANK_KEYS:
+        keep_eval_latent = preserve_eval_latents and key in {
+            "field.eval_mu",
+            "field.eval_logvar",
+            "field.eval_scale",
+        }
+        if key in LATENT_BANK_KEYS and not keep_eval_latent:
             skipped["latent_bank"] += 1
             continue
         if key not in target_state:

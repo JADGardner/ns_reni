@@ -1,0 +1,13 @@
+model,split,num_eval_images,latent_refit,exposure_alignment,psnr_ldr,psnr_hdr_fixed_gauge
+none_d9,test,21,True,none,18.509912,10.908152
+so3_d9,test,21,True,none,18.486216,10.913293
+so2_d9,test,21,True,none,19.025491,11.498931
+none_d36,test,21,True,none,17.023555,9.579435
+so3_d36,test,21,True,none,20.588377,12.390923
+so2_d36,test,21,True,none,20.750411,12.835831
+none_d49,test,21,True,none,18.324572,10.091461
+so3_d49,test,21,True,none,20.888620,12.626613
+so2_d49,test,21,True,none,21.227735,13.395875
+none_d100,test,21,True,none,20.740102,12.135754
+so3_d100,test,21,True,none,21.754933,13.340299
+so2_d100,test,21,True,none,21.954852,14.022646

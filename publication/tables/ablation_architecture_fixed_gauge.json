@@ -1,0 +1,444 @@
+{
+  "protocol": {
+    "test_latents": "refit from zero except labels explicitly using archived fitted eval latents",
+    "archived_eval_latent_labels": [
+      "reni_d9",
+      "reni_d36",
+      "reni_d49",
+      "reni_d100"
+    ],
+    "hdr_domain": "decoded linear radiance",
+    "gauge": "per-image GT 99th-percentile luminance = 1",
+    "scale_invariant_alignment": "median luminance ratio",
+    "ldr_exposure": "shared per-image GT 98th-percentile luminance",
+    "aggregation": "mean per-image PSNR"
+  },
+  "runs": {
+    "reni_d9": "/workspace/phd/model-storage/reni_paper_models/old_reni_models/latent_dim_9",
+    "retrained_d9": "/workspace/phd/outputs/reni/reni_ablation_retrained_d9/reni/2026-07-14_50k_spherical",
+    "transformer_d9": "/workspace/phd/outputs/reni/reni_ablation_transformer_d9/reni/2026-07-14_50k_spherical",
+    "reni_pp_d9": "/workspace/phd/model-storage/reni_paper_models/reni_plus_plus_models/latent_dim_9",
+    "two_bracket_d9": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d9/reni/2026-07-04_2cycles",
+    "reni_d36": "/workspace/phd/model-storage/reni_paper_models/old_reni_models/latent_dim_36",
+    "retrained_d36": "/workspace/phd/outputs/reni/reni_ablation_retrained_d36/reni/2026-07-14_50k_spherical",
+    "transformer_d36": "/workspace/phd/outputs/reni/reni_ablation_transformer_d36/reni/2026-07-14_50k_spherical",
+    "reni_pp_d36": "/workspace/phd/model-storage/reni_paper_models/reni_plus_plus_models/latent_dim_36",
+    "two_bracket_d36": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d36/reni/2026-07-04_2cycles",
+    "reni_d49": "/workspace/phd/model-storage/reni_paper_models/old_reni_models/latent_dim_49",
+    "retrained_d49": "/workspace/phd/outputs/reni/reni_ablation_retrained_d49/reni/2026-07-14_50k_spherical",
+    "transformer_d49": "/workspace/phd/outputs/reni/reni_ablation_transformer_d49/reni/2026-07-14_50k_spherical",
+    "reni_pp_d49": "/workspace/phd/model-storage/reni_paper_models/reni_plus_plus_models/latent_dim_49",
+    "two_bracket_d49": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d49/reni/2026-07-04_2cycles",
+    "reni_d100": "/workspace/phd/model-storage/reni_paper_models/old_reni_models/latent_dim_100",
+    "retrained_d100": "/workspace/phd/outputs/reni/reni_ablation_retrained_d100/reni/2026-07-14_50k_spherical",
+    "transformer_d100": "/workspace/phd/outputs/reni/reni_ablation_transformer_d100/reni/2026-07-14_50k_spherical",
+    "reni_pp_d100": "/workspace/phd/model-storage/reni_paper_models/reni_plus_plus_models/latent_dim_100",
+    "two_bracket_d100": "/workspace/phd/outputs/reni/reni_latent_reset_d100_two_bracket_ldrw3_2cyc/reni/2026-07-04_2cycles"
+  },
+  "data": "/workspace/phd/data/RENI_HDR",
+  "device": "cuda:0",
+  "latent_steps_override": 2500,
+  "checkpoint_step": null,
+  "models": {
+    "reni_d9": {
+      "label": "reni_d9",
+      "run_dir": "/workspace/phd/model-storage/reni_paper_models/old_reni_models/latent_dim_9",
+      "checkpoint": "/workspace/phd/model-storage/reni_paper_models/old_reni_models/latent_dim_9/nerfstudio_models/step-000001000.ckpt",
+      "split": "test",
+      "latent_refit": false,
+      "load_stats": {
+        "latent_bank": 2,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 39
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 18.600347973051527,
+        "psnr_hdr_fixed_gauge": 9.867353794120607,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "retrained_d9": {
+      "label": "retrained_d9",
+      "run_dir": "/workspace/phd/outputs/reni/reni_ablation_retrained_d9/reni/2026-07-14_50k_spherical",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_ablation_retrained_d9/reni/2026-07-14_50k_spherical/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 41
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 14.609264282953172,
+        "psnr_hdr_fixed_gauge": 8.151591607502528,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "transformer_d9": {
+      "label": "transformer_d9",
+      "run_dir": "/workspace/phd/outputs/reni/reni_ablation_transformer_d9/reni/2026-07-14_50k_spherical",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_ablation_transformer_d9/reni/2026-07-14_50k_spherical/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 15.019277572631836,
+        "psnr_hdr_fixed_gauge": 8.270737528800964,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "reni_pp_d9": {
+      "label": "reni_pp_d9",
+      "run_dir": "/workspace/phd/model-storage/reni_paper_models/reni_plus_plus_models/latent_dim_9",
+      "checkpoint": "/workspace/phd/model-storage/reni_paper_models/reni_plus_plus_models/latent_dim_9/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 18.893693378993444,
+        "psnr_hdr_fixed_gauge": 10.318934429259528,
+        "exposure_alignment": "median_ratio",
+        "median_exposure_scale": 0.997103750705719
+      }
+    },
+    "two_bracket_d9": {
+      "label": "two_bracket_d9",
+      "run_dir": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d9/reni/2026-07-04_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d9/reni/2026-07-04_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 19.02549121493385,
+        "psnr_hdr_fixed_gauge": 11.498931376706986,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "reni_d36": {
+      "label": "reni_d36",
+      "run_dir": "/workspace/phd/model-storage/reni_paper_models/old_reni_models/latent_dim_36",
+      "checkpoint": "/workspace/phd/model-storage/reni_paper_models/old_reni_models/latent_dim_36/nerfstudio_models/step-000001000.ckpt",
+      "split": "test",
+      "latent_refit": false,
+      "load_stats": {
+        "latent_bank": 2,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 39
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 20.11209605989002,
+        "psnr_hdr_fixed_gauge": 10.794165787242708,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "retrained_d36": {
+      "label": "retrained_d36",
+      "run_dir": "/workspace/phd/outputs/reni/reni_ablation_retrained_d36/reni/2026-07-14_50k_spherical",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_ablation_retrained_d36/reni/2026-07-14_50k_spherical/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 41
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 16.64533569699242,
+        "psnr_hdr_fixed_gauge": 8.929076160703387,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "transformer_d36": {
+      "label": "transformer_d36",
+      "run_dir": "/workspace/phd/outputs/reni/reni_ablation_transformer_d36/reni/2026-07-14_50k_spherical",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_ablation_transformer_d36/reni/2026-07-14_50k_spherical/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 16.32750061580113,
+        "psnr_hdr_fixed_gauge": 8.602394904409136,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "reni_pp_d36": {
+      "label": "reni_pp_d36",
+      "run_dir": "/workspace/phd/model-storage/reni_paper_models/reni_plus_plus_models/latent_dim_36",
+      "checkpoint": "/workspace/phd/model-storage/reni_paper_models/reni_plus_plus_models/latent_dim_36/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 20.997789927891322,
+        "psnr_hdr_fixed_gauge": 11.37939421335856,
+        "exposure_alignment": "median_ratio",
+        "median_exposure_scale": 0.9774099588394165
+      }
+    },
+    "two_bracket_d36": {
+      "label": "two_bracket_d36",
+      "run_dir": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d36/reni/2026-07-04_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d36/reni/2026-07-04_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 20.750411442347936,
+        "psnr_hdr_fixed_gauge": 12.83583065157845,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "reni_d49": {
+      "label": "reni_d49",
+      "run_dir": "/workspace/phd/model-storage/reni_paper_models/old_reni_models/latent_dim_49",
+      "checkpoint": "/workspace/phd/model-storage/reni_paper_models/old_reni_models/latent_dim_49/nerfstudio_models/step-000001000.ckpt",
+      "split": "test",
+      "latent_refit": false,
+      "load_stats": {
+        "latent_bank": 2,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 39
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 20.419344220842635,
+        "psnr_hdr_fixed_gauge": 10.945807405880519,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "retrained_d49": {
+      "label": "retrained_d49",
+      "run_dir": "/workspace/phd/outputs/reni/reni_ablation_retrained_d49/reni/2026-07-14_50k_spherical",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_ablation_retrained_d49/reni/2026-07-14_50k_spherical/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 41
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 17.104227520170667,
+        "psnr_hdr_fixed_gauge": 9.034569683529082,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "transformer_d49": {
+      "label": "transformer_d49",
+      "run_dir": "/workspace/phd/outputs/reni/reni_ablation_transformer_d49/reni/2026-07-14_50k_spherical",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_ablation_transformer_d49/reni/2026-07-14_50k_spherical/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 16.898611250377837,
+        "psnr_hdr_fixed_gauge": 8.736273493085589,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "reni_pp_d49": {
+      "label": "reni_pp_d49",
+      "run_dir": "/workspace/phd/model-storage/reni_paper_models/reni_plus_plus_models/latent_dim_49",
+      "checkpoint": "/workspace/phd/model-storage/reni_paper_models/reni_plus_plus_models/latent_dim_49/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 21.540228707449778,
+        "psnr_hdr_fixed_gauge": 11.773667321318673,
+        "exposure_alignment": "median_ratio",
+        "median_exposure_scale": 0.9814455509185791
+      }
+    },
+    "two_bracket_d49": {
+      "label": "two_bracket_d49",
+      "run_dir": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d49/reni/2026-07-04_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d49/reni/2026-07-04_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 21.227734974452428,
+        "psnr_hdr_fixed_gauge": 13.395874955824443,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "reni_d100": {
+      "label": "reni_d100",
+      "run_dir": "/workspace/phd/model-storage/reni_paper_models/old_reni_models/latent_dim_100",
+      "checkpoint": "/workspace/phd/model-storage/reni_paper_models/old_reni_models/latent_dim_100/nerfstudio_models/step-000001000.ckpt",
+      "split": "test",
+      "latent_refit": false,
+      "load_stats": {
+        "latent_bank": 2,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 39
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 20.83154378618513,
+        "psnr_hdr_fixed_gauge": 11.187866185392652,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "retrained_d100": {
+      "label": "retrained_d100",
+      "run_dir": "/workspace/phd/outputs/reni/reni_ablation_retrained_d100/reni/2026-07-14_50k_spherical",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_ablation_retrained_d100/reni/2026-07-14_50k_spherical/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 41
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 18.20293617248535,
+        "psnr_hdr_fixed_gauge": 9.590884378978185,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "transformer_d100": {
+      "label": "transformer_d100",
+      "run_dir": "/workspace/phd/outputs/reni/reni_ablation_transformer_d100/reni/2026-07-14_50k_spherical",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_ablation_transformer_d100/reni/2026-07-14_50k_spherical/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 17.74918815067836,
+        "psnr_hdr_fixed_gauge": 9.144846473421369,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "reni_pp_d100": {
+      "label": "reni_pp_d100",
+      "run_dir": "/workspace/phd/model-storage/reni_paper_models/reni_plus_plus_models/latent_dim_100",
+      "checkpoint": "/workspace/phd/model-storage/reni_paper_models/reni_plus_plus_models/latent_dim_100/nerfstudio_models/step-000050000.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 22.30856432233538,
+        "psnr_hdr_fixed_gauge": 12.512581979944592,
+        "exposure_alignment": "median_ratio",
+        "median_exposure_scale": 0.9823970794677734
+      }
+    },
+    "two_bracket_d100": {
+      "label": "two_bracket_d100",
+      "run_dir": "/workspace/phd/outputs/reni/reni_latent_reset_d100_two_bracket_ldrw3_2cyc/reni/2026-07-04_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_latent_reset_d100_two_bracket_ldrw3_2cyc/reni/2026-07-04_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 21.954852331252326,
+        "psnr_hdr_fixed_gauge": 14.022645772922607,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    }
+  }
+}

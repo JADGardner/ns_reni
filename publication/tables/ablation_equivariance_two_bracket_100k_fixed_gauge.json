@@ -1,0 +1,271 @@
+{
+  "protocol": {
+    "test_latents": "refit from zero except labels explicitly using archived fitted eval latents",
+    "archived_eval_latent_labels": [],
+    "hdr_domain": "decoded linear radiance",
+    "gauge": "per-image GT 99th-percentile luminance = 1",
+    "scale_invariant_alignment": "median luminance ratio",
+    "ldr_exposure": "shared per-image GT 98th-percentile luminance",
+    "aggregation": "mean per-image PSNR"
+  },
+  "runs": {
+    "none_d9": "/workspace/phd/outputs/reni/reni_equivariance_none_two_bracket_2cyc_d9/reni/2026-07-14_two_bracket_2cycles",
+    "so3_d9": "/workspace/phd/outputs/reni/reni_equivariance_so3_two_bracket_2cyc_d9/reni/2026-07-14_two_bracket_2cycles",
+    "so2_d9": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d9/reni/2026-07-04_2cycles",
+    "none_d36": "/workspace/phd/outputs/reni/reni_equivariance_none_two_bracket_2cyc_d36/reni/2026-07-14_two_bracket_2cycles",
+    "so3_d36": "/workspace/phd/outputs/reni/reni_equivariance_so3_two_bracket_2cyc_d36/reni/2026-07-14_two_bracket_2cycles",
+    "so2_d36": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d36/reni/2026-07-04_2cycles",
+    "none_d49": "/workspace/phd/outputs/reni/reni_equivariance_none_two_bracket_2cyc_d49/reni/2026-07-14_two_bracket_2cycles",
+    "so3_d49": "/workspace/phd/outputs/reni/reni_equivariance_so3_two_bracket_2cyc_d49/reni/2026-07-14_two_bracket_2cycles",
+    "so2_d49": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d49/reni/2026-07-04_2cycles",
+    "none_d100": "/workspace/phd/outputs/reni/reni_equivariance_none_two_bracket_2cyc_d100/reni/2026-07-14_two_bracket_2cycles",
+    "so3_d100": "/workspace/phd/outputs/reni/reni_equivariance_so3_two_bracket_2cyc_d100/reni/2026-07-14_two_bracket_2cycles",
+    "so2_d100": "/workspace/phd/outputs/reni/reni_latent_reset_d100_two_bracket_ldrw3_2cyc/reni/2026-07-04_2cycles"
+  },
+  "data": "/workspace/phd/data/RENI_HDR",
+  "device": "cuda:0",
+  "latent_steps_override": 2500,
+  "checkpoint_step": 100001,
+  "models": {
+    "none_d9": {
+      "label": "none_d9",
+      "run_dir": "/workspace/phd/outputs/reni/reni_equivariance_none_two_bracket_2cyc_d9/reni/2026-07-14_two_bracket_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_equivariance_none_two_bracket_2cyc_d9/reni/2026-07-14_two_bracket_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 18.509911855061848,
+        "psnr_hdr_fixed_gauge": 10.908151842298961,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "so3_d9": {
+      "label": "so3_d9",
+      "run_dir": "/workspace/phd/outputs/reni/reni_equivariance_so3_two_bracket_2cyc_d9/reni/2026-07-14_two_bracket_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_equivariance_so3_two_bracket_2cyc_d9/reni/2026-07-14_two_bracket_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 18.48621618180048,
+        "psnr_hdr_fixed_gauge": 10.913293046610695,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "so2_d9": {
+      "label": "so2_d9",
+      "run_dir": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d9/reni/2026-07-04_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d9/reni/2026-07-04_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 19.02549121493385,
+        "psnr_hdr_fixed_gauge": 11.498931376706986,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "none_d36": {
+      "label": "none_d36",
+      "run_dir": "/workspace/phd/outputs/reni/reni_equivariance_none_two_bracket_2cyc_d36/reni/2026-07-14_two_bracket_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_equivariance_none_two_bracket_2cyc_d36/reni/2026-07-14_two_bracket_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 17.023554801940918,
+        "psnr_hdr_fixed_gauge": 9.579434868835268,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "so3_d36": {
+      "label": "so3_d36",
+      "run_dir": "/workspace/phd/outputs/reni/reni_equivariance_so3_two_bracket_2cyc_d36/reni/2026-07-14_two_bracket_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_equivariance_so3_two_bracket_2cyc_d36/reni/2026-07-14_two_bracket_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 20.588376817249117,
+        "psnr_hdr_fixed_gauge": 12.390922827380043,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "so2_d36": {
+      "label": "so2_d36",
+      "run_dir": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d36/reni/2026-07-04_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d36/reni/2026-07-04_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 20.750411442347936,
+        "psnr_hdr_fixed_gauge": 12.83583065157845,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "none_d49": {
+      "label": "none_d49",
+      "run_dir": "/workspace/phd/outputs/reni/reni_equivariance_none_two_bracket_2cyc_d49/reni/2026-07-14_two_bracket_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_equivariance_none_two_bracket_2cyc_d49/reni/2026-07-14_two_bracket_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 18.32457197280157,
+        "psnr_hdr_fixed_gauge": 10.091460636683873,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "so3_d49": {
+      "label": "so3_d49",
+      "run_dir": "/workspace/phd/outputs/reni/reni_equivariance_so3_two_bracket_2cyc_d49/reni/2026-07-14_two_bracket_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_equivariance_so3_two_bracket_2cyc_d49/reni/2026-07-14_two_bracket_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 20.88862046741304,
+        "psnr_hdr_fixed_gauge": 12.626612552574702,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "so2_d49": {
+      "label": "so2_d49",
+      "run_dir": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d49/reni/2026-07-04_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_two_bracket_w3_2cyc_d49/reni/2026-07-04_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 21.227734974452428,
+        "psnr_hdr_fixed_gauge": 13.395874955824443,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "none_d100": {
+      "label": "none_d100",
+      "run_dir": "/workspace/phd/outputs/reni/reni_equivariance_none_two_bracket_2cyc_d100/reni/2026-07-14_two_bracket_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_equivariance_none_two_bracket_2cyc_d100/reni/2026-07-14_two_bracket_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 20.740101859683083,
+        "psnr_hdr_fixed_gauge": 12.1357535805021,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "so3_d100": {
+      "label": "so3_d100",
+      "run_dir": "/workspace/phd/outputs/reni/reni_equivariance_so3_two_bracket_2cyc_d100/reni/2026-07-14_two_bracket_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_equivariance_so3_two_bracket_2cyc_d100/reni/2026-07-14_two_bracket_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 21.754932766868954,
+        "psnr_hdr_fixed_gauge": 13.34029916354588,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    },
+    "so2_d100": {
+      "label": "so2_d100",
+      "run_dir": "/workspace/phd/outputs/reni/reni_latent_reset_d100_two_bracket_ldrw3_2cyc/reni/2026-07-04_2cycles",
+      "checkpoint": "/workspace/phd/outputs/reni/reni_latent_reset_d100_two_bracket_ldrw3_2cyc/reni/2026-07-04_2cycles/nerfstudio_models/step-000100001.ckpt",
+      "split": "test",
+      "latent_refit": true,
+      "load_stats": {
+        "latent_bank": 4,
+        "missing_key": 0,
+        "shape": 0,
+        "loaded": 127
+      },
+      "metrics": {
+        "num_eval_images": 21,
+        "psnr_ldr": 21.954852331252326,
+        "psnr_hdr_fixed_gauge": 14.022645772922607,
+        "exposure_alignment": "none",
+        "median_exposure_scale": 1.0
+      }
+    }
+  }
+}
