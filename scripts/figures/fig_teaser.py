@@ -18,7 +18,8 @@ import torch
 from matplotlib.cm import get_cmap
 from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 
-from _common import (MODEL_DIRS, REPO_ROOT, add_common_args, decode_latents,
+from _common import (init_fit_latent,
+                     MODEL_DIRS, REPO_ROOT, add_common_args, decode_latents,
                      equirect_ray_bundle, load_model, make_ray_samples,
                      rotation_fn, save_figure, seed_all)
 
@@ -46,27 +47,28 @@ REFERENCE_RENDER_HEIGHT = 64
 QUIVER_TARGET_MEDIAN_NORM = 1.4
 
 TEASER_LABELS = (
-    {"xy": (615, 520), "text": r"$\mathbf{Z}=\mathbf{0}_{3\times N}$", "size": 20},
-    {"xy": (770, 140), "text": r"$\mathrm{vec}(\mathbf{Z})\sim\mathcal{N}(\mathbf{0},\mathbf{I}_{3N})$", "size": 15},
-    {"xy": (1450, 85), "text": r"$\mathbf{Z}$", "size": 22},
-    {"xy": (1450, 935), "text": r"$\mathbf{Z}$", "size": 22},
-    {"xy": (1820, 160), "text": r"$\mathbf{D}$", "size": 22},
-    {"xy": (1820, 845), "text": r"$\mathbf{D}$", "size": 22},
+    {"xy": (630, 530), "text": r"$\mathbf{Z}=\mathbf{0}_{3\times N}$", "size": 30},
+    {"xy": (850, 120), "text": r"$\mathrm{vec}(\mathbf{Z})\sim\mathcal{N}(\mathbf{0},\mathbf{I}_{3N})$", "size": 30},
+    {"xy": (1790, 350), "text": r"$\mathbf{Z}$", "size": 30},
+    {"xy": (1790, 1185), "text": r"$\mathbf{Z}$", "size": 30},
+    {"xy": (1805, -5), "text": r"$\mathbf{D}$", "size": 30},
+    {"xy": (1805, 835), "text": r"$\mathbf{D}$", "size": 30},
     {
         "xy": (2235, 650),
         "text": "SO(2) Rotation of Latent Code\nAround Vertical Y-Axis",
-        "size": 15,
+        "size": 40,
     },
 )
 
 TEASER_AXIS_LABELS = (
-    (1340, 355, r"$x$"),
-    (1505, 335, r"$z$"),
-    (1545, 210, r"$y$"),
-    (1340, 1200, r"$x$"),
-    (1505, 1180, r"$z$"),
-    (1545, 1055, r"$y$"),
+    (1350, 460, r"$x$"),
+    (1630, 410, r"$z$"),
+    (1710, 210, r"$y$"),
+    (1350, 1300, r"$x$"),
+    (1630, 1250, r"$z$"),
+    (1710, 1055, r"$y$"),
 )
+
 
 
 def _add_teaser_labels(ax):
@@ -82,7 +84,7 @@ def _add_teaser_labels(ax):
             zorder=30,
         )
     for x, y, label in TEASER_AXIS_LABELS:
-        ax.text(x, y, label, ha="center", va="center", fontsize=8,
+        ax.text(x, y, label, ha="center", va="center", fontsize=30,
                 fontfamily="serif", color="black", zorder=30)
 
 
@@ -126,7 +128,7 @@ def main():
     parser.add_argument("--model", default="two_bracket_w3_2cyc",
                         choices=sorted(MODEL_DIRS),
                         help="MODEL_DIRS key; default = dual-exposure two-bracket, 2 reset cycles")
-    parser.add_argument("--recon-latent-idx", type=int, default=10,
+    parser.add_argument("--recon-latent-idx", type=int, default=17,
                         help="Train latent decoded in the right-hand 0/90 deg "
                              "reconstruction panels and shown in the vector plots")
     parser.add_argument("--quiver-scale", type=float, default=None,
@@ -166,8 +168,9 @@ def main():
                              z_rot, scale=args.quiver_scale,
                              linewidth=args.quiver_linewidth)}
         elif i == 2:
-            # Zero latent: the mean environment
-            z = torch.zeros(1, model.field.latent_dim, 3, device=args.device)
+            # Zero latent: the mean environment (frame-normalised variants
+            # use the off-origin nudge; see _common.init_fit_latent)
+            z = init_fit_latent(model, args.device, requires_grad=False)
             images[i] = {"pred_img": decode_latents(model, ray_samples, z,
                                                     height=args.height,
                                                     chunk_size=args.decode_chunk)}

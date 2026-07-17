@@ -62,6 +62,12 @@ def main():
                              "(24 images); pair with --max-iters 4800 (200/image)")
     parser.add_argument("--m-ldr", type=float, default=16.0)
     parser.add_argument("--m-log", type=float, default=10000.0)
+    parser.add_argument("--invariant-function", default=None,
+                        choices=["GramMatrix", "VN", "VNJoint", "VNCanonical", "Norms"],
+                        help="Override the field invariant function to match "
+                             "the decoder checkpoint (config default: VN).")
+    parser.add_argument("--canonical-frame-ortho", action="store_true",
+                        help="Gram-Schmidt frame decoders: must match training.")
     parser.add_argument("--vis", default="tensorboard")
     args = parser.parse_args()
 
@@ -70,6 +76,10 @@ def main():
     # Two-bracket decoder: six sigmoid channels blended to linear HDR.
     m.illumination_field.out_features = 6
     m.illumination_field.output_activation = "sigmoid"
+    if args.invariant_function is not None:
+        m.illumination_field.invariant_function = args.invariant_function
+    if args.canonical_frame_ortho:
+        m.illumination_field.canonical_frame_orthonormalise = True
     m.two_bracket = True
     m.tonemap_m_ldr = args.m_ldr
     m.tonemap_m_log = args.m_log

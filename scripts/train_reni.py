@@ -64,12 +64,20 @@ def parse_args() -> argparse.Namespace:
                              ">1 shifts capacity toward the low/mid range the LDR metrics "
                              "measure, at some cost to highlight fidelity.")
     parser.add_argument("--invariant-function", default=None,
-                        choices=["GramMatrix", "VN", "VNJoint"],
+                        choices=["GramMatrix", "VN", "VNJoint", "VNCanonical", "Norms"],
                         help="Override the field invariant function; default keeps the "
                              "method config's value (VN). VNJoint predicts one shared "
                              "Vector Neuron frame from all latent channels, retaining "
                              "inter-channel structure in the conditioning at unchanged "
-                             "dimensionality.")
+                             "dimensionality. VNCanonical additionally expresses the "
+                             "query direction in that frame, making the directional "
+                             "input constant-size (4 numbers) instead of latent_dim+2.")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Override the nerfstudio machine seed (replicate runs).")
+    parser.add_argument("--canonical-frame-ortho", action="store_true",
+                        help="VNJoint/VNCanonical: Gram-Schmidt orthonormalise the "
+                             "shared frame (mitigates the frame collapse observed "
+                             "in the unmitigated 2026-07-15 runs).")
     parser.add_argument(
         "--equivariance",
         default=None,
@@ -209,6 +217,10 @@ def main() -> None:
     config.pipeline.model.field.latent_dim = args.latent_dim
     if args.invariant_function is not None:
         config.pipeline.model.field.invariant_function = args.invariant_function
+    if args.canonical_frame_ortho:
+        config.pipeline.model.field.canonical_frame_orthonormalise = True
+    if args.seed is not None:
+        config.machine.seed = args.seed
     if args.equivariance is not None:
         config.pipeline.model.field.equivariance = args.equivariance
     config.training_paradigm = args.training_paradigm

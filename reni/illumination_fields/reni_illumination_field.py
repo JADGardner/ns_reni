@@ -45,12 +45,23 @@ class RENIFieldConfig(BaseRENIFieldConfig):
     """Type of equivariance to use"""
     axis_of_invariance: Literal["x", "y", "z"] = "y"
     """Which axis should SO2 equivariance be invariant to"""
-    invariant_function: Literal["GramMatrix", "VN", "VNJoint"] = "GramMatrix"
+    invariant_function: Literal["GramMatrix", "VN", "VNJoint", "VNCanonical", "Norms"] = "GramMatrix"
     """Type of invariant function to use. VN predicts a Vector Neuron frame
     per latent channel (conditioning reduces to per-channel norms); VNJoint
     predicts one shared frame from all channels and reads each channel out
     against it, keeping the same conditioning dimensionality while retaining
-    inter-channel structure."""
+    inter-channel structure. VNCanonical additionally expresses the QUERY
+    DIRECTION in that shared frame, so the per-query directional input is
+    constant-size (4 numbers under SO2) instead of latent_dim + 2; the
+    latent-direction interaction is reconstructible from the conditioning
+    (channel coordinates in the frame plus the frame Gram), so the
+    information content matches VN/GramMatrix while the query is O(1) in
+    latent size. Norms conditions on the parameter-free invariants
+    [||z_perp,i||^2, z_par,i] directly, with the standard query stream; the
+    per-channel VN path provably computes fixed constants times these
+    norms (its VNReLU branch decisions are input-independent at one
+    channel), so Norms is the same conditioning without the vestigial
+    learnable gains."""
     conditioning: Literal["FiLM", "Concat", "Attention"] = "Concat"
     """Type of conditioning to use"""
     positional_encoding: Literal["NeRF"] = "NeRF"
@@ -89,6 +100,15 @@ class RENIFieldConfig(BaseRENIFieldConfig):
     """Whether to match implementation of old RENI, when using old checkpoints"""
     view_train_latents: bool = False
     """Whether to select train latents regardless of eval mode"""
+    canonical_frame_orthonormalise: bool = False
+    """VNJoint and VNCanonical: Gram-Schmidt orthonormalise the shared
+    predicted frame before use. Orthonormalisation is rotation-equivariant
+    and mirror-safe (built from inner products of co-rotating vectors, no
+    handedness), and removes both frame-degeneracy modes observed in the
+    unmitigated runs (norm shrinkage and near-parallel frame vectors). Note
+    the orientation is undefined at Z=0 with a 1/||q|| Jacobian, so eval
+    latents init a hair off the origin when this is set. Default False
+    keeps the behaviour of checkpoints trained before 2026-07-15."""
 
 
 class RENIField(BaseRENIField):
@@ -145,6 +165,16 @@ class RENIField(BaseRENIField):
                 VNReLU(dim_coor),
             )
             self.invariant_function = self.vn_joint_invariance
+        elif self.config.invariant_function == "VNCanonical":
+            dim_coor = 2 if self.config.equivariance == "SO2" else 3
+            self.vn_canonical_frame = nn.Sequential(
+                VNLinear(dim_in=self.latent_dim, dim_out=dim_coor, bias_epsilon=0),
+                VNReLU(dim_coor),
+            )
+            self.invariant_function = self.vn_canonical_invariance
+        elif self.config.invariant_function == "Norms":
+            # Parameter-free: no modules to build or freeze.
+            self.invariant_function = self.norms_invariance
         else:
             self.vn_proj_in = nn.Sequential(
                 Rearrange("... c -> ... 1 c"), VNLinear(dim_in=1, dim_out=1, bias_epsilon=0)
@@ -166,6 +196,9 @@ class RENIField(BaseRENIField):
                     param.requires_grad = False
             if self.config.invariant_function == "VNJoint":
                 for param in self.vn_joint_frame.parameters():
+                    param.requires_grad = False
+            if self.config.invariant_function == "VNCanonical":
+                for param in self.vn_canonical_frame.parameters():
                     param.requires_grad = False
 
     @contextlib.contextmanager
@@ -192,6 +225,10 @@ class RENIField(BaseRENIField):
             prev_state_joint = {k: p.requires_grad for k, p in self.vn_joint_frame.named_parameters()}
             for param in self.vn_joint_frame.parameters():
                 param.requires_grad = False
+        if self.config.invariant_function == "VNCanonical":
+            prev_state_canonical = {k: p.requires_grad for k, p in self.vn_canonical_frame.named_parameters()}
+            for param in self.vn_canonical_frame.parameters():
+                param.requires_grad = False
         if self.config.trainable_scale in [True, "train", "both"] and self.num_train_data is not None:
             prev_state_scale = self.train_scale.requires_grad
             self.train_scale.requires_grad = False
@@ -212,6 +249,9 @@ class RENIField(BaseRENIField):
             if self.config.invariant_function == "VNJoint":
                 for name, param in self.vn_joint_frame.named_parameters():
                     param.requires_grad_(prev_state_joint[name])
+            if self.config.invariant_function == "VNCanonical":
+                for name, param in self.vn_canonical_frame.named_parameters():
+                    param.requires_grad_(prev_state_canonical[name])
             if self.config.trainable_scale in [True, "train", "both"] and self.num_train_data is not None:
                 self.train_scale.requires_grad_(prev_state_scale)
             self.fixed_decoder = prev_decoder_state
@@ -311,6 +351,8 @@ class RENIField(BaseRENIField):
             # is expressed in that frame, so relative angles between channels
             # survive into the conditioning.
             frame = self.vn_joint_frame(z_other)  # [num_rays, 2, 2] rows are frame vectors
+            if self.config.canonical_frame_orthonormalise:
+                frame = self._orthonormalise_frame(frame)
             z_other_invar = torch.einsum("bnc,boc->bno", z_other, frame)  # [num_rays, latent_dim, 2]
 
             # Get invariant component of Z along the axis of invariance
@@ -333,7 +375,151 @@ class RENIField(BaseRENIField):
 
         if equivariance == "SO3":
             frame = self.vn_joint_frame(Z)  # [num_rays, 3, 3]
+            if self.config.canonical_frame_orthonormalise:
+                frame = self._orthonormalise_frame(frame)
             conditioning_input = torch.einsum("bnc,boc->bno", Z, frame).flatten(1)  # [num_rays, latent_dim * 3]
+            innerprod = torch.sum(Z * D.unsqueeze(1), dim=-1)  # [num_rays, latent_dim]
+            return innerprod, conditioning_input
+
+    @staticmethod
+    def _orthonormalise_frame(frame: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+        """Gram-Schmidt over the frame rows (batched).
+
+        Equivariant: every step is a linear combination of co-rotating
+        vectors with invariant (inner-product) coefficients. Mirror-safe: no
+        90-degree-rotation completion, only projections. Degenerate inputs
+        (near-parallel rows) are clamped rather than repaired; exact
+        parallelism is measure-zero under the VN nonlinearity.
+        """
+        rows = []
+        for i in range(frame.shape[-2]):
+            v = frame[..., i, :]
+            for u in rows:
+                v = v - (v * u).sum(-1, keepdim=True) * u
+            rows.append(v / v.norm(dim=-1, keepdim=True).clamp(min=eps))
+        return torch.stack(rows, dim=-2)
+
+    def vn_canonical_invariance(
+        self, Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2", axis_of_invariance: int = 1
+    ):
+        """Generates an invariant representation from latent code Z and direction coordinates D.
+
+        Same contract as vn_invariance, but BOTH the latent channels and the
+        query direction are expressed in one shared Vector Neuron frame
+        predicted from all channels (canonicalisation). The directional input
+        is therefore constant-size (frame coordinates of D plus its invariant
+        parts) instead of latent_dim inner products; the per-channel
+        latent-direction interaction is reconstructible from the conditioning
+        (channel coordinates in the same frame plus the frame Gram, which is
+        appended so the decoder can undo a non-orthonormal frame). The frame
+        is built from scalar-mixing VN ops only, so mirror equivariance is
+        preserved; nothing enforces frame non-degeneracy, which is the
+        experiment's risk.
+
+        Args:
+            Z (torch.Tensor): Latent code (num_rays x latent_dim x 3)
+            D (torch.Tensor): Direction coordinates (num_rays x 3)
+            equivariance (str): Type of equivariance to use. Options are 'None', 'SO2', and 'SO3'
+            axis_of_invariance (int): The axis of rotation invariance. Should be 0 (x-axis), 1 (y-axis), or 2 (z-axis).
+        Returns:
+            torch.Tensor: Invariant representation
+        """
+        assert 0 <= axis_of_invariance < 3, "axis_of_invariance should be 0, 1, or 2."
+        other_axes = [i for i in range(3) if i != axis_of_invariance]
+
+        if equivariance == "None":
+            innerprod = torch.sum(Z * D.unsqueeze(1), dim=-1)  # [num_rays, latent_dim]
+            z_input = Z.flatten(start_dim=1)  # [num_rays, latent_dim * 3]
+            return innerprod, z_input
+
+        if equivariance == "SO2":
+            z_other = torch.stack((Z[:, :, other_axes[0]], Z[:, :, other_axes[1]]), -1)  # [num_rays, latent_dim, 2]
+            d_other = torch.stack((D[:, other_axes[0]], D[:, other_axes[1]]), -1)  # [num_rays, 2]
+
+            frame = self.vn_canonical_frame(z_other)  # [num_rays, 2, 2] rows are frame vectors
+            if self.config.canonical_frame_orthonormalise:
+                frame = self._orthonormalise_frame(frame)
+
+            # Latent channels in the shared frame (invariant, keeps relative angles)
+            z_other_invar = torch.einsum("bnc,boc->bno", z_other, frame)  # [num_rays, latent_dim, 2]
+            z_invar = Z[:, :, axis_of_invariance].unsqueeze(-1)  # [num_rays, latent_dim, 1]
+
+            # Query direction in the same frame: the entire azimuthal
+            # latent-direction interaction, in 2 numbers instead of latent_dim.
+            d_frame = torch.einsum("bc,boc->bo", d_other, frame)  # [num_rays, 2]
+            d_other_norm = torch.sqrt(D[:, other_axes[0]] ** 2 + D[:, other_axes[1]] ** 2).unsqueeze(
+                -1
+            )  # [num_rays, 1]
+            d_invar = D[:, axis_of_invariance].unsqueeze(-1)  # [num_rays, 1]
+
+            # Frame Gram so the decoder can normalise a non-orthonormal frame.
+            frame_gram = torch.einsum("boc,bpc->bop", frame, frame).flatten(1)  # [num_rays, 4]
+
+            directional_input = torch.cat((d_frame, d_invar, d_other_norm), 1)  # [num_rays, 4]
+            conditioning_input = torch.cat(
+                (torch.cat((z_other_invar, z_invar), dim=-1).flatten(1), frame_gram), 1
+            )  # [num_rays, latent_dim * 3 + 4]
+
+            return directional_input, conditioning_input
+
+        if equivariance == "SO3":
+            frame = self.vn_canonical_frame(Z)  # [num_rays, 3, 3]
+            if self.config.canonical_frame_orthonormalise:
+                frame = self._orthonormalise_frame(frame)
+            z_invar = torch.einsum("bnc,boc->bno", Z, frame).flatten(1)  # [num_rays, latent_dim * 3]
+            frame_gram = torch.einsum("boc,bpc->bop", frame, frame).flatten(1)  # [num_rays, 9]
+            conditioning_input = torch.cat((z_invar, frame_gram), 1)  # [num_rays, latent_dim * 3 + 9]
+            directional_input = torch.einsum("bc,boc->bo", D, frame)  # [num_rays, 3]
+            return directional_input, conditioning_input
+
+    def norms_invariance(
+        self, Z, D, equivariance: Literal["None", "SO2", "SO3"] = "SO2", axis_of_invariance: int = 1
+    ):
+        """Generates an invariant representation from latent code Z and direction coordinates D.
+
+        Parameter-free control for the per-channel VN path: conditioning is
+        the channel norms (squared, matching what the degenerate VN stack
+        computes up to its fixed gains) plus the invariant axis components;
+        the directional input is the standard query stream. Same information
+        as invariant_function="VN" with zero learnable parameters.
+
+        Args:
+            Z (torch.Tensor): Latent code (num_rays x latent_dim x 3)
+            D (torch.Tensor): Direction coordinates (num_rays x 3)
+            equivariance (str): Type of equivariance to use. Options are 'None', 'SO2', and 'SO3'
+            axis_of_invariance (int): The axis of rotation invariance. Should be 0 (x-axis), 1 (y-axis), or 2 (z-axis).
+        Returns:
+            torch.Tensor: Invariant representation
+        """
+        assert 0 <= axis_of_invariance < 3, "axis_of_invariance should be 0, 1, or 2."
+        other_axes = [i for i in range(3) if i != axis_of_invariance]
+
+        if equivariance == "None":
+            innerprod = torch.sum(Z * D.unsqueeze(1), dim=-1)  # [num_rays, latent_dim]
+            z_input = Z.flatten(start_dim=1)  # [num_rays, latent_dim * 3]
+            return innerprod, z_input
+
+        if equivariance == "SO2":
+            z_other = torch.stack((Z[:, :, other_axes[0]], Z[:, :, other_axes[1]]), -1)  # [num_rays, latent_dim, 2]
+            d_other = torch.stack((D[:, other_axes[0]], D[:, other_axes[1]]), -1).unsqueeze(1)  # [num_rays, 1, 2]
+            d_other = d_other.expand_as(z_other)  # [num_rays, latent_dim, 2]
+
+            z_norms2 = (z_other**2).sum(dim=-1)  # [num_rays, latent_dim]
+            z_invar = Z[:, :, axis_of_invariance]  # [num_rays, latent_dim]
+
+            innerprod = (z_other * d_other).sum(dim=-1)  # [num_rays, latent_dim]
+            d_other_norm = torch.sqrt(D[:, other_axes[0]] ** 2 + D[:, other_axes[1]] ** 2).unsqueeze(
+                -1
+            )  # [num_rays, 1]
+            d_invar = D[:, axis_of_invariance].unsqueeze(-1)  # [num_rays, 1]
+
+            directional_input = torch.cat((innerprod, d_invar, d_other_norm), 1)  # [num_rays, latent_dim + 2]
+            conditioning_input = torch.cat((z_norms2, z_invar), 1)  # [num_rays, latent_dim * 2]
+
+            return directional_input, conditioning_input
+
+        if equivariance == "SO3":
+            conditioning_input = (Z**2).sum(dim=-1)  # [num_rays, latent_dim]
             innerprod = torch.sum(Z * D.unsqueeze(1), dim=-1)  # [num_rays, latent_dim]
             return innerprod, conditioning_input
 
@@ -417,6 +603,16 @@ class RENIField(BaseRENIField):
                 "None": {"direction": self.latent_dim, "conditioning": self.latent_dim * 3},
                 "SO2": {"direction": self.latent_dim + 2, "conditioning": self.latent_dim * 3},
                 "SO3": {"direction": self.latent_dim, "conditioning": self.latent_dim * 3},
+            },
+            "VNCanonical": {
+                "None": {"direction": self.latent_dim, "conditioning": self.latent_dim * 3},
+                "SO2": {"direction": 4, "conditioning": self.latent_dim * 3 + 4},
+                "SO3": {"direction": 3, "conditioning": self.latent_dim * 3 + 9},
+            },
+            "Norms": {
+                "None": {"direction": self.latent_dim, "conditioning": self.latent_dim * 3},
+                "SO2": {"direction": self.latent_dim + 2, "conditioning": self.latent_dim * 2},
+                "SO3": {"direction": self.latent_dim, "conditioning": self.latent_dim},
             },
             "GramMatrix": {
                 "None": {"direction": self.latent_dim, "conditioning": self.latent_dim * 3},
@@ -551,7 +747,18 @@ class RENIField(BaseRENIField):
         if mode == "eval":
             # init latents as all zeros for eval (the mean of the prior)
             log_var.requires_grad = False
-            mu = torch.nn.Parameter(torch.zeros(num_latents, self.latent_dim, 3))
+            mu = torch.zeros(num_latents, self.latent_dim, 3)
+            if (
+                self.config.invariant_function in ("VNCanonical", "VNJoint")
+                and self.config.canonical_frame_orthonormalise
+            ):
+                # The orthonormalised frame's orientation is undefined at
+                # Z=0 and the Gram-Schmidt Jacobian scales as 1/||q||, so
+                # exact-zero init gives ~1e7x gradients and diverging fits
+                # (measured 2026-07-15). Start a hair off the singular
+                # point; all other variants keep the exact prior mean.
+                mu = 1e-2 * torch.randn(num_latents, self.latent_dim, 3)
+            mu = torch.nn.Parameter(mu)
         else:
             mu = torch.nn.Parameter(torch.randn(num_latents, self.latent_dim, 3))
 

@@ -21,7 +21,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from _common import (MODEL_DIRS, add_common_args, collect_model_outputs,
+from _common import (init_fit_latent,
+                     MODEL_DIRS, add_common_args, collect_model_outputs,
                      add_figure_label, axis_center, equirect_ray_bundle,
                      eval_image_tensor, load_model, render_eval_image,
                      save_figure, seed_all)
@@ -189,8 +190,7 @@ def fit_latent(model, gt_norm, mask, device, steps=600, lr=1e-2,
     H, W = gt_fit.shape[:2]
     ray_bundle = equirect_ray_bundle(device, idx=0, height=H)
 
-    z = torch.zeros(1, model.field.latent_dim, 3, device=device,
-                    requires_grad=True)
+    z = init_fit_latent(model, device)
     target = gt_fit.reshape(-1, gt_fit.shape[-1]).to(device)
     visible = torch.nonzero(mask_fit.reshape(-1).bool(), as_tuple=False)
     visible = visible.squeeze(1).to(device)

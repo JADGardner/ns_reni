@@ -109,6 +109,26 @@ MODEL_DIRS["two_bracket_w3_2cyc_testfit"] = {
 }
 MODEL_DIRS["two_bracket_w3_2cyc"] = {
     100: PHD_OUTPUTS / "reni" / "reni_latent_reset_d100_two_bracket_ldrw3_2cyc"}
+# Joint Gram-Schmidt frame test-fit shims (21 refit test latents; built by
+# eval_two_bracket_compare --save-fitted-shim, comparison-table protocol).
+MODEL_DIRS["vnjoint_ortho_2cyc_testfit"] = {
+    9: PHD_OUTPUTS / "reni" / "_figshim_vnjoint_ortho_d9",
+    36: PHD_OUTPUTS / "reni" / "_figshim_vnjoint_ortho_d36",
+    49: PHD_OUTPUTS / "reni" / "_figshim_vnjoint_ortho_d49",
+    100: PHD_OUTPUTS / "reni" / "_figshim_vnjoint_ortho_d100",
+}
+# Joint Gram-Schmidt frame core (Ch 2 headline after the 2026-07 migration)
+# and its size ladder.
+MODEL_DIRS["vnjoint_ortho_2cyc"] = {
+    100: REPO_ROOT / "outputs"
+    / "reni_latent_reset_d100_two_bracket_ldrw3_2cyc_vnjoint_ortho",
+    9: REPO_ROOT / "outputs"
+    / "reni_latent_reset_d9_two_bracket_ldrw3_2cyc_vnjoint_ortho",
+    36: REPO_ROOT / "outputs"
+    / "reni_latent_reset_d36_two_bracket_ldrw3_2cyc_vnjoint_ortho",
+    49: REPO_ROOT / "outputs"
+    / "reni_latent_reset_d49_two_bracket_ldrw3_2cyc_vnjoint_ortho",
+}
 # 4-cycle two-bracket (G7h original, 1x LDR-bracket weight, 200k steps)
 MODEL_DIRS["two_bracket_4cyc"] = {
     100: PHD_OUTPUTS / "reni" / "reni_latent_reset_d100_two_bracket"}
@@ -214,6 +234,27 @@ def eval_image_tensor(dataset, idx: int, batch=None):
     if gt_raw.dim() == 4:
         gt_raw = gt_raw[0]
     return gt_raw
+
+
+def init_fit_latent(model, device, dtype=None, requires_grad=True,
+                    noise_std=1e-2):
+    """Initial latent for a from-scratch fit: the prior mean (zeros).
+
+    Frame-normalised variants (VNJoint/VNCanonical with
+    canonical_frame_orthonormalise) have a gradient singularity at Z=0 (the
+    Gram-Schmidt orientation is undefined there, Jacobian ~1/||q||; measured
+    ~1e7x gradients 2026-07-15), so those init a hair off the origin. All
+    other variants keep the exact prior mean.
+    """
+    cfg = model.field.config
+    latent_dim = model.field.latent_dim
+    z = torch.zeros(1, latent_dim, 3, device=device, dtype=dtype)
+    if (
+        getattr(cfg, "invariant_function", "") in ("VNJoint", "VNCanonical")
+        and getattr(cfg, "canonical_frame_orthonormalise", False)
+    ):
+        z = noise_std * torch.randn(1, latent_dim, 3, device=device, dtype=dtype)
+    return z.requires_grad_(requires_grad)
 
 
 def seed_all(seed: int):
@@ -326,6 +367,9 @@ def load_model(load_dir: Path, device: str = "cuda:0", load_step: Optional[int] 
         # and stay at the 3-channel RGB default.
         if "out_features" in field_cfg:
             m.field.out_features = field_cfg["out_features"]
+        # Frame-normalised variants (absent in older configs, default off).
+        m.field.canonical_frame_orthonormalise = field_cfg.get(
+            "canonical_frame_orthonormalise", False)
     elif "spherical_harmonic_order" in field_cfg:
         model_config = SHField.config
         _copy_dataparser(model_config)

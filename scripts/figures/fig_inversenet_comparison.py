@@ -31,7 +31,8 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from _common import (MODEL_DIRS, REPO_ROOT, add_common_args, add_figure_label,
+from _common import (init_fit_latent,
+                     MODEL_DIRS, REPO_ROOT, add_common_args, add_figure_label,
                      axis_center, equirect_ray_bundle, load_model,
                      read_clean_exr, save_figure, seed_all)
 from reni.field_components.field_heads import RENIFieldHeadNames
@@ -85,7 +86,7 @@ def _fit_reni_latent(model, gt_target, mask, device, steps=2500, lr=1e-2,
     """
     H, W = gt_target.shape[:2]
     ray_bundle = equirect_ray_bundle(device, idx=0, height=H)
-    z = torch.zeros(1, model.field.latent_dim, 3, device=device, requires_grad=True)
+    z = init_fit_latent(model, device)
     target = gt_target.reshape(-1, gt_target.shape[-1]).to(device)
     visible = torch.nonzero(mask.reshape(-1).bool(), as_tuple=False).squeeze(1).to(device)
     if visible.numel() == 0:

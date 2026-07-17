@@ -1,10 +1,14 @@
 """Programmatic RENI++ gravity-axis invariant model overview.
 
-The diagram follows ``RENIField.vn_invariance`` for the SO(2) model. It shows
-the axial/planar decomposition, the direction-relative inner products, the
-Vector Neuron frame used to make the planar latent invariant, and the two
-inputs to the attention decoder. The output sphere is textured from an EXR
-environment map, which can be overridden with ``--envmap``.
+The diagram follows ``RENIField.vn_invariance`` for the SO(2) model. The
+query direction and latent are split about the gravity axis into axial and
+planar parts, which assemble into the two invariant decoder inputs (thesis
+eqns for z_{d,g} and Z_{g,inv}); each invariant is drawn as one box holding
+its defining equation. The Vector Neuron branch sits on the planar-latent
+path, with a dashed callout explaining the shared Gram-Schmidt-orthonormalised
+joint frame and its co-rotating per-channel readouts.
+The output sphere is textured from an EXR environment map, which can be
+overridden with ``--envmap``.
 
 Run from the ns_reni repo root:
 
@@ -192,7 +196,7 @@ def gray_sphere_image(size: int = 420) -> np.ndarray:
 
 
 def arrow(ax, start, end, color="black", lw=1.4, style="-|>",
-          mutation_scale=16, connectionstyle="arc3"):
+          mutation_scale=16, connectionstyle="arc3", zorder=None):
     patch = FancyArrowPatch(
         start,
         end,
@@ -203,6 +207,7 @@ def arrow(ax, start, end, color="black", lw=1.4, style="-|>",
         shrinkA=0,
         shrinkB=0,
         connectionstyle=connectionstyle,
+        zorder=zorder,
     )
     ax.add_patch(patch)
     return patch
@@ -231,12 +236,13 @@ VEC_COLOR = "#7C9AD6"  # pastel blue for on-sphere direction/latent vectors
 
 
 def rounded_box(ax, x, y, w, h, facecolor, edgecolor, lw=1.2, rounding=None,
-                zorder=2):
+                zorder=2, linestyle="solid"):
     rounding = rounding if rounding is not None else 0.18 * min(w, h)
     patch = FancyBboxPatch(
         (x, y), w, h,
         boxstyle=f"round,pad=0,rounding_size={rounding}",
         facecolor=facecolor, edgecolor=edgecolor, linewidth=lw, zorder=zorder,
+        linestyle=linestyle,
     )
     ax.add_patch(patch)
     return patch
@@ -422,174 +428,50 @@ def draw_vn_glyph(ax, x, y, w=0.72, h=0.72):
     return x + w, y + h / 2
 
 
-def draw_directional_invariant(ax, d_parallel, d_perp, z_perp):
-    """Draw the SO(2) directional invariant used as the decoder query."""
-    # The inner-product operands repeat the relevant decomposed inputs so the
-    # matrix operation remains readable when the figure is scaled in LaTeX.
-    zt = draw_tensor(ax, 4.18, 4.76, 3, 2, cell=0.19, gap=0.025,
-                     facecolor=CELL_FILL, edgecolor=CELL_STROKE)
-    draw_text(ax, zt["cx"], zt["top"] + 0.16,
-              r"$\mathbf{Z}_{\perp}^{\mathsf{T}}$", size=13)
-    draw_text(ax, zt["cx"], zt["bottom"] - 0.14,
-              r"$N_z\!\times\!2$", size=10, color="#555555")
-
-    draw_text(ax, 4.85, zt["cy"], r"$\times$", size=18)
-    dp = draw_tensor(ax, 5.16, 4.89, 2, 1, cell=0.22, gap=0.035,
-                     facecolor=CELL_FILL, edgecolor=CELL_STROKE)
-    draw_text(ax, dp["cx"], dp["top"] + 0.16,
-              r"$\mathbf{d}_{\perp}$", size=13)
-    draw_text(ax, 5.62, zt["cy"], r"$=$", size=17)
-    inner = draw_tensor(ax, 5.91, 4.76, 3, 1, cell=0.19, gap=0.025,
-                        facecolor=STACK_FILL, edgecolor=STACK_STROKE)
-    draw_text(ax, inner["cx"], inner["top"] + 0.16,
-              r"$\mathbf{Z}_{\perp}^{\mathsf{T}}\mathbf{d}_{\perp}$",
-              size=13)
-    draw_text(ax, inner["cx"], inner["bottom"] - 0.14,
-              r"$N_z\!\times\!1$", size=10, color="#555555")
-
-    norm_x, norm_y, norm_w, norm_h = 6.45, 4.40, 1.18, 0.52
-    rounded_box(ax, norm_x, norm_y, norm_w, norm_h,
-                facecolor=STACK_FILL, edgecolor=STACK_STROKE,
-                lw=1.0, rounding=0.08)
-    draw_text(ax, norm_x + norm_w / 2, norm_y + norm_h / 2,
-              r"$\Vert\mathbf{d}_{\perp}\Vert_2$", size=13)
-
-    # Assemble (d_parallel, Z_perp^T d_perp, ||d_perp||) as one invariant
-    # directional input. Different cell heights distinguish the N_z block.
-    out_x = 8.04
-    top_cell = draw_tensor(ax, out_x, 5.72, 1, 1, cell=0.28,
-                           facecolor=STACK_FILL, edgecolor=STACK_STROKE)
-    middle = draw_tensor(ax, out_x, 4.91, 3, 1, cell=0.20, gap=0.025,
-                         facecolor=STACK_FILL, edgecolor=STACK_STROKE)
-    bottom_cell = draw_tensor(ax, out_x, 4.43, 1, 1, cell=0.28,
-                              facecolor=STACK_FILL, edgecolor=STACK_STROKE)
-    draw_text(ax, out_x + 0.50, top_cell["cy"], r"$d_{\parallel}$",
-              size=12, ha="left")
-    draw_text(ax, out_x + 0.50, middle["cy"],
-              r"$\mathbf{Z}_{\perp}^{\mathsf{T}}\mathbf{d}_{\perp}$",
-              size=12, ha="left")
-    draw_text(ax, out_x + 0.50, bottom_cell["cy"],
-              r"$\Vert\mathbf{d}_{\perp}\Vert_2$", size=12, ha="left")
-    draw_text(ax, 8.65, 4.06,
-              r"$\mathbf{z}_{d,\mathbf{g}}\in\mathbb{R}^{N_z+2}$",
-              size=13)
-
-    # Routed dependencies. The lower latent branch supplies Z_perp.
-    arrow(ax, (d_parallel["right"] + 0.05, d_parallel["cy"]),
-          (top_cell["left"] - 0.05, top_cell["cy"]),
-          lw=1.0, mutation_scale=12,
-          connectionstyle="arc3,rad=-0.04")
-    arrow(ax, (d_perp["right"] + 0.05, d_perp["cy"]),
-          (dp["left"] - 0.05, dp["cy"]), lw=1.0, mutation_scale=12)
-    arrow(ax, (z_perp["right"] + 0.04, z_perp["cy"]),
-          (zt["left"] - 0.04, zt["cy"]), lw=0.95, mutation_scale=11,
-          connectionstyle="angle,angleA=0,angleB=90,rad=5")
-    arrow(ax, (inner["right"] + 0.05, inner["cy"]),
-          (middle["left"] - 0.05, middle["cy"]),
-          lw=1.0, mutation_scale=12)
-    arrow(ax, (d_perp["right"] + 0.05, d_perp["cy"] - 0.06),
-          (norm_x - 0.05, norm_y + norm_h / 2),
-          lw=0.95, mutation_scale=11,
-          connectionstyle="arc3,rad=0.08")
-    arrow(ax, (norm_x + norm_w + 0.05, norm_y + norm_h / 2),
-          (bottom_cell["left"] - 0.05, bottom_cell["cy"]),
-          lw=1.0, mutation_scale=12)
-    return {
-        "left": out_x,
-        "right": 9.55,
-        "cy": 5.18,
-    }
-
-
-def draw_latent_invariant(ax, z_parallel, z_perp):
-    """Draw the VN planar frame and axial bypass used for conditioning."""
-    # Z_perp takes a copy path and an equivariant VN path that predicts Q_2.
-    vn_right, vn_cy = draw_vn_glyph(ax, 4.34, 1.98, w=0.72, h=0.72)
-    arrow(ax, (z_perp["right"] + 0.05, z_perp["cy"] + 0.10),
-          (4.34 - 0.05, vn_cy), lw=1.0, mutation_scale=12,
-          connectionstyle="arc3,rad=-0.12")
-
-    basis = draw_tensor(ax, 5.38, 2.03, 2, 2, cell=0.22, gap=0.03,
-                        facecolor=CELL_FILL, edgecolor=CELL_STROKE)
-    arrow(ax, (vn_right + 0.05, vn_cy),
-          (basis["left"] - 0.05, basis["cy"]),
-          lw=1.0, mutation_scale=12)
-    draw_text(ax, basis["cx"], basis["top"] + 0.17,
-              r"$\mathbf{Q}_2(\mathbf{Z}_{\perp})^{\mathsf{T}}$", size=12)
-    draw_text(ax, 6.16, basis["cy"], r"$\times$", size=17)
-
-    copied = draw_tensor(ax, 6.48, 1.86, 2, 3, cell=0.20, gap=0.025,
-                         facecolor=CELL_FILL, edgecolor=CELL_STROKE, tail=True)
-    draw_text(ax, copied["cx"], copied["top"] + 0.17,
-              r"$\mathbf{Z}_{\perp}$", size=12)
-    arrow(ax, (z_perp["right"] + 0.05, z_perp["cy"] - 0.12),
-          (copied["left"] - 0.05, copied["cy"]),
-          lw=0.95, mutation_scale=11,
-          connectionstyle="angle,angleA=0,angleB=90,rad=5")
-    draw_text(ax, 5.65, 1.29, "copy", size=10, color="#555555")
-
-    draw_text(ax, 7.82, copied["cy"], r"$=$", size=17)
-    planar_inv = draw_tensor(
-        ax, 8.16, 1.86, 2, 3, cell=0.20, gap=0.025,
-        facecolor=STACK_FILL, edgecolor=STACK_STROKE, tail=True,
-    )
-    draw_text(ax, planar_inv["cx"], planar_inv["top"] + 0.17,
-              r"$\mathrm{VNInv}_2(\mathbf{Z}_{\perp})$", size=12)
-
-    # Reattach the axial component, which is already SO(2)-invariant.
-    latent_out = draw_tensor(
-        ax, 9.72, 1.72, 3, 3, cell=0.20, gap=0.025,
-        facecolor=STACK_FILL, edgecolor=STACK_STROKE, tail=True,
-    )
-    draw_text(ax, latent_out["cx"], latent_out["bottom"] - 0.22,
-              r"$\mathbf{Z}_{\mathbf{g},\mathrm{inv}}\in"
-              r"\mathbb{R}^{3\times N_z}$", size=13)
-    arrow(ax, (planar_inv["right"] + 0.05, planar_inv["cy"]),
-          (latent_out["left"] - 0.05, latent_out["bottom"] + 0.31),
-          lw=1.0, mutation_scale=12)
-    bypass_x = z_parallel["right"] + 0.27
-    bypass_y = 3.12
-    ax.plot(
-        [z_parallel["right"] + 0.05, bypass_x, bypass_x, latent_out["left"] - 0.38],
-        [z_parallel["cy"], z_parallel["cy"], bypass_y, bypass_y],
-        color=ARROW_COLOR,
-        linewidth=0.95,
-        zorder=1,
-    )
-    arrow(ax, (latent_out["left"] - 0.38, bypass_y),
-          (latent_out["left"] - 0.05, latent_out["top"] - 0.10),
-          lw=0.95, mutation_scale=11)
-    return latent_out
-
-
 def draw_attention_decoder(ax, x, y, w, h):
     rounded_box(ax, x, y, w, h, facecolor="#F5F5F5",
                 edgecolor="#8C8C8C", lw=1.2, rounding=0.14, zorder=2)
-    draw_text(ax, x + w / 2, y + h - 0.27, "Attention Decoder", size=14)
-    attn_x, attn_y, attn_w, attn_h = x + 0.27, y + 0.48, 1.08, 1.12
-    rounded_box(ax, attn_x, attn_y, attn_w, attn_h,
+    draw_text(ax, x + w / 2, y + h - 0.27, "Attention Decoder", size=13.5)
+    blk_y = y + 0.44
+    blk_h = h - 0.89
+    attn_x, attn_w = x + 0.24, 1.06
+    rounded_box(ax, attn_x, blk_y, attn_w, blk_h,
                 facecolor=BLUE_FILL, edgecolor=BLUE_STROKE,
                 lw=1.1, rounding=0.10, zorder=3)
-    draw_text(ax, attn_x + attn_w / 2, attn_y + attn_h / 2,
+    draw_text(ax, attn_x + attn_w / 2, blk_y + blk_h / 2,
               "Multi-Head\nAttention", size=10, color=BLUE_TEXT)
-    ffn_x, ffn_y, ffn_w, ffn_h = x + 1.58, y + 0.48, 0.72, 1.12
-    rounded_box(ax, ffn_x, ffn_y, ffn_w, ffn_h,
+    ffn_x, ffn_w = x + 1.62, 0.64
+    rounded_box(ax, ffn_x, blk_y, ffn_w, blk_h,
                 facecolor=GREEN_FILL, edgecolor=GREEN_STROKE,
                 lw=1.1, rounding=0.10, zorder=3)
-    draw_text(ax, ffn_x + ffn_w / 2, ffn_y + ffn_h / 2,
-              "FFN", size=12)
-    arrow(ax, (attn_x + attn_w, attn_y + attn_h / 2),
-          (ffn_x - 0.04, ffn_y + ffn_h / 2),
-          lw=1.0, mutation_scale=12)
-    draw_text(ax, x + w / 2, y + 0.22,
+    draw_text(ax, ffn_x + ffn_w / 2, blk_y + blk_h / 2, "FFN", size=12)
+    arrow(ax, (attn_x + attn_w, blk_y + blk_h / 2),
+          (ffn_x - 0.04, blk_y + blk_h / 2),
+          lw=1.0, mutation_scale=12, zorder=4)
+    draw_text(ax, x + w / 2, y + 0.21,
               r"$\times\,N_{\mathrm{layer}}$", size=11, color="#555555")
     return {
         "left": x,
         "right": x + w,
-        "query_y": attn_y + 0.77 * attn_h,
-        "condition_y": attn_y + 0.27 * attn_h,
-        "output_y": ffn_y + ffn_h / 2,
+        "output_y": y + h / 2,
     }
+
+
+def arrow_through_chip(ax, start, end, chip_cx, chip_cy, chip_r, label,
+                       label_size=16):
+    """Split a straight arrow around a small rounded chip drawn on the path."""
+    rounded_box(ax, chip_cx - chip_r, chip_cy - chip_r, 2 * chip_r, 2 * chip_r,
+                facecolor="#FFF0C8", edgecolor="#D1A94B",
+                lw=1.0, rounding=0.09, zorder=3)
+    draw_text(ax, chip_cx, chip_cy, label, size=label_size, zorder=4)
+    vec = np.array(end, dtype=float) - np.array(start, dtype=float)
+    unit = vec / np.linalg.norm(vec)
+    pad = 1.25 * chip_r
+    ax.plot([start[0], chip_cx - pad * unit[0]],
+            [start[1], chip_cy - pad * unit[1]],
+            color=ARROW_COLOR, linewidth=1.05, zorder=1)
+    arrow(ax, (chip_cx + pad * unit[0], chip_cy + pad * unit[1]), end,
+          lw=1.05, mutation_scale=13)
 
 
 def build_figure(args):
@@ -602,117 +484,250 @@ def build_figure(args):
         roll=args.sphere_roll,
     )
 
-    fig, ax = plt.subplots(figsize=(16.8, 7.2), dpi=args.dpi)
-    ax.set_xlim(0, 16.8)
-    ax.set_ylim(0, 7.2)
+    fig, ax = plt.subplots(figsize=(15.6, 6.62), dpi=args.dpi)
+    ax.set_xlim(0, 15.6)
+    ax.set_ylim(0, 6.62)
     ax.set_aspect("equal")
     ax.axis("off")
 
+    # Layout: one lane per decoder input. The direction lane runs along
+    # y=Y_DPAR/Y_DPERP into the query box; the latent lane runs along
+    # y=Y_ZPERP/Y_ZPAR into the conditioning box. Z_perp fans out at one
+    # junction dot to serve both boxes, the only cross-lane dependency.
+    x_sphere, r_sphere = 1.30, 0.78
+    x_fork = 2.44
+    x_tok = 2.80
+    y_dpar, y_dperp = 5.32, 4.60
+    y_zperp, y_zpar = 2.12, 1.40
+    y_query = (y_dpar + y_dperp) / 2
+    y_latent = (y_zperp + y_zpar) / 2
+    x_box, w_box = 5.15, 3.65
+    qbox_y, qbox_h = 4.22, 1.28
+    kbox_y, kbox_h = 1.06, 1.28
+    x_junction = 4.15
+    y_riser = qbox_y + 0.14
+    dec_x, dec_w, dec_h = 10.35, 2.50, 2.40
+    lane_q = qbox_y + qbox_h / 2
+    lane_k = kbox_y + kbox_h / 2
+    dec_y = (lane_q + lane_k) / 2 - dec_h / 2  # centred between the lanes
+
     # Column headings and colour key.
-    draw_text(ax, 1.35, 6.92, "Equivariant Inputs", size=15,
-              fontweight="bold")
-    draw_text(ax, 6.55, 6.92, "Gravity-Axis Invariants", size=15,
-              fontweight="bold")
-    draw_text(ax, 12.68, 6.92, "Conditional Decoder", size=15,
-              fontweight="bold")
-    ax.plot([0.15, 3.25], [6.69, 6.69], color="#B0B0B0", linewidth=0.8)
-    ax.plot([3.55, 10.75], [6.69, 6.69], color="#B0B0B0", linewidth=0.8)
-    ax.plot([11.05, 16.65], [6.69, 6.69], color="#B0B0B0", linewidth=0.8)
-    rounded_box(ax, 6.80, 6.37, 0.20, 0.20, CELL_FILL, CELL_STROKE,
+    for cx_head, text in ((2.15, "Inputs"),
+                          (6.85, "Gravity-Axis Invariants"),
+                          (12.80, "Conditional Decoder")):
+        draw_text(ax, cx_head, 6.36, text, size=15, fontweight="bold")
+    for x0, x1 in ((0.20, 4.10), (4.40, 9.85), (10.15, 15.40)):
+        ax.plot([x0, x1], [6.12, 6.12], color="#B0B0B0", linewidth=0.8)
+    # Legend chips, centred as a group on the canvas midline.
+    rounded_box(ax, 5.86, 0.24, 0.20, 0.20, CELL_FILL, CELL_STROKE,
                 lw=0.7, rounding=0.03)
-    draw_text(ax, 7.11, 6.47, "rotates in the horizontal plane", size=10,
+    draw_text(ax, 6.17, 0.34, "rotates in the horizontal plane", size=10,
               ha="left", color="#555555")
-    rounded_box(ax, 10.18, 6.37, 0.20, 0.20, STACK_FILL, STACK_STROKE,
+    rounded_box(ax, 8.82, 0.24, 0.20, 0.20, STACK_FILL, STACK_STROKE,
                 lw=0.7, rounding=0.03)
-    draw_text(ax, 10.49, 6.47, "invariant", size=10, ha="left",
+    draw_text(ax, 9.13, 0.34, "invariant", size=10, ha="left",
               color="#555555")
 
     # Inputs and their decomposition about the thesis-wide gravity axis g=e_y.
-    draw_query_sphere(ax, 1.18, 5.33, 0.76)
-    draw_latent_sphere(ax, 1.18, 1.88, 0.76)
-    draw_text(ax, 1.18, 4.25, r"$\mathbf{g}=\mathbf{e}_y$", size=12)
+    draw_query_sphere(ax, x_sphere, y_query, r_sphere)
+    draw_latent_sphere(ax, x_sphere, y_latent, r_sphere)
+    draw_text(ax, x_sphere, (y_query + y_latent) / 2, r"$\mathbf{g}=\mathbf{e}_y$",
+              size=12)
 
-    split_x = 2.18
-    arrow(ax, (1.95, 5.33), (split_x, 5.33), lw=1.0, mutation_scale=12)
-    ax.plot([split_x, split_x], [5.02, 5.90], color=ARROW_COLOR, linewidth=1.0)
+    # Direction split: axial coordinate and planar projection.
+    ax.plot([x_sphere + r_sphere + 0.02, x_fork], [y_query, y_query],
+            color=ARROW_COLOR, linewidth=1.0)
+    ax.plot([x_fork, x_fork], [y_dperp, y_dpar], color=ARROW_COLOR,
+            linewidth=1.0)
     d_parallel = draw_tensor(
-        ax, 2.53, 5.76, 1, 1, cell=0.30,
+        ax, x_tok, y_dpar - 0.15, 1, 1, cell=0.30,
         facecolor=STACK_FILL, edgecolor=STACK_STROKE,
     )
-    draw_text(ax, d_parallel["cx"], d_parallel["top"] + 0.18,
-              r"$d_{\parallel}=\mathbf{g}^{\mathsf{T}}\mathbf{d}$", size=12)
+    draw_text(ax, d_parallel["cx"], d_parallel["top"] + 0.20,
+              r"$d_{\parallel}=\mathbf{g}^{\mathsf{T}}\mathbf{d}$", size=11.5)
     d_perp = draw_tensor(
-        ax, 2.53, 4.82, 2, 1, cell=0.27, gap=0.035,
+        ax, x_tok, y_dperp - 0.2775, 2, 1, cell=0.26, gap=0.035,
         facecolor=CELL_FILL, edgecolor=CELL_STROKE,
     )
-    draw_text(ax, d_perp["cx"], d_perp["bottom"] - 0.18,
-              r"$\mathbf{d}_{\perp}=\mathbf{B}_{\mathbf{g}}\mathbf{d}$", size=12)
-    arrow(ax, (split_x, 5.86), (d_parallel["left"] - 0.04, d_parallel["cy"]),
+    draw_text(ax, d_perp["cx"], d_perp["bottom"] - 0.20,
+              r"$\mathbf{d}_{\perp}=\mathbf{B}_{\mathbf{g}}\mathbf{d}$",
+              size=11.5)
+    arrow(ax, (x_fork, y_dpar), (x_tok - 0.04, y_dpar),
           lw=0.9, mutation_scale=11)
-    arrow(ax, (split_x, 5.06), (d_perp["left"] - 0.04, d_perp["cy"]),
+    arrow(ax, (x_fork, y_dperp), (x_tok - 0.04, y_dperp),
           lw=0.9, mutation_scale=11)
 
-    arrow(ax, (1.95, 1.88), (split_x, 1.88), lw=1.0, mutation_scale=12)
-    ax.plot([split_x, split_x], [1.28, 2.58], color=ARROW_COLOR, linewidth=1.0)
-    z_parallel = draw_tensor(
-        ax, 2.53, 2.43, 1, 3, cell=0.20, gap=0.025,
-        facecolor=STACK_FILL, edgecolor=STACK_STROKE, tail=True,
-    )
-    draw_text(ax, z_parallel["cx"], z_parallel["top"] + 0.18,
-              r"$\mathbf{Z}_{\parallel}=\mathbf{g}^{\mathsf{T}}\mathbf{Z}$",
-              size=12)
+    # Latent split. Z_perp sits nearest the query lane it also feeds.
+    ax.plot([x_sphere + r_sphere + 0.02, x_fork], [y_latent, y_latent],
+            color=ARROW_COLOR, linewidth=1.0)
+    ax.plot([x_fork, x_fork], [y_zpar, y_zperp], color=ARROW_COLOR,
+            linewidth=1.0)
     z_perp = draw_tensor(
-        ax, 2.53, 1.12, 2, 3, cell=0.20, gap=0.025,
+        ax, x_tok, y_zperp - 0.2125, 2, 3, cell=0.20, gap=0.025,
         facecolor=CELL_FILL, edgecolor=CELL_STROKE, tail=True,
     )
-    draw_text(ax, z_perp["cx"], z_perp["bottom"] - 0.20,
+    draw_text(ax, z_perp["cx"], z_perp["top"] + 0.20,
               r"$\mathbf{Z}_{\perp}=\mathbf{B}_{\mathbf{g}}\mathbf{Z}$",
-              size=12)
-    arrow(ax, (split_x, 2.53), (z_parallel["left"] - 0.04, z_parallel["cy"]),
+              size=11.5)
+    z_parallel = draw_tensor(
+        ax, x_tok, y_zpar - 0.10, 1, 3, cell=0.20, gap=0.025,
+        facecolor=STACK_FILL, edgecolor=STACK_STROKE, tail=True,
+    )
+    draw_text(ax, z_parallel["cx"], z_parallel["bottom"] - 0.20,
+              r"$\mathbf{Z}_{\parallel}=\mathbf{g}^{\mathsf{T}}\mathbf{Z}$",
+              size=11.5)
+    arrow(ax, (x_fork, y_zperp), (x_tok - 0.04, y_zperp),
           lw=0.9, mutation_scale=11)
-    arrow(ax, (split_x, 1.31), (z_perp["left"] - 0.04, z_perp["cy"]),
+    arrow(ax, (x_fork, y_zpar), (x_tok - 0.04, y_zpar),
           lw=0.9, mutation_scale=11)
 
-    directional = draw_directional_invariant(ax, d_parallel, d_perp, z_perp)
-    latent = draw_latent_invariant(ax, z_parallel, z_perp)
-
-    # Only the directional invariant receives the NeRF positional encoding.
-    lambda_x, lambda_y, lambda_w, lambda_h = 10.08, 4.91, 0.58, 0.58
-    rounded_box(ax, lambda_x, lambda_y, lambda_w, lambda_h,
-                facecolor="#FFF0C8", edgecolor="#D1A94B",
-                lw=1.0, rounding=0.09)
-    draw_text(ax, lambda_x + lambda_w / 2, lambda_y + lambda_h / 2,
-              r"$\lambda$", size=16)
-    arrow(ax, (directional["right"] + 0.03, directional["cy"]),
-          (lambda_x - 0.04, lambda_y + lambda_h / 2),
+    # Invariant query: thesis eqn for z_{d,g}, one box.
+    rounded_box(ax, x_box, qbox_y, w_box, qbox_h,
+                facecolor=STACK_FILL, edgecolor=STACK_STROKE,
+                lw=1.2, rounding=0.12)
+    draw_text(ax, x_box + w_box / 2, qbox_y + 0.66 * qbox_h,
+              r"$\mathbf{z}_{d,\mathbf{g}}=\left(d_{\parallel},\ "
+              r"\mathbf{Z}_{\perp}^{\mathsf{T}}\mathbf{d}_{\perp},\ "
+              r"\Vert\mathbf{d}_{\perp}\Vert_2\right)$", size=13)
+    draw_text(ax, x_box + w_box / 2, qbox_y + 0.28 * qbox_h,
+              r"$\in\mathbb{R}^{N_z+2}$", size=11, color="#555555")
+    arrow(ax, (d_parallel["right"] + 0.05, y_dpar), (x_box - 0.03, y_dpar),
+          lw=1.0, mutation_scale=12)
+    arrow(ax, (d_perp["right"] + 0.05, y_dperp), (x_box - 0.03, y_dperp),
           lw=1.0, mutation_scale=12)
 
-    decoder = draw_attention_decoder(ax, 11.28, 2.72, 2.42, 2.22)
-    arrow(ax, (lambda_x + lambda_w + 0.04, lambda_y + lambda_h / 2),
-          (decoder["left"] - 0.04, decoder["query_y"]),
-          lw=1.05, mutation_scale=13)
-    draw_text(ax, 10.94, decoder["query_y"] + 0.13, r"$Q$", size=12)
-    arrow(ax, (latent["right"] + 0.04, latent["cy"]),
-          (decoder["left"] - 0.04, decoder["condition_y"]),
-          lw=1.05, mutation_scale=13,
-          connectionstyle="arc3,rad=0.08")
-    draw_text(ax, 10.94, decoder["condition_y"] - 0.15,
-              r"$K,V$", size=12)
+    # Invariant condition: thesis eqn for Z_{g,inv}.
+    rounded_box(ax, x_box, kbox_y, w_box, kbox_h,
+                facecolor=STACK_FILL, edgecolor=STACK_STROKE,
+                lw=1.2, rounding=0.12)
+    draw_text(ax, x_box + w_box / 2, kbox_y + 0.62 * kbox_h,
+              r"$\mathbf{Z}_{\mathbf{g},\mathrm{inv}}=\left[\,"
+              r"\mathbf{Z}_{\parallel}\,;\ \mathbf{Z}_{\perp}"
+              r"\hat{\mathbf{Q}}^{\mathsf{T}}\right]$", size=13)
+    draw_text(ax, x_box + w_box / 2, kbox_y + 0.30 * kbox_h,
+              r"$\in\mathbb{R}^{3\times N_z}$", size=11, color="#555555")
+    arrow(ax, (z_parallel["right"] + 0.05, y_zpar), (x_box - 0.03, y_zpar),
+          lw=1.0, mutation_scale=12)
 
-    c_x = 14.08
-    arrow(ax, (decoder["right"] + 0.04, decoder["output_y"]),
-          (c_x - 0.22, decoder["output_y"]), lw=1.1, mutation_scale=14)
+    # Z_perp fans out at a junction dot: through the channelwise Vector
+    # Neuron branch into the conditioning box, and up one elbow into the
+    # query box as the raw planar inner products.
+    ax.plot([z_perp["right"] + 0.05, x_junction], [y_zperp, y_zperp],
+            color=ARROW_COLOR, linewidth=1.0)
+    ax.plot([x_junction], [y_zperp], marker="o", color=ARROW_COLOR,
+            markersize=4.2, zorder=4)
+    vn_w, vn_h = 0.55, 0.58
+    vn_x = (x_junction + x_box) / 2 - vn_w / 2 - 0.09
+    ax.plot([x_junction, vn_x + 0.02], [y_zperp, y_zperp],
+            color=ARROW_COLOR, linewidth=1.0)
+    draw_vn_glyph(ax, vn_x, y_zperp - vn_h / 2, w=vn_w, h=vn_h)
+    arrow(ax, (vn_x + vn_w, y_zperp), (x_box - 0.03, y_zperp),
+          lw=1.0, mutation_scale=12)
+    ax.plot([x_junction, x_junction], [y_zperp, y_riser],
+            color=ARROW_COLOR, linewidth=1.0)
+    arrow(ax, (x_junction, y_riser), (x_box - 0.03, y_riser),
+          lw=1.0, mutation_scale=12)
+
+    # Annotation callout: ONE shared planar frame is predicted from all
+    # latent channels by the Vector Neuron branch and Gram-Schmidt
+    # orthonormalised; every channel is read out against it, so the inner
+    # products cancel the shared rotation while retaining inter-channel
+    # structure. The mini states below show three channels and the
+    # orthonormal frame before and after R_2: everything co-rotates, the
+    # readouts are unchanged.
+    note_x, note_y, note_w, note_h = x_box, 2.52, w_box, 1.50
+    rounded_box(ax, note_x, note_y, note_w, note_h,
+                facecolor="white", edgecolor="#999999", lw=0.9,
+                rounding=0.10, linestyle=(0, (4, 3)))
+    note_cx = note_x + note_w / 2
+    draw_text(ax, note_cx, note_y + 0.87 * note_h,
+              r"$\hat{\mathbf{Q}}=\mathrm{GS}\!\left(\mathrm{VN}"
+              r"(\mathbf{Z}_{\perp})\right),\quad"
+              r"\tilde{z}_{ik}=\hat{\mathbf{q}}_k^{\mathsf{T}}"
+              r"\mathbf{z}_{\perp,i}$", size=10)
+    draw_text(ax, note_cx, note_y + 0.66 * note_h,
+              r"$\hat{\mathbf{Q}}$ co-rotates:  "
+              r"$(\mathbf{R}_2\hat{\mathbf{q}}_k)^{\mathsf{T}}"
+              r"(\mathbf{R}_2\mathbf{z}_{\perp,i})=\tilde{z}_{ik}$",
+              size=9.3, color="#444444")
+    ax.plot([vn_x + vn_w - 0.06, note_x], [y_zperp + vn_h / 2, note_y + 0.26],
+            color="#999999", linewidth=0.9, linestyle=(0, (4, 3)), zorder=1)
+
+    fan_y = note_y + 0.24 * note_h
+    chan_angs = (40.0, 105.0, 215.0)
+    chan_lens = (0.46, 0.34, 0.26)
+    q_ang, q_len = 68.0, 0.36     # orthonormal frame: q1 at q_ang, q2 at +90
+    for fx, rot_deg in ((note_cx - 1.00, 0.0), (note_cx + 1.00, 50.0)):
+        fo = (fx, fan_y)
+        ax.plot([fo[0]], [fo[1]], marker="o", color="#333333",
+                markersize=2.2, zorder=5)
+        # The shared orthonormal frame (unit, perpendicular), co-rotating.
+        for qa in (q_ang + rot_deg, q_ang + 90.0 + rot_deg):
+            qr = np.deg2rad(qa)
+            arrow(ax, fo, (fo[0] + q_len * np.cos(qr),
+                           fo[1] + q_len * np.sin(qr)),
+                  color=BLUE_STROKE, lw=1.2, mutation_scale=8, zorder=5)
+        # The latent channels, co-rotating with it.
+        for ca, cl in zip(chan_angs, chan_lens):
+            rad = np.deg2rad(ca + rot_deg)
+            arrow(ax, fo, (fo[0] + cl * np.cos(rad), fo[1] + cl * np.sin(rad)),
+                  color=VEC_COLOR, lw=1.2, mutation_scale=9, zorder=6)
+    u0 = np.array([np.cos(np.deg2rad(chan_angs[0])),
+                   np.sin(np.deg2rad(chan_angs[0]))])
+    draw_text(ax, note_cx - 1.00 + 0.58 * u0[0] + 0.08,
+              fan_y + 0.58 * u0[1],
+              r"$\mathbf{z}_{\perp,i}$", size=7.5)
+    q1 = np.array([np.cos(np.deg2rad(q_ang + 90.0)),
+                   np.sin(np.deg2rad(q_ang + 90.0))])
+    draw_text(ax, note_cx - 1.00 + 0.50 * q1[0] - 0.05,
+              fan_y + 0.50 * q1[1] - 0.10,
+              r"$\hat{\mathbf{q}}_k$", size=7.5)
+    arrow(ax, (note_cx - 0.40, fan_y + 0.13), (note_cx + 0.40, fan_y + 0.13),
+          color="#888888", lw=0.8, mutation_scale=8,
+          connectionstyle="arc3,rad=-0.28", zorder=5)
+    draw_text(ax, note_cx, fan_y - 0.16, r"$\mathbf{R}_2$", size=8.5,
+              color="#666666")
+
+    # Decoder, centred between the two lanes; entries mirror about it.
+    decoder = draw_attention_decoder(ax, dec_x, dec_y, dec_w, dec_h)
+    query_entry = (dec_x, dec_y + dec_h / 2 + 0.80)
+    condition_entry = (dec_x, dec_y + dec_h / 2 - 0.80)
+
+    # Only the query receives the NeRF positional encoding lambda.
+    q_start = (x_box + w_box, qbox_y + qbox_h / 2)
+    chip = (np.array(q_start) + np.array(query_entry)) / 2
+    arrow_through_chip(ax, q_start, query_entry, chip[0], chip[1], 0.28,
+                       r"$\lambda$")
+
+    def label_beside(start, end, frac, dist, text):
+        """Place text at ``frac`` along start->end, offset ``dist`` along
+        the left-hand normal (negative for the right-hand side)."""
+        s, e = np.array(start, dtype=float), np.array(end, dtype=float)
+        unit = (e - s) / np.linalg.norm(e - s)
+        normal = np.array([-unit[1], unit[0]])
+        pos = s + frac * (e - s) + dist * normal
+        draw_text(ax, pos[0], pos[1], text, size=12)
+
+    label_beside(q_start, query_entry, 0.80, 0.27, r"$Q$")
+    kv_start = (x_box + w_box, kbox_y + kbox_h / 2)
+    arrow(ax, kv_start, condition_entry, lw=1.05, mutation_scale=13)
+    label_beside(kv_start, condition_entry, 0.72, -0.28, r"$K,V$")
+
+    c_x = 13.34
+    arrow(ax, (decoder["right"], decoder["output_y"]),
+          (c_x - 0.24, decoder["output_y"]), lw=1.1, mutation_scale=14)
     draw_text(ax, c_x, decoder["output_y"],
               r"$\hat{\mathbf{c}}(\mathbf{d})$", size=13)
-    sphere_cx = 15.64
-    draw_output_sphere(ax, output_sphere, sphere_cx, decoder["output_y"], 0.88,
-                       red_line_start_x=c_x + 0.30)
-    draw_text(ax, sphere_cx, 2.24,
+    sphere_cx, sphere_r = 14.52, 0.85
+    draw_output_sphere(ax, output_sphere, sphere_cx, decoder["output_y"],
+                       sphere_r, red_line_start_x=c_x + 0.28)
+    draw_text(ax, sphere_cx, decoder["output_y"] - sphere_r - 0.28,
               r"$f_{\boldsymbol{\Theta}}(\mathbf{d},\mathbf{Z})$", size=13)
 
     if args.envmap_label:
         label = args.envmap.name
-        text = draw_text(ax, sphere_cx, 1.98, label, size=7)
+        text = draw_text(ax, sphere_cx,
+                         decoder["output_y"] - sphere_r - 0.54, label, size=7)
         text.set_path_effects([patheffects.withStroke(linewidth=2, foreground="white")])
 
     return fig

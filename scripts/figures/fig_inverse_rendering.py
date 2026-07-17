@@ -215,6 +215,8 @@ def load_inverse_model(load_dir: Path, device: str,
     saved_model = config["pipeline"]["model"]
     model_config.pipeline.model.illumination_field_ckpt_path = \
         _remap_field_ckpt(saved_model["illumination_field_ckpt_path"])
+    model_config.pipeline.model.illumination_field_ckpt_step = \
+        saved_model.get("illumination_field_ckpt_step", 50000)
     # Two-bracket decoders emit six sigmoid channels blended to linear HDR; the
     # flags are absent in the paper (3-channel) configs and default off.
     model_config.pipeline.model.two_bracket = saved_model.get("two_bracket", False)
@@ -230,6 +232,8 @@ def load_inverse_model(load_dir: Path, device: str,
                 "last_layer_linear", "trainable_scale", "old_implementation")
         field_kwargs = {k: fld[k] for k in keys}
         field_kwargs["out_features"] = fld.get("out_features", 3)
+        field_kwargs["canonical_frame_orthonormalise"] = fld.get(
+            "canonical_frame_orthonormalise", False)
         model_config.pipeline.model.illumination_field = RENIFieldConfig(**field_kwargs)
     elif "spherical_harmonic_order" in fld:
         model_config.pipeline.model.illumination_field = \

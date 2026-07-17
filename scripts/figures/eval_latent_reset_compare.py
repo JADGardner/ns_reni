@@ -150,6 +150,7 @@ def _copy_field_settings(field_config: Any, saved_field: Dict[str, Any]) -> None
         "trainable_scale",
         "old_implementation",
         "view_train_latents",
+        "canonical_frame_orthonormalise",
     ):
         if key in saved_field and hasattr(field_config, key):
             setattr(field_config, key, saved_field[key])

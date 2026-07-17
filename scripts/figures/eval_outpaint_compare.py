@@ -114,6 +114,25 @@ def _visible_mask(height: int, width: int) -> torch.Tensor:
     return mask
 
 
+def _frustum_mask(height: int, width: int, fov_h_deg: float,
+                  fov_v_deg: float) -> torch.Tensor:
+    """[H, W] mask, 1 = visible. Central pinhole frustum: a camera looking at
+    the ERP centre (lon = 0, lat = 0) with the given horizontal/vertical FoV.
+    Pinhole constraints on the image plane: |x/z| <= tan(fov_h/2) and
+    |y/z| <= tan(fov_v/2), which on the ERP grid become |tan(lon)| <= tan(a)
+    and |tan(lat)| <= tan(b) cos(lon)."""
+    lon = ((torch.arange(width) + 0.5) / width * 2.0 - 1.0) * math.pi
+    lat = (0.5 - (torch.arange(height) + 0.5) / height) * math.pi
+    lon = lon.unsqueeze(0).expand(height, width)
+    lat = lat.unsqueeze(1).expand(height, width)
+    tan_a = math.tan(math.radians(fov_h_deg) / 2.0)
+    tan_b = math.tan(math.radians(fov_v_deg) / 2.0)
+    front = lon.abs() < math.pi / 2.0
+    in_h = lon.tan().abs() <= tan_a
+    in_v = lat.tan().abs() <= tan_b * lon.cos()
+    return (front & in_h & in_v).float()
+
+
 def _region_slice(region: str, width: int) -> slice:
     if region == "full":
         return slice(0, width)
@@ -145,7 +164,15 @@ def fit_latent_on_visible(
     if visible.numel() == 0:
         raise ValueError("Visible mask contains no pixels")
 
-    z = torch.zeros(1, model.field.latent_dim, 3, device=device, requires_grad=True)
+    z = torch.zeros(1, model.field.latent_dim, 3, device=device)
+    if (
+        model.field.config.invariant_function in ("VNCanonical", "VNJoint")
+        and getattr(model.field.config, "canonical_frame_orthonormalise", False)
+    ):
+        # Z=0 is a gradient singularity of the orthonormalised frame
+        # (Gram-Schmidt Jacobian ~1/||q||); start a hair off it.
+        z = 1e-2 * torch.randn(1, model.field.latent_dim, 3, device=device)
+    z = z.requires_grad_(True)
     optimiser = torch.optim.Adam([z], lr=lr)
 
     fit_samples = model.create_ray_samples(
@@ -258,6 +285,27 @@ def region_metrics(
     return out
 
 
+def region_metrics_masked(
+    pred_lin: torch.Tensor,
+    gt_lin: torch.Tensor,
+    pred_ldr: torch.Tensor,
+    gt_ldr: torch.Tensor,
+    mask: torch.Tensor,
+) -> Dict[str, float]:
+    """PSNR-only metrics on an arbitrary pixel mask (frustum regions).
+
+    SSIM/LPIPS and the directional peak metrics need contiguous images, so
+    for masked regions they are reported as NaN; nanmean averaging and the
+    summary printer already handle that."""
+    sel = mask.reshape(-1).bool().to(pred_lin.device)
+    out = {m: float("nan") for m in METRICS}
+    out["psnr_hdr"] = float(_psnr(pred_lin.reshape(-1, 3)[sel],
+                                  gt_lin.reshape(-1, 3)[sel]))
+    out["psnr_ldr"] = float(_psnr(pred_ldr.reshape(-1, 3)[sel],
+                                  gt_ldr.reshape(-1, 3)[sel]))
+    return out
+
+
 def evaluate_run(
     label: str,
     run_path: Path,
@@ -267,6 +315,9 @@ def evaluate_run(
     prior_weight: float,
     seed: int,
     max_images: Optional[int],
+    mask_mode: str = "halves",
+    fov_h: float = 90.0,
+    fov_v: float = 60.0,
 ) -> Dict[str, Any]:
     seed_all(seed)
     run_dir = resolve_run_dir(run_path)
@@ -303,7 +354,10 @@ def evaluate_run(
         height, width, channels = gt_raw.shape
         gt_raw = gt_raw.to(device)
 
-        mask = _visible_mask(height, width)
+        if mask_mode == "frustum":
+            mask = _frustum_mask(height, width, fov_h, fov_v)
+        else:
+            mask = _visible_mask(height, width)
         ray_bundle = equirect_ray_bundle(device, idx=0, height=height)
 
         z = fit_latent_on_visible(model, gt_raw, mask, ray_bundle, device, prior_weight)
@@ -325,12 +379,24 @@ def evaluate_run(
             gt_ldr = linear_to_sRGB(gt_lin, use_quantile=True)
             pred_ldr = linear_to_sRGB(pred_lin, use_quantile=True)
 
-        image_metrics = {
-            region: region_metrics(
-                model, pred_lin, pred_lin_unaligned, gt_lin, pred_ldr, gt_ldr, region, peak_alignment,
-            )
-            for region in REGIONS
-        }
+        if mask_mode == "frustum":
+            image_metrics = {
+                "full": region_metrics(
+                    model, pred_lin, pred_lin_unaligned, gt_lin, pred_ldr,
+                    gt_ldr, "full", peak_alignment,
+                ),
+                "visible": region_metrics_masked(
+                    pred_lin, gt_lin, pred_ldr, gt_ldr, mask),
+                "hidden": region_metrics_masked(
+                    pred_lin, gt_lin, pred_ldr, gt_ldr, 1.0 - mask),
+            }
+        else:
+            image_metrics = {
+                region: region_metrics(
+                    model, pred_lin, pred_lin_unaligned, gt_lin, pred_ldr, gt_ldr, region, peak_alignment,
+                )
+                for region in REGIONS
+            }
         per_image.append(image_metrics)
         print(f"  [{label}] idx={idx:02d} "
               f"hidden psnr_hdr={image_metrics['hidden']['psnr_hdr']:6.2f} "
@@ -388,7 +454,7 @@ def _write_outputs(output_stem: Path, results: Dict[str, Any]) -> None:
 
 
 def _print_summary(results: Dict[str, Any]) -> None:
-    print("\nOutpainting summary (latent fit on VISIBLE half; prior_weight="
+    print(f"\nOutpainting summary (mask={results['mask']}; prior_weight="
           f"{results['prior_weight']})")
     name_width = max(12, *(len(k) for k in results["models"]))
     cols = [
@@ -420,6 +486,13 @@ def main() -> None:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--prior", choices=["on", "off"], default="off",
                         help="Include the 1e-4 z^2 latent prior term in the fit loss.")
+    parser.add_argument("--mask", choices=["halves", "frustum"], default="halves",
+                        help="Visible region: right half (default) or a central "
+                             "pinhole frustum looking at the ERP centre.")
+    parser.add_argument("--fov-h", type=float, default=90.0,
+                        help="Frustum horizontal FoV in degrees (frustum mask only).")
+    parser.add_argument("--fov-v", type=float, default=60.0,
+                        help="Frustum vertical FoV in degrees (frustum mask only).")
     parser.add_argument("--latent-steps", type=int, default=None,
                         help="Unused placeholder for parity with sibling scripts; the "
                              "fit uses the fixed fig_outpainting recipe (600 steps).")
@@ -433,15 +506,27 @@ def main() -> None:
     os.environ.setdefault("PYTHONHASHSEED", str(args.seed))
 
     prior_weight = PRIOR_WEIGHT if args.prior == "on" else 0.0
-    output_stem = args.output or (DEFAULT_OUTPUT_DIR / f"outpaint_compare_prior{args.prior}")
+    if args.output is not None:
+        output_stem = args.output
+    elif args.mask == "frustum":
+        output_stem = DEFAULT_OUTPUT_DIR / (
+            f"outpaint_frustum{int(args.fov_h)}x{int(args.fov_v)}_prior{args.prior}")
+    else:
+        output_stem = DEFAULT_OUTPUT_DIR / f"outpaint_compare_prior{args.prior}"
 
     runs = parse_runs(args.run)
     models = {
         label: evaluate_run(label, path, args.data, args.device, args.latent_steps,
-                            prior_weight, args.seed, args.max_images)
+                            prior_weight, args.seed, args.max_images,
+                            mask_mode=args.mask, fov_h=args.fov_h, fov_v=args.fov_v)
         for label, path in runs.items()
     }
 
+    if args.mask == "frustum":
+        mask_desc = (f"central_frustum_{args.fov_h:g}x{args.fov_v:g}deg_visible"
+                     "_rest_hidden")
+    else:
+        mask_desc = "vertical_split_right_visible_left_hidden"
     results = {
         "runs": {label: str(path) for label, path in runs.items()},
         "data": str(args.data),
@@ -451,7 +536,7 @@ def main() -> None:
         "prior_weight": prior_weight,
         "fit_steps": FIT_STEPS,
         "fit_lr": FIT_LR,
-        "mask": "vertical_split_right_visible_left_hidden",
+        "mask": mask_desc,
         "regions": list(REGIONS),
         "models": models,
     }
