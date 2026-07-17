@@ -36,8 +36,10 @@ DIM_GROUPS = {
           ("RENI", "reni_old", 100), ("RENI++", "reni_pp", 100),
           ("RENI++ (thesis)", "vnjoint_ortho_2cyc_testfit", 100)],
 }
-METRICS = ("psnr_ldr", "ssim_ldr", "lpips_ldr")
-HIGHER_BETTER = {"psnr_ldr": True, "ssim_ldr": True, "lpips_ldr": False}
+METRICS = ("psnr_ldr", "ssim_ldr", "lpips_ldr", "psnr_hdr",
+           "psnr_hdr_aligned")
+HIGHER_BETTER = {"psnr_ldr": True, "ssim_ldr": True, "lpips_ldr": False,
+                 "psnr_hdr": True, "psnr_hdr_aligned": True}
 
 
 def evaluate_rendered(family: str, key, device: str):
@@ -45,8 +47,12 @@ def evaluate_rendered(family: str, key, device: str):
     but through the verified render path: optional least-squares scale
     alignment in normalised space (scale_inv_loss models), unnormalise, LDR
     via linear_to_sRGB(use_quantile=True), scored with the model's own
-    PSNR/SSIM/LPIPS modules. Used for SH/SG, whose pipeline metric loop has
-    drifted from the rest of the repo."""
+    PSNR/SSIM/LPIPS modules. Used for SH/SG (whose pipeline metric loop has
+    drifted from the rest of the repo) and, for the shared-gauge HDR column,
+    for RENI/RENI++. NOTE: this path reproduces the published pipeline LDR
+    for SH/SG but NOT for RENI/RENI++ (tone-map protocol differs; e.g.
+    reni_old d36 19.58 here vs 16.21 published) -- the chapter table keeps
+    the published LDR numbers and takes only psnr_hdr from this path."""
     import torch
     from _common import equirect_ray_bundle
     from reni.utils.colourspace import linear_to_sRGB
@@ -70,10 +76,13 @@ def evaluate_rendered(family: str, key, device: str):
     # Verified: pairing is 21/21 identity and reproduces the published 19.15
     # for SH 9th order. Datamanager-based pairing is corrupted by these fits'
     # use_validation_as_train configs -- do not use it here.
-    bank = model.field.train_params
+    if hasattr(model.field, "train_params"):
+        bank_len = model.field.train_params.shape[0]     # SH/SG coefficient bank
+    else:
+        bank_len = model.field.eval_mu.shape[0]          # RENI-family eval bank
     files = sorted(glob.glob(str(REPO_ROOT / "data/RENI_HDR/test/*.exr")))
-    assert bank.shape[0] == len(files), \
-        f"{family}/{key}: bank {bank.shape[0]} vs {len(files)} test EXRs"
+    assert bank_len == len(files), \
+        f"{family}/{key}: bank {bank_len} vs {len(files)} test EXRs"
     sums = {m: 0.0 for m in METRICS}
     for i, f in enumerate(files):
         # Camera-indexed decode (eval banks were mirrored from the fitted
@@ -94,10 +103,22 @@ def evaluate_rendered(family: str, key, device: str):
         sums["psnr_ldr"] += float(model.psnr(gt_t, pred_t))
         sums["ssim_ldr"] += float(model.ssim(gt_t, pred_t))
         sums["lpips_ldr"] += float(model.lpips(gt_t, pred_t))
+        # HDR: shared fixed gauge (GT p99 luminance = 1) with least-squares
+        # scale alignment, the convention of the chapter's HDR evals; these
+        # families train scale-free so the alignment absorbs their gauge.
+        from reni.utils.tonemap import apply_fixed_gauge
+        pred_lin = model.field.unnormalise(out).reshape(H, W, 3)
+        gt_lin = apply_fixed_gauge(img.to(device))
+        scale = (gt_lin * pred_lin).sum() / (pred_lin * pred_lin).sum().clamp(min=1e-12)
+        hdr = float(model.psnr(
+            gt_lin.permute(2, 0, 1)[None],
+            (scale * pred_lin).permute(2, 0, 1)[None]))
+        sums["psnr_hdr"] += hdr
+        sums["psnr_hdr_aligned"] += hdr  # already ls-aligned above
     return {m: v / len(files) for m, v in sums.items()}
 
 
-RENDER_EVAL_FAMILIES = {"sh", "sg"}
+RENDER_EVAL_FAMILIES = {"sh", "sg", "reni_old", "reni_pp"}
 # Two-bracket test-fit shims: their saved config pairs a val split with a
 # 21-latent refit test bank, so the pipeline metric loop mispairs them.
 # Decode each bank latent directly against the sorted test EXRs instead
@@ -144,6 +165,17 @@ def evaluate_two_bracket_bank(family: str, key, device: str):
         sums["psnr_ldr"] += float(model.psnr(gt_t, pred_t))
         sums["ssim_ldr"] += float(model.ssim(gt_t, pred_t))
         sums["lpips_ldr"] += float(model.lpips(gt_t, pred_t))
+        # HDR: fixed-gauge GT, prediction scored raw (the model trains in
+        # the fixed gauge, so no alignment is applied).
+        from reni.utils.tonemap import apply_fixed_gauge
+        gt_lin_g = apply_fixed_gauge(img.to(device))
+        sums["psnr_hdr"] += float(model.psnr(
+            gt_lin_g.permute(2, 0, 1)[None],
+            pred_lin.permute(2, 0, 1)[None]))
+        scale = (gt_lin_g * pred_lin).sum() / (pred_lin * pred_lin).sum().clamp(min=1e-12)
+        sums["psnr_hdr_aligned"] += float(model.psnr(
+            gt_lin_g.permute(2, 0, 1)[None],
+            (scale * pred_lin).permute(2, 0, 1)[None]))
     return {m: v / len(files) for m, v in sums.items()}
 
 
