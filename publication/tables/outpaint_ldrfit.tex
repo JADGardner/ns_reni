@@ -5,11 +5,17 @@
 \cmidrule(lr){2-3}\cmidrule(lr){4-4}\cmidrule(lr){5-6}
 Model & PSNR$_{\text{HDR}}$ $\uparrow$ & PSNR$_{\text{LDR}}$ $\uparrow$ & PSNR$_{\text{HDR}}$ $\uparrow$ & LPIPS$_{\text{LDR}}$ $\downarrow$ & Peak angle $\downarrow$ \\
 \midrule
+SH (9th order) & -1.53 & 4.54 & 1.96 & 0.984 & 62.9 \\
 SH + Gaussian prior & 9.79 & 13.41 & 16.42 & 0.799 & 57.4 \\
+SG (50 lobes) & -31.46 & 5.51 & -31.32 & 0.919 & 60.7 \\
 SG + Gaussian prior & 5.12 & 12.63 & 15.67 & 0.838 & 69.2 \\
 RENI & 6.19 & 12.96 & 17.64 & 0.797 & 57.2 \\
 Published RENI++ & 8.34 & 13.57 & 19.22 & 0.638 & 65.2 \\
-Two-bracket, channelwise (2 cyc) & 9.95 & 13.94 & \textbf{19.83} & 0.634 & 52.1 \\
-Two-bracket, joint GS frame (2 cyc, ours) & \textbf{10.10} & \textbf{14.66} & 19.68 & \textbf{0.627} & \textbf{50.2} \\
+Log-domain (50k) & 5.90 & 12.61 & 19.56 & 0.650 & 78.8 \\
+Log-domain, no reset (100k) & 6.57 & 13.11 & 20.09 & 0.628 & 61.4 \\
+Log-domain, reset (2 cyc) & 8.43 & 12.93 & \textbf{21.35} & 0.620 & \textbf{44.9} \\
+Two-bracket, channelwise (2 cyc) & 9.95 & 13.94 & 19.83 & 0.634 & 52.1 \\
+Two-bracket, joint unnormalised (2 cyc) & 9.95 & 13.57 & 20.32 & \textbf{0.615} & 54.7 \\
+Two-bracket, joint GS frame (2 cyc, ours) & \textbf{10.10} & \textbf{14.66} & 19.68 & 0.627 & 50.2 \\
 \bottomrule
 \end{tabular}

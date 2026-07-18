@@ -16,23 +16,35 @@ EVALS = REPO / "outputs" / "evaluations"
 OUT = REPO / "publication" / "tables"
 
 LABELS = {
+    "sh": "SH (9th order)",
     "sh_prior": "SH + Gaussian prior",
+    "sg": "SG (50 lobes)",
     "sg_prior": "SG + Gaussian prior",
     "reni_old": "RENI",
     "reni_pp": "Published RENI++",
+    "logdom_1cyc": "Log-domain (50k)",
+    "logdom_std_100k": "Log-domain, no reset (100k)",
+    "logdom_2cyc": "Log-domain, reset (2 cyc)",
     "w3_2cyc": "Two-bracket, channelwise (2 cyc)",
+    "vnjoint_2cyc": "Two-bracket, joint unnormalised (2 cyc)",
     "vnjoint_ortho_2cyc": "Two-bracket, joint GS frame (2 cyc, ours)",
 }
-ORDER = ["sh_prior", "sg_prior", "reni_old", "reni_pp", "w3_2cyc",
-         "vnjoint_ortho_2cyc"]
-SOURCE = "outpaint_frustum90x60_ldrfit.csv"
+ORDER = ["sh", "sh_prior", "sg", "sg_prior", "reni_old", "reni_pp",
+         "logdom_1cyc", "logdom_std_100k", "logdom_2cyc", "w3_2cyc",
+         "vnjoint_2cyc", "vnjoint_ortho_2cyc"]
+SOURCES = ("outpaint_frustum90x60_ldrfit.csv",
+           "outpaint_frustum90x60_ldrfit_extra.csv")
 
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     rows = {}
-    for r in csv.DictReader(open(EVALS / SOURCE)):
-        rows[(r["model"], r["region"])] = r
+    for name in SOURCES:
+        path = EVALS / name
+        if not path.exists():
+            continue
+        for r in csv.DictReader(open(path)):
+            rows[(r["model"], r["region"])] = r
     order = [m for m in ORDER if (m, "hidden") in rows]
 
     def best(region, key, lower=False):

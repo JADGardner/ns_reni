@@ -59,8 +59,9 @@ FIT_LR = 1e-2
 SH_LAMBDAS = (1.0, 3.0, 10.0, 30.0)
 SG_LAMBDAS = (0.03, 0.1, 0.3, 1.0, 3.0)
 
-ROWS = ("sh_prior", "sg_prior", "reni_old", "reni_pp", "w3_2cyc",
-        "vnjoint_ortho_2cyc")
+ROWS = ("sh", "sh_prior", "sg", "sg_prior", "reni_old", "reni_pp",
+        "logdom_1cyc", "logdom_std_100k", "logdom_2cyc", "w3_2cyc",
+        "vnjoint_2cyc", "vnjoint_ortho_2cyc")
 
 
 def load_gauge_lin(path: str, device: str) -> torch.Tensor:
@@ -168,16 +169,23 @@ def decode_learnt(model, z, log_s, ray_bundle, device):
 
 
 LEARNT_DIRS = {
-    "reni_old": "reni_old",
-    "reni_pp": "reni_pp",
-    "w3_2cyc": "two_bracket_w3_2cyc",
-    "vnjoint_ortho_2cyc": "vnjoint_ortho_2cyc",
+    "reni_old": ("key", "reni_old"),
+    "reni_pp": ("key", "reni_pp"),
+    "w3_2cyc": ("key", "two_bracket_w3_2cyc"),
+    "vnjoint_ortho_2cyc": ("key", "vnjoint_ortho_2cyc"),
+    # Reset-study shims (paths as in the prioroff eval's runs dict).
+    "logdom_1cyc": ("path", "/workspace/phd/outputs/reni/logdomain_2cyc_step50000"),
+    "logdom_std_100k": ("path", "/workspace/phd/outputs/reni/logdomain_std_step100000"),
+    "logdom_2cyc": ("path", "/workspace/phd/outputs/reni/logdomain_2cyc_step100000"),
+    "vnjoint_2cyc": ("path", "/workspace/phd/outputs/reni/vnjoint_ldrw3_step100000"),
 }
 
 
 def eval_learnt(key: str, files, mask, visible, ray_bundle, model_metrics_host,
                 device):
-    _, _, model = load_model(MODEL_DIRS[LEARNT_DIRS[key]][100], device=device)
+    kind, spec = LEARNT_DIRS[key]
+    model_dir = MODEL_DIRS[spec][100] if kind == "key" else Path(spec)
+    _, _, model = load_model(model_dir, device=device)
     model.eval()
     fit_exposure = not getattr(model, "two_bracket", False)
     per_image = []
@@ -210,14 +218,16 @@ def eval_sh_prior(files, mask, visible, ray_bundle, model_metrics_host, device,
         gauge_lin = load_gauge_lin(f, device)
         target, q = ldr_target(gauge_lin)
         target_vis = target.reshape(-1, 3)[visible]
-        c = mu.reshape(-1, 3).clone().requires_grad_(True)
+        init = mu if lam > 0 else torch.zeros_like(mu)
+        c = init.reshape(-1, 3).clone().requires_grad_(True)
         optimiser = torch.optim.Adam([c], lr=FIT_LR)
         for _ in range(FIT_STEPS):
             optimiser.zero_grad()
             pred_lin_vis = torch.exp(basis_vis @ c)
             loss = ldr_loss(pred_lin_vis, target_vis, q)
-            dev = c.reshape(-1) - mu
-            loss = loss + lam * (dev @ sigma_inv @ dev) / dev.shape[0]
+            if lam > 0:
+                dev = c.reshape(-1) - mu
+                loss = loss + lam * (dev @ sigma_inv @ dev) / dev.shape[0]
             loss.backward()
             optimiser.step()
         with torch.no_grad():
@@ -249,9 +259,10 @@ def eval_sg_prior(files, mask, visible, ray_bundle, model_metrics_host, device,
         for i in range(len(files)):
             loss = loss + ldr_loss(pred_lin[i], targets[i], qs[i])
         loss = loss / len(files)
-        dev = u.reshape(len(files), -1).double() - mu[None]
-        maha = torch.einsum("bi,ij,bj->b", dev, sigma_inv, dev)
-        loss = loss + lam * (maha.mean() / dev.shape[1]).float()
+        if lam > 0:
+            dev = u.reshape(len(files), -1).double() - mu[None]
+            maha = torch.einsum("bi,ij,bj->b", dev, sigma_inv, dev)
+            loss = loss + lam * (maha.mean() / dev.shape[1]).float()
         loss.backward()
         optimiser.step()
     with torch.no_grad():
@@ -295,7 +306,16 @@ def main() -> None:
     results, chosen = {}, {}
     for key in args.rows:
         print(f"[eval] {key}")
-        if key == "sh_prior":
+        if key == "sh":
+            per_image = eval_sh_prior(files_for("test"), mask, visible,
+                                      ray_bundle, metrics_host, device, 0.0)
+        elif key == "sg":
+            _, _, sg_model = load_model(MODEL_DIRS["sg"][300], device=device)
+            per_image = eval_sg_prior(files_for("test"), mask, visible,
+                                      ray_bundle, metrics_host, device, 0.0,
+                                      sg_model.field)
+            del sg_model
+        elif key == "sh_prior":
             best = (None, -1e9)
             for lam in SH_LAMBDAS:
                 v = average(eval_sh_prior(files_for("val"), mask, visible,
