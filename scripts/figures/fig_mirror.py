@@ -34,10 +34,10 @@ def _add_mirror_labels(fig, axs, fontsize):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_args(parser, "mirror_thesis")
-    parser.add_argument("--model", default="two_bracket_w3_1cyc_testfit",
-                        help="MODEL_DIRS key (default: thesis two-bracket 1-cycle "
-                             "test-fit shim; its train latents are the fidelity-"
-                             "optimal decodes; use reni_pp for the paper model)")
+    parser.add_argument("--model", default="vnjoint_ortho_2cyc_testfit",
+                        help="MODEL_DIRS key (default: thesis joint-frame "
+                             "two-bracket 2-cycle test-fit shim; use reni_pp "
+                             "for the paper model)")
     parser.add_argument("--latent_dim", type=int, default=100)
     parser.add_argument("--image_idx", type=int, default=96,
                         help="Train-set latent to decode (paper used 96)")

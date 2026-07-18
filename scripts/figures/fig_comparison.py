@@ -127,7 +127,7 @@ def main():
     parser.add_argument("--image_indices", type=int, nargs="+", default=[1, 2, 3, 4])
     parser.add_argument("--labels", action="store_true",
                         help="Bake current LaTeX/TikZ labels into the figure")
-    parser.add_argument("--reni-model", default="two_bracket_w3_1cyc_testfit",
+    parser.add_argument("--reni-model", default="vnjoint_ortho_2cyc_testfit",
                         help="MODEL_DIRS key for ALL RENI++ rows (D=9/49/100); "
                              "use reni_pp for the paper ladder")
     parser.add_argument("--eval-width", type=int, default=512,

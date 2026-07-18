@@ -99,7 +99,7 @@ from _common import (
 from reni.field_components.field_heads import RENIFieldHeadNames
 from reni.utils.tonemap import two_bracket_to_linear
 
-DEFAULT_MODEL = MODEL_DIRS["two_bracket_w3_1cyc_testfit"][100]
+DEFAULT_MODEL = MODEL_DIRS["vnjoint_ortho_2cyc_testfit"][100]
 DEFAULT_ANGLES = (5, 20, 45, 90, 180, 270)
 DEFAULT_IMAGE_INDICES = (0, 2, 5, 8, 11, 14, 17, 20)
 OUT_DIR = REPO_ROOT / "publication" / "tables"

@@ -5,12 +5,14 @@ RENI++ (D=100), the neural SOLD-Net baseline, and the analytical Hosek-Wilkie
 sky model (fit per-image via L-BFGS-B), then emits the qualitative comparison
 figure and the LaTeX metrics table (thesis Table 2.2).
 
-By default this now uses the thesis two-bracket headline model
-(``two_bracket_w3_1cyc_testfit``): a full-supervision reconstruction of the 21
-test envmaps from the checkpoint's refit test latents. Two-bracket models are
-fixed-gauge (scale-relative), so the RENI++ prediction is decoded via the
-two-bracket blend (``model._to_linear_hdr``) and then exposure-aligned
-(median-ratio) to the true-scale GT read from the raw test EXRs. SOLD-Net and
+By default this uses the thesis two-bracket headline model
+(``vnjoint_ortho_2cyc_testfit``): a full-supervision reconstruction of the 21
+test envmaps from the checkpoint's refit test latents. The two-bracket model
+is trained in a fixed gauge rather than at the raw EXRs' camera exposures, so
+the RENI++ prediction is decoded via the two-bracket blend
+(``model._to_linear_hdr``) and then exposure-aligned to the true-scale GT read
+from the raw test EXRs. This evaluation-only alignment does not make the model
+scale-invariant. SOLD-Net and
 Hosek-Wilkie are UNCHANGED and evaluated against that same true-scale GT, so
 their numbers are unaffected by the RENI++ swap.
 
@@ -57,7 +59,7 @@ from reni.utils.checkpoint_locator import find_checkpoint  # noqa: E402
 # images_data keys (as produced by BaselineComparison.run_evaluation) and the
 # thesis TikZ column labels that sit above them.
 METHOD_KEYS = ["gt", "RENI++", "SOLD-Net", "Hosek-Wilkie"]
-COL_LABELS = ["GT", "RENI++", "SOLD-Net", "Hosek-Wilkie"]
+COL_LABELS = ["GT", "RENI++ (thesis)", "SOLD-Net", "Hosek-Wilkie"]
 
 
 @torch.no_grad()
@@ -157,12 +159,11 @@ class TwoBracketBaselineComparison(BaselineComparison):
 
             gt_sky_t = gt_hdr[:H_sky, :, :]
             reni_sky_t = reni_hdr[:H_sky, :, :]
-            # Two-bracket models are scale-relative (fixed gauge), so give the
-            # prediction the single per-image exposure that best matches the
-            # true-scale GT over the scored region. This is the MSE-optimal
-            # least-squares scale used by reni_model.get_image_metrics_and_images
-            # for scale-invariant models; it isolates sky appearance fidelity
-            # from the absolute-scale degree of freedom the model discards.
+            # The model uses a fixed training gauge, so give its prediction the
+            # single evaluation-only exposure that best matches the raw EXR
+            # over the scored region. This is the chapter's common MSE-optimal
+            # least-squares metric alignment: it compares appearance after
+            # reconciling the model's q99=1 gauge with the EXR's arbitrary EV.
             scale = (gt_sky_t * reni_sky_t).sum() / (reni_sky_t * reni_sky_t).sum().clamp_min(1e-8)
             reni_sky_t = scale * reni_sky_t
 
@@ -240,7 +241,7 @@ def _write_table(metrics, out_stem: Path):
         return rf"\textbf{{{text}}}" if value == best[key] else text
 
     display_names = {
-        "RENI++": r"RENI++",
+        "RENI++": r"RENI++ (thesis)",
         "SOLD-Net": r"SOLD-Net~\cite{tang2022soldnet}",
         "Hosek-Wilkie": r"Hosek-Wilkie~\cite{10.1145/2185520.2185591}",
     }
@@ -283,9 +284,9 @@ def _write_table(metrics, out_stem: Path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_args(parser, "baseline_comparison_thesis")
-    parser.add_argument("--model", default="two_bracket_w3_1cyc_testfit",
+    parser.add_argument("--model", default="vnjoint_ortho_2cyc_testfit",
                         help="MODEL_DIRS key for the RENI++ reconstruction "
-                             "(default: thesis two-bracket 1-cycle test-fit shim; "
+                             "(default: thesis joint-frame two-bracket 2-cycle test-fit shim; "
                              "use reni_pp for the original paper model)")
     parser.add_argument("--table_output", type=Path,
                         default=REPO_ROOT / "publication" / "tables" / "baseline_comparison_thesis",

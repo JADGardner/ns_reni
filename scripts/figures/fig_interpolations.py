@@ -31,7 +31,7 @@ def main():
     parser.add_argument("--latent_dim", type=int, default=100)
     parser.add_argument("--model_dir", type=Path, default=None,
                         help="Checkpoint run directory, nerfstudio_models directory, "
-                             "or .ckpt path. Defaults to the paper RENI++ model "
+                             "or .ckpt path. Defaults to RENI++ (thesis) "
                              "for --latent_dim.")
     parser.add_argument("--steps", type=int, default=6, help="Interpolation steps")
     parser.add_argument("--idx1", type=int, default=6, help="Eval latent endpoint 1")
@@ -47,7 +47,7 @@ def main():
     args = parser.parse_args()
 
     model_dir = _resolve_model_dir(args.model_dir) if args.model_dir else \
-        MODEL_DIRS["reni_pp"][args.latent_dim]
+        MODEL_DIRS["vnjoint_ortho_2cyc_testfit"][args.latent_dim]
     _, datamanager, model = load_model(model_dir, device=args.device)
     ray_bundle = equirect_ray_bundle(args.device, idx=0, height=args.height)
     ray_samples = make_ray_samples(model, ray_bundle)

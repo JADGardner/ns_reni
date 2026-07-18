@@ -345,10 +345,10 @@ def main():
                         help="Dataset root (default: hi-res figure test set "
                              "from the highres mapping; low-res train/val "
                              "splits symlinked for datamanager setup)")
-    parser.add_argument("--model", default="two_bracket_w3_2cyc_testfit",
+    parser.add_argument("--model", default="vnjoint_ortho_2cyc_testfit",
                         help="MODEL_DIRS key for the perspective figure "
-                             "(default: thesis two-bracket 2-cycle, the "
-                             "completion-optimal model; reni_pp = paper)")
+                             "(default: thesis joint-frame two-bracket "
+                             "2-cycle model; reni_pp = paper)")
     parser.add_argument("--mask_mode", choices=["perspective", "dataset"],
                         default="perspective")
     parser.add_argument("--hfov", type=float, default=110.0,

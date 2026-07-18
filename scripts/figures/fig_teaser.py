@@ -52,7 +52,7 @@ NEURAL_FIELD_SHIFT_X = 22
 
 TEASER_LABELS = (
     {"xy": (630, 530), "text": r"$\mathbf{Z}=\mathbf{0}_{3\times N}$", "size": 30},
-    {"xy": (850, 120), "text": r"$\mathrm{vec}(\mathbf{Z})\sim\mathcal{N}(\mathbf{0},\mathbf{I}_{3N})$", "size": 30},
+    {"xy": (850, 120), "text": r"$\mathbf{Z}=(1-t)\mathbf{Z}_i+t\mathbf{Z}_j$", "size": 30},
     {"xy": (1790 + NEURAL_FIELD_SHIFT_X, 350), "text": r"$\mathbf{Z}$", "size": 30},
     {"xy": (1790 + NEURAL_FIELD_SHIFT_X, 1185), "text": r"$\mathbf{Z}$", "size": 30},
     {"xy": (1805 + NEURAL_FIELD_SHIFT_X, -5), "text": r"$\mathbf{D}$", "size": 30},
@@ -129,9 +129,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_args(parser, "teaser")
     parser.add_argument("--latent_dim", type=int, default=100)
-    parser.add_argument("--model", default="two_bracket_w3_2cyc",
+    parser.add_argument("--model", default="vnjoint_ortho_2cyc",
                         choices=sorted(MODEL_DIRS),
-                        help="MODEL_DIRS key; default = dual-exposure two-bracket, 2 reset cycles")
+                        help="MODEL_DIRS key; default = thesis joint-frame two-bracket, 2 reset cycles")
     parser.add_argument("--recon-latent-idx", type=int, default=17,
                         help="Train latent decoded in the right-hand 0/90 deg "
                              "reconstruction panels and shown in the vector plots")
