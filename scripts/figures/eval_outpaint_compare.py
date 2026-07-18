@@ -315,6 +315,7 @@ def evaluate_baseline(
     mask_mode: str,
     fov_h: float,
     fov_v: float,
+    ldr_exposure: str = "gtq",
 ) -> Dict[str, Any]:
     """Frustum completion for the per-image baselines (SH, SG, original RENI).
 
@@ -450,12 +451,17 @@ def evaluate_baseline(
             pred_lin = torch.nan_to_num(
                 pred_lin, nan=0.0, posinf=1e6, neginf=0.0).clamp(0.0, 1e6)
 
-        # One ground-truth-derived exposure for both images (the architecture
-        # ablation's LDR convention): a prediction-derived quantile is
-        # meaningless when the extrapolated region blows up.
-        q_gt = torch.quantile(gt_lin.flatten(), 0.98)
-        gt_ldr = linear_to_sRGB(gt_lin, q=q_gt)
-        pred_ldr = linear_to_sRGB(pred_lin, q=q_gt)
+        # gtq: one ground-truth-derived exposure for both images, for rows
+        # whose extrapolation diverges (a prediction-derived quantile is
+        # meaningless there). predq: own-quantile exposures, the convention
+        # of the learnt rows (evaluate_run).
+        gt_ldr = linear_to_sRGB(gt_lin, use_quantile=True)
+        if ldr_exposure == "gtq":
+            q_gt = torch.quantile(gt_lin.flatten(), 0.98)
+            gt_ldr = linear_to_sRGB(gt_lin, q=q_gt)
+            pred_ldr = linear_to_sRGB(pred_lin, q=q_gt)
+        else:
+            pred_ldr = linear_to_sRGB(pred_lin, use_quantile=True)
         image_metrics = {
             "full": region_metrics(model, pred_lin, pred_lin, gt_lin,
                                    pred_ldr, gt_ldr, "full", "none"),
@@ -574,6 +580,17 @@ def evaluate_run(
                 "hidden": region_metrics_masked(
                     pred_lin, gt_lin, pred_ldr, gt_ldr, 1.0 - mask),
             }
+            # Exposure-convention probe: LDR with a ground-truth-derived
+            # quantile for the prediction too (the baseline rows' convention).
+            if not convert_to_ldr:
+                q_gt = torch.quantile(gt_lin.flatten(), 0.98)
+                pred_ldr_gtq = linear_to_sRGB(pred_lin, q=q_gt)
+                image_metrics["gtq_ldr"] = {
+                    "visible": region_metrics_masked(
+                        pred_lin, gt_lin, pred_ldr_gtq, gt_ldr, mask)["psnr_ldr"],
+                    "hidden": region_metrics_masked(
+                        pred_lin, gt_lin, pred_ldr_gtq, gt_ldr, 1.0 - mask)["psnr_ldr"],
+                }
         else:
             image_metrics = {
                 region: region_metrics(
@@ -666,6 +683,9 @@ def main() -> None:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--run", action="append", default=[], metavar="LABEL=PATH",
                         help="Run to evaluate; repeatable.")
+    parser.add_argument("--ldr-exposure", choices=["gtq", "predq"], default="gtq",
+                        help="Baseline LDR exposure: ground-truth-derived (gtq) "
+                             "or own-quantile as in the learnt rows (predq).")
     parser.add_argument("--baseline", action="append", default=[], metavar="FAMILY=KEY",
                         help="Per-image baseline from _common.MODEL_DIRS (e.g. "
                              "sh=9th, sg=300, reni_old=100); repeatable.")
@@ -715,7 +735,8 @@ def main() -> None:
         key = int(key) if key.isdigit() else key
         models[f"{family}"] = evaluate_baseline(
             family, key, args.device, args.seed, args.max_images,
-            mask_mode=args.mask, fov_h=args.fov_h, fov_v=args.fov_v)
+            mask_mode=args.mask, fov_h=args.fov_h, fov_v=args.fov_v,
+            ldr_exposure=args.ldr_exposure)
 
     if args.mask == "frustum":
         mask_desc = (f"central_frustum_{args.fov_h:g}x{args.fov_v:g}deg_visible"
