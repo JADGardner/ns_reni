@@ -84,7 +84,7 @@ def fit_sh_prior(gauge_fit, target_vis, q, basis_vis, mu, sigma_inv, lam, device
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image_indices", type=int, nargs="+", default=[4, 8, 18])
+    parser.add_argument("--image_indices", type=int, nargs="+", default=[9, 17, 19])
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--disp-height", type=int, default=128)
     parser.add_argument("--sh-lambda", type=float, default=1.0)
