@@ -306,6 +306,190 @@ def region_metrics_masked(
     return out
 
 
+def evaluate_baseline(
+    family: str,
+    key,
+    device: str,
+    seed: int,
+    max_images: Optional[int],
+    mask_mode: str,
+    fov_h: float,
+    fov_v: float,
+) -> Dict[str, Any]:
+    """Frustum completion for the per-image baselines (SH, SG, original RENI).
+
+    Parameters are fitted from their native init to the VISIBLE pixels only,
+    with the same step/lr budget as the latent fits, using a log-HDR loss on
+    linear radiance in the fixed gauge (ground-truth p99 luminance = 1); the
+    prediction is scored raw in that gauge. SH/SG carry no completion prior,
+    so nothing constrains the hidden region."""
+    import glob as _glob
+
+    import pyexr
+    import torch.nn.functional as F
+    from _common import MODEL_DIRS, load_model
+    from reni.utils.tonemap import apply_fixed_gauge
+
+    seed_all(seed)
+    _, _, model = load_model(MODEL_DIRS[family][key], device=device)
+    model.eval()
+    field = model.field
+    files = sorted(_glob.glob(str(REPO_ROOT / "data" / "RENI_HDR" / "test" / "*.exr")))
+    if max_images is not None:
+        files = files[:max_images]
+    height, width = 64, 128
+    ray_bundle = equirect_ray_bundle(device, idx=0, height=height)
+    if mask_mode == "frustum":
+        mask = _frustum_mask(height, width, fov_h, fov_v)
+    else:
+        mask = _visible_mask(height, width)
+    visible = torch.nonzero(mask.reshape(-1).bool(), as_tuple=False).squeeze(1).to(device)
+    fit_samples = model.create_ray_samples(
+        ray_bundle.origins[visible],
+        ray_bundle.directions[visible],
+        ray_bundle.camera_indices[visible],
+    )
+
+    is_sh = hasattr(field, "num_sh_coeffs")
+    is_sg = hasattr(field, "sg_num")
+    if is_sh:
+        from reni.illumination_fields.sh_illumination_field import shEvaluate
+        d_vis = ray_bundle.directions[visible]
+        sh_basis_vis = shEvaluate(
+            torch.acos(d_vis[:, 2]), torch.atan2(d_vis[:, 0], d_vis[:, 1]),
+            field.spherical_harmonic_order, device=device)  # [n_vis, n_coeffs]
+    if is_sg:
+        sg_theta_c = field.theta_center_train[:1].to(device)  # [1, sg_num, 1]
+        sg_phi_c = field.phi_center_train[:1].to(device)
+
+    def sg_latents(u: torch.Tensor) -> torch.Tensor:
+        """Raw SG parameters -> the latent_codes convention of renderSG,
+        mirroring deparameterize (exp amplitudes/sharpness, grid-centred
+        tanh angles); exp keeps the log-domain mixture positive."""
+        w_u, t_u, p_u, l_u = torch.split(u, [3, 1, 1, 1], dim=2)
+        return torch.cat([
+            torch.exp(w_u),
+            field.theta_range * torch.tanh(t_u) + sg_theta_c,
+            field.phi_range * torch.tanh(p_u) + sg_phi_c,
+            torch.exp(l_u),
+        ], dim=2)
+
+    def to_raw_domain(lin: torch.Tensor) -> torch.Tensor:
+        """Fixed-gauge linear radiance -> the field's raw output domain
+        (inverse of field.unnormalise)."""
+        x = lin
+        if field.log_domain:
+            x = torch.log(x + EPS)
+        if not field.min_max.dtype == torch.bool:
+            min_val, max_val = field.min_max
+            x = 2.0 * (x - min_val) / (max_val - min_val) - 1.0
+        return x
+
+    print(f"[eval] baseline {family}/{key}: images={len(files)}, "
+          f"mask={mask_mode}, fit={FIT_STEPS}x{FIT_LR}, domain=log fixed-gauge linear")
+    per_image: List[Dict[str, Dict[str, float]]] = []
+    for idx, path in enumerate(files):
+        img = pyexr.read(path).astype("float32")[..., :3]
+        img[img <= 0] = img[img > 0].min()
+        img = F.interpolate(torch.tensor(img).permute(2, 0, 1)[None],
+                            size=(height, width), mode="bilinear")[0].permute(1, 2, 0)
+        gt_lin = apply_fixed_gauge(img.to(device))
+        # Fit in the field's raw domain (log-HDR for these models, matching
+        # the "3-channel log-domain" branch of fit_latent_on_visible).
+        gt_raw_vis = to_raw_domain(gt_lin.reshape(-1, 3)[visible])
+
+        if is_sh:
+            # Exact minimum-norm least squares on the visible pixels: the
+            # most charitable fit the basis allows (CPU gelsd for min-norm).
+            sol = torch.linalg.lstsq(
+                sh_basis_vis.cpu().double(), gt_raw_vis.cpu().double(),
+                driver="gelsd").solution
+            z = sol.float().to(device)[None]  # [1, n_coeffs, 3]
+        else:
+            if is_sg:
+                # Raw params as in setup_param: zero amplitudes/angle offsets,
+                # log sharpness at the grid scale; optimised past the latent
+                # budget since the raw mixture converges more slowly.
+                u = field.setup_param(
+                    1, field.sg_num, field.sg_row, field.config.channel_dim
+                ).data.view(1, field.sg_num, 6).to(device).requires_grad_(True)
+                steps = 4 * FIT_STEPS
+            else:
+                u = torch.zeros(1, field.latent_dim, 3, device=device,
+                                requires_grad=True)
+                steps = FIT_STEPS
+            optimiser = torch.optim.Adam([u], lr=FIT_LR)
+            for _ in range(steps):
+                optimiser.zero_grad()
+                z_step = sg_latents(u) if is_sg else u
+                latents = z_step.repeat(fit_samples.shape[0], 1, 1)
+                out = field.forward(fit_samples, rotation=None,
+                                    latent_codes=latents)[RENIFieldHeadNames.RGB]
+                mse = torch.nn.functional.mse_loss(out, gt_raw_vis)
+                cosine = 1 - torch.nn.functional.cosine_similarity(
+                    out, gt_raw_vis, dim=-1).mean()
+                (10.0 * mse + cosine).backward()
+                optimiser.step()
+            z = (sg_latents(u) if is_sg else u).detach()
+        with torch.no_grad():
+            chunks: List[torch.Tensor] = []
+            for start in range(0, ray_bundle.origins.shape[0], 65536):
+                end = start + 65536
+                samples = model.create_ray_samples(
+                    ray_bundle.origins[start:end],
+                    ray_bundle.directions[start:end],
+                    ray_bundle.camera_indices[start:end],
+                )
+                out = field.forward(samples, rotation=None,
+                                    latent_codes=z.repeat(samples.shape[0], 1, 1))[RENIFieldHeadNames.RGB]
+                chunks.append(field.unnormalise(out))
+            pred_lin = torch.cat(chunks, dim=0).reshape(height, width, 3)
+            # Unconstrained basis extrapolation overflows exp outside the fit
+            # region (SH especially); cap at 1e6 gauge units (GT p99 = 1) so
+            # the metrics stay finite while remaining abysmal.
+            pred_lin = torch.nan_to_num(
+                pred_lin, nan=0.0, posinf=1e6, neginf=0.0).clamp(0.0, 1e6)
+
+        # One ground-truth-derived exposure for both images (the architecture
+        # ablation's LDR convention): a prediction-derived quantile is
+        # meaningless when the extrapolated region blows up.
+        q_gt = torch.quantile(gt_lin.flatten(), 0.98)
+        gt_ldr = linear_to_sRGB(gt_lin, q=q_gt)
+        pred_ldr = linear_to_sRGB(pred_lin, q=q_gt)
+        image_metrics = {
+            "full": region_metrics(model, pred_lin, pred_lin, gt_lin,
+                                   pred_ldr, gt_ldr, "full", "none"),
+            "visible": region_metrics_masked(pred_lin, gt_lin, pred_ldr, gt_ldr, mask),
+            "hidden": region_metrics_masked(pred_lin, gt_lin, pred_ldr, gt_ldr, 1.0 - mask),
+        }
+        per_image.append(image_metrics)
+        print(f"  [{family}/{key}] idx={idx:02d} "
+              f"hidden psnr_hdr={image_metrics['hidden']['psnr_hdr']:6.2f} "
+              f"psnr_ldr={image_metrics['hidden']['psnr_ldr']:6.2f} | "
+              f"visible psnr_ldr={image_metrics['visible']['psnr_ldr']:6.2f}")
+
+    averaged: Dict[str, Dict[str, float]] = {}
+    for region in REGIONS:
+        averaged[region] = {}
+        for metric in METRICS:
+            values = torch.tensor([img[region][metric] for img in per_image])
+            averaged[region][metric] = float(torch.nanmean(values))
+    result = {
+        "label": f"{family}_{key}",
+        "family": family,
+        "model_key": str(key),
+        "num_eval_images": len(files),
+        "two_bracket": False,
+        "peak_alignment": "none",
+        "fit_domain": "log_fixed_gauge_linear",
+        "metrics": averaged,
+        "per_image": per_image,
+    }
+    del model
+    torch.cuda.empty_cache()
+    return result
+
+
 def evaluate_run(
     label: str,
     run_path: Path,
@@ -480,8 +664,11 @@ def _print_summary(results: Dict[str, Any]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--run", action="append", required=True, metavar="LABEL=PATH",
+    parser.add_argument("--run", action="append", default=[], metavar="LABEL=PATH",
                         help="Run to evaluate; repeatable.")
+    parser.add_argument("--baseline", action="append", default=[], metavar="FAMILY=KEY",
+                        help="Per-image baseline from _common.MODEL_DIRS (e.g. "
+                             "sh=9th, sg=300, reni_old=100); repeatable.")
     parser.add_argument("--data", type=Path, default=REPO_ROOT / "data" / "RENI_HDR")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--prior", choices=["on", "off"], default="off",
@@ -514,6 +701,8 @@ def main() -> None:
     else:
         output_stem = DEFAULT_OUTPUT_DIR / f"outpaint_compare_prior{args.prior}"
 
+    if not args.run and not args.baseline:
+        parser.error("provide at least one --run or --baseline")
     runs = parse_runs(args.run)
     models = {
         label: evaluate_run(label, path, args.data, args.device, args.latent_steps,
@@ -521,6 +710,12 @@ def main() -> None:
                             mask_mode=args.mask, fov_h=args.fov_h, fov_v=args.fov_v)
         for label, path in runs.items()
     }
+    for value in args.baseline:
+        family, _, key = value.partition("=")
+        key = int(key) if key.isdigit() else key
+        models[f"{family}"] = evaluate_baseline(
+            family, key, args.device, args.seed, args.max_images,
+            mask_mode=args.mask, fov_h=args.fov_h, fov_v=args.fov_v)
 
     if args.mask == "frustum":
         mask_desc = (f"central_frustum_{args.fov_h:g}x{args.fov_v:g}deg_visible"

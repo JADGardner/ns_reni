@@ -16,6 +16,9 @@ EVALS = REPO / "outputs" / "evaluations"
 OUT = REPO / "publication" / "tables"
 
 LABELS = {
+    "sh": "SH (9th order)",
+    "sg": "SG (50 lobes)",
+    "reni_old": "RENI",
     "reni_pp": "Published RENI++",
     "logdom_1cyc": "Log-domain (50k)",
     "logdom_std_100k": "Log-domain, no reset (100k)",
@@ -24,14 +27,16 @@ LABELS = {
     "vnjoint_2cyc": "Two-bracket, joint unnormalised (2 cyc)",
     "vnjoint_ortho_2cyc": "Two-bracket, joint GS frame (2 cyc, ours)",
 }
-ORDER = ["reni_pp", "logdom_1cyc", "logdom_std_100k", "logdom_2cyc",
-         "w3_2cyc", "vnjoint_2cyc", "vnjoint_ortho_2cyc"]
+ORDER = ["sh", "sg", "reni_old", "reni_pp", "logdom_1cyc",
+         "logdom_std_100k", "logdom_2cyc", "w3_2cyc", "vnjoint_2cyc",
+         "vnjoint_ortho_2cyc"]
 
 # The historical six models live in the prioroff CSV; migration-era runs are
 # evaluated into their own stems and merged here.
 SOURCES = (
     "outpaint_frustum90x60_prioroff.csv",
     "outpaint_frustum90x60_vnjoint_ortho.csv",
+    "outpaint_frustum90x60_baselines.csv",
 )
 
 
