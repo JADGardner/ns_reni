@@ -169,7 +169,8 @@
      inkscape:groupmode="layer"
      inkscape:label="Page 1"
      transform="matrix(1.3333333,0,0,1.3333333,0,1.7492146e-5)"><g
-       id="g218"><g
+       id="g218"
+       transform="translate(8,0)"><g
          id="g220"><path
            d="m 674.707,29.926 h 38.204 v 127.105 h -38.204 z"
            style="fill:#4b86d9;fill-opacity:1;stroke:none"
@@ -364,11 +365,12 @@
                      id="path510" /></g></g></g></g></g></g></g><g
        id="g614"><g
          id="g616"><path
+           transform="translate(8,0)"
            d="m 618.125,412.512 h 56.25"
            style="fill:none;stroke:#000000;stroke-width:0.839055;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
            id="path618" /></g><g
          id="g620"
-         transform="scale(-1)"><path
+         transform="translate(8,0) scale(-1)"><path
            d="m -665.984,-412.512 3.355,-3.355 -11.746,3.355 11.746,3.356 z"
            style="fill:#000000;fill-opacity:1;fill-rule:evenodd;stroke:#000000;stroke-width:0.894992;stroke-linecap:butt;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
            id="path622" /></g><g

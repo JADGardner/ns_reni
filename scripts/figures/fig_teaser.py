@@ -46,13 +46,17 @@ REFERENCE_RENDER_HEIGHT = 64
 # much smaller latents than the paper models).
 QUIVER_TARGET_MEDIAN_NORM = 1.4
 
+# Keep the decoder input labels aligned with the matched translation applied
+# to the decoder geometry in teaser_base.svg. All other overlays stay fixed.
+NEURAL_FIELD_SHIFT_X = 22
+
 TEASER_LABELS = (
     {"xy": (630, 530), "text": r"$\mathbf{Z}=\mathbf{0}_{3\times N}$", "size": 30},
     {"xy": (850, 120), "text": r"$\mathrm{vec}(\mathbf{Z})\sim\mathcal{N}(\mathbf{0},\mathbf{I}_{3N})$", "size": 30},
-    {"xy": (1790, 350), "text": r"$\mathbf{Z}$", "size": 30},
-    {"xy": (1790, 1185), "text": r"$\mathbf{Z}$", "size": 30},
-    {"xy": (1805, -5), "text": r"$\mathbf{D}$", "size": 30},
-    {"xy": (1805, 835), "text": r"$\mathbf{D}$", "size": 30},
+    {"xy": (1790 + NEURAL_FIELD_SHIFT_X, 350), "text": r"$\mathbf{Z}$", "size": 30},
+    {"xy": (1790 + NEURAL_FIELD_SHIFT_X, 1185), "text": r"$\mathbf{Z}$", "size": 30},
+    {"xy": (1805 + NEURAL_FIELD_SHIFT_X, -5), "text": r"$\mathbf{D}$", "size": 30},
+    {"xy": (1805 + NEURAL_FIELD_SHIFT_X, 835), "text": r"$\mathbf{D}$", "size": 30},
     {
         "xy": (2235, 650),
         "text": "SO(2) Rotation of Latent Code\nAround Vertical Y-Axis",
