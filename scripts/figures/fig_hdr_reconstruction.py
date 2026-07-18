@@ -26,7 +26,7 @@ def main():
     parser.add_argument("--models", nargs=2,
                         default=["reni_pp", "two_bracket_w3_1cyc_testfit"])
     parser.add_argument("--labels", nargs=2,
-                        default=["RENI++", "two-bracket\n(single cycle)"])
+                        default=["RENI++", "Two-Bracket\n(Single Cycle)"])
     parser.add_argument("--data-dir", type=Path,
                         default=Path("/home/james/data/RENI_HDR_hires_figs"))
     parser.add_argument("--eval-width", type=int, default=512)
@@ -51,20 +51,23 @@ def main():
 
     def cell(ax, img):
         ax.imshow(img.cpu().numpy() if torch.is_tensor(img) else img)
-        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(False)
 
     for j, idx in enumerate(args.indices):
         ref = results[(args.models[0], idx)]
         cell(axs[0, 2 * j], ref["gt_img"])
         cell(axs[0, 2 * j + 1], ref["gt_heatmap"])
-        axs[0, 2 * j].set_title("tonemapped", fontsize=10)
-        axs[0, 2 * j + 1].set_title("log-HDR luminance", fontsize=10)
+        axs[0, 2 * j].set_title("Tonemapped", fontsize=10)
+        axs[0, 2 * j + 1].set_title("Log-HDR Luminance", fontsize=10)
         for i, key in enumerate(args.models):
             out = results[(key, idx)]
             cell(axs[1 + i, 2 * j], out["pred_img"])
             cell(axs[1 + i, 2 * j + 1], out["pred_heatmap"])
 
-    axs[0, 0].set_ylabel("ground truth", fontsize=11)
+    axs[0, 0].set_ylabel("Ground Truth", fontsize=11)
     for i, label in enumerate(args.labels):
         axs[1 + i, 0].set_ylabel(label, fontsize=11)
 

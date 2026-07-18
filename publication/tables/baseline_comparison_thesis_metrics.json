@@ -1,0 +1,29 @@
+{
+  "protocol": {
+    "split": "RENI_HDR test",
+    "num_images": 21,
+    "region": "upper equirectangular hemisphere",
+    "ldr": "independent quantile exposure followed by sRGB conversion",
+    "hdr": "GT p99 luminance = 1; least-squares scale alignment per prediction"
+  },
+  "metrics": {
+    "RENI++": {
+      "LDR_PSNR": 23.115110851469495,
+      "HDR_PSNR": 14.430550609316144,
+      "SSIM": 0.6528300018537612,
+      "LPIPS": 0.30031872381057056
+    },
+    "SOLD-Net": {
+      "LDR_PSNR": 14.400488194965181,
+      "HDR_PSNR": 9.109884887933731,
+      "SSIM": 0.4476830874170576,
+      "LPIPS": 0.4356931174794833
+    },
+    "Hosek-Wilkie": {
+      "LDR_PSNR": 10.701846894763765,
+      "HDR_PSNR": 8.027224234172277,
+      "SSIM": 0.3502944424038842,
+      "LPIPS": 0.706543668394997
+    }
+  }
+}

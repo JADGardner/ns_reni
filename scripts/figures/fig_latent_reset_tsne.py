@@ -198,8 +198,8 @@ def _plot(
 ) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(9.5, 4.1), constrained_layout=True)
     panels = [
-        ("Original RENI++ train latents", original_embedding, "original"),
-        ("Latent-reset train latents", restart_embedding, "latent_reset"),
+        ("Original RENI++ Training Latents", original_embedding, "original"),
+        ("Latent-Reset Training Latents", restart_embedding, "latent_reset"),
     ]
     for ax, (title, embedding, key) in zip(axes, panels):
         embedding = _normalise_2d(embedding)
@@ -223,8 +223,8 @@ def _plot(
             0.02,
             "\n".join(
                 [
-                    f"image-kNN cosine: {m['latent_10nn_appearance_cosine_mean']:.3f}",
-                    f"mirror-pair pct: {m['mirror_pair_neighbor_percentile_median']:.3f}",
+                    f"Image-kNN Cosine: {m['latent_10nn_appearance_cosine_mean']:.3f}",
+                    f"Mirror-Pair Percentile: {m['mirror_pair_neighbor_percentile_median']:.3f}",
                 ]
             ),
             transform=ax.transAxes,

@@ -23,6 +23,7 @@ RENI++ via publication/baseline_comparison.py, no exposure alignment).
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -36,6 +37,7 @@ from _common import (MODEL_DIRS, REPO_ROOT, add_common_args, add_figure_label,
                      axis_center, equirect_ray_bundle, load_model,
                      read_clean_exr, save_figure, seed_all)
 from reni.utils.colourspace import linear_to_sRGB
+from reni.utils.tonemap import luminance
 
 # torch>=2.6 defaults weights_only=True; the reused generate_figures loader (and
 # the paper checkpoints, which pickle numpy scalars) predate that. Restore the
@@ -47,8 +49,7 @@ def _torch_load_compat(*args, **kwargs):  # noqa: E302
 torch.load = _torch_load_compat
 
 sys.path.insert(0, str(REPO_ROOT / "publication"))
-from baseline_comparison import (BaselineComparison, compute_metrics,  # noqa: E402
-                                 logger)
+from baseline_comparison import BaselineComparison, logger  # noqa: E402
 from reni.baselines.soldnet import SOLDNetGlobalModel  # noqa: E402
 from reni.baselines.hosek_wilkie import HosekWilkieSkyModel  # noqa: E402
 from reni.utils.checkpoint_locator import find_checkpoint  # noqa: E402
@@ -59,14 +60,41 @@ METHOD_KEYS = ["gt", "RENI++", "SOLD-Net", "Hosek-Wilkie"]
 COL_LABELS = ["GT", "RENI++", "SOLD-Net", "Hosek-Wilkie"]
 
 
+@torch.no_grad()
+def _compute_chapter_metrics(model, gt_hdr: np.ndarray, pred_hdr: np.ndarray):
+    """Chapter-standard sky-hemisphere metrics for one test environment."""
+    gt = torch.from_numpy(gt_hdr).float().to(model.device).clamp_min(0.0)
+    pred = torch.from_numpy(pred_hdr).float().to(model.device).clamp_min(0.0)
+
+    # Table 2.1 HDR protocol: place the target in the p99 fixed gauge and
+    # give every prediction one least-squares exposure scale.
+    gt_q99 = torch.quantile(luminance(gt).flatten(), 0.99).clamp_min(1e-8)
+    gt_gauge = gt / gt_q99
+    scale = (gt_gauge * pred).sum() / (pred * pred).sum().clamp_min(1e-12)
+    pred_gauge = scale * pred
+
+    gt_ldr = linear_to_sRGB(gt, use_quantile=True)
+    pred_ldr = linear_to_sRGB(pred, use_quantile=True)
+    gt_ldr_bchw = gt_ldr.permute(2, 0, 1)[None]
+    pred_ldr_bchw = pred_ldr.permute(2, 0, 1)[None]
+    gt_hdr_bchw = gt_gauge.permute(2, 0, 1)[None]
+    pred_hdr_bchw = pred_gauge.permute(2, 0, 1)[None]
+
+    return {
+        "LDR_PSNR": float(model.psnr(gt_ldr_bchw, pred_ldr_bchw)),
+        "HDR_PSNR": float(model.psnr(gt_hdr_bchw, pred_hdr_bchw)),
+        "SSIM": float(model.ssim(gt_ldr_bchw, pred_ldr_bchw)),
+        "LPIPS": float(model.lpips(gt_ldr_bchw, pred_ldr_bchw)),
+    }
+
+
 class TwoBracketBaselineComparison(BaselineComparison):
     """Baseline comparison driven by a fixed-gauge two-bracket RENI++ model.
 
-    Overrides only the RENI++ loading and the GT/RENI reconstruction path;
-    SOLD-Net, Hosek-Wilkie, the metric function and the sky-hemisphere protocol
-    are inherited verbatim. The RENI++ reconstruction is decoded through the
-    two-bracket blend and exposure-aligned (median luminance ratio) to the
-    true-scale GT, because two-bracket models carry no absolute scale.
+    Overrides the RENI++ loading and the GT/RENI reconstruction path. SOLD-Net,
+    Hosek-Wilkie and the sky-hemisphere protocol are inherited verbatim. The
+    chapter-standard metric function below is applied uniformly to all three
+    predictions.
     """
 
     def __init__(self, reni_model_dir, soldnet_checkpoint="checkpoints/SOLD_Net/pretrained_model",
@@ -149,9 +177,15 @@ class TwoBracketBaselineComparison(BaselineComparison):
             images_data["SOLD-Net"].append(sold_sky)
             images_data["Hosek-Wilkie"].append(hosek_sky)
 
-            metrics["RENI++"].append(compute_metrics(gt_sky, reni_sky))
-            metrics["SOLD-Net"].append(compute_metrics(gt_sky, sold_sky))
-            metrics["Hosek-Wilkie"].append(compute_metrics(gt_sky, hosek_sky))
+            metrics["RENI++"].append(
+                _compute_chapter_metrics(self.reni_model, gt_sky, reni_sky)
+            )
+            metrics["SOLD-Net"].append(
+                _compute_chapter_metrics(self.reni_model, gt_sky, sold_sky)
+            )
+            metrics["Hosek-Wilkie"].append(
+                _compute_chapter_metrics(self.reni_model, gt_sky, hosek_sky)
+            )
 
         avg_metrics = {}
         for method, method_metrics in metrics.items():
@@ -193,24 +227,56 @@ def _plot(images_data, indices, add_labels=False, label_fontsize=15.0):
 
 
 def _write_table(metrics, out_stem: Path):
+    best = {
+        "LDR_PSNR": max(m["LDR_PSNR"] for m in metrics.values()),
+        "HDR_PSNR": max(m["HDR_PSNR"] for m in metrics.values()),
+        "SSIM": max(m["SSIM"] for m in metrics.values()),
+        "LPIPS": min(m["LPIPS"] for m in metrics.values()),
+    }
+
+    def fmt(key, value):
+        digits = 2 if key.endswith("PSNR") else 3
+        text = f"{value:.{digits}f}"
+        return rf"\textbf{{{text}}}" if value == best[key] else text
+
+    display_names = {
+        "RENI++": r"RENI++",
+        "SOLD-Net": r"SOLD-Net~\cite{tang2022soldnet}",
+        "Hosek-Wilkie": r"Hosek-Wilkie~\cite{10.1145/2185520.2185591}",
+    }
     lines = [
-        r"\begin{tabular}{l|ccccc}",
-        r"\hline",
-        r"Method & PSNR$\uparrow$ & SSIM$\uparrow$ & MSE$\downarrow$ & "
-        r"LogMSE$\downarrow$ & LDR PSNR$\uparrow$ \\",
-        r"\hline",
+        "% Generated by scripts/figures/fig_baseline_comparison.py; do not edit by hand.",
+        r"\begin{tabular}{@{}lcccc@{}}",
+        r"\toprule",
+        r"Method & LDR PSNR$\uparrow$ & HDR PSNR$\uparrow$ & "
+        r"SSIM$\uparrow$ & LPIPS$\downarrow$ \\",
+        r"\midrule",
     ]
     for method, m in metrics.items():
         lines.append(
-            f"{method} & {m['PSNR']:.2f} & {m['SSIM']:.4f} & {m['MSE']:.4f} & "
-            f"{m['LogMSE']:.4f} & {m['LDR_PSNR']:.2f} \\\\"
+            f"{display_names[method]} & {fmt('LDR_PSNR', m['LDR_PSNR'])} & "
+            f"{fmt('HDR_PSNR', m['HDR_PSNR'])} & {fmt('SSIM', m['SSIM'])} & "
+            f"{fmt('LPIPS', m['LPIPS'])} \\\\"
         )
-    lines += [r"\hline", r"\end{tabular}"]
+    lines += [r"\bottomrule", r"\end{tabular}"]
     table = "\n".join(lines)
     tex_path = Path(f"{out_stem}_metrics.tex")
     tex_path.parent.mkdir(parents=True, exist_ok=True)
-    tex_path.write_text(table)
+    tex_path.write_text(table + "\n")
+    json_path = Path(f"{out_stem}_metrics.json")
+    payload = {
+        "protocol": {
+            "split": "RENI_HDR test",
+            "num_images": 21,
+            "region": "upper equirectangular hemisphere",
+            "ldr": "independent quantile exposure followed by sRGB conversion",
+            "hdr": "GT p99 luminance = 1; least-squares scale alignment per prediction",
+        },
+        "metrics": metrics,
+    }
+    json_path.write_text(json.dumps(payload, indent=2) + "\n")
     print(f"[saved] {tex_path}")
+    print(f"[saved] {json_path}")
     print(table)
 
 
