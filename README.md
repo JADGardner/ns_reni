@@ -105,11 +105,22 @@ pip install -e .
 
 ## Download Data and Pretrained Models
 
+Download the public
+[RENI HDR v1.0 dataset](https://huggingface.co/datasets/jadgardner/reni-hdr):
+
 ```bash
 python3 scripts/download_data.py ./data/
+```
 
+The downloader retrieves the tagged Hugging Face release, verifies its
+SHA256, and extracts `./data/RENI_HDR`. GNU `tar` and `zstd` are required.
+Release provenance, per-file checksums, split counts, and direct
+`curl`/Hugging Face CLI instructions are recorded on the dataset page.
+
+Download the pretrained models:
+
+```bash
 python3 scripts/download_models.py ./output/model/
 ```
 
-This downloads the data and model where RENI++ expects them.
-The data and the model path can be changed in the config.
+The data and model paths can be changed in the config.
