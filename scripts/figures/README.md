@@ -61,13 +61,13 @@ high-resolution RENI_HDR mapping.
 
 ## Inputs
 
-- Checkpoints: the COMPLETE paper model archive (single source of truth).
-  Download: `python scripts/download_models.py` (the canonical Dropbox zip,
-  ~1.1 GB) -> `checkpoints/paper_models/`. `_common.PAPER_MODELS` resolves
-  `$RENI_PAPER_MODELS` -> `~/model-storage/reni_paper_models` ->
-  `checkpoints/paper_models`. Contains reni_plus_plus_models (+ masked),
-  old_reni_models, spherical_harmonics, spherical_gaussians, ablations,
-  inverse_task.
+- Checkpoints: download the published-paper group from the tagged Hugging Face
+  release with `python scripts/download_models.py
+  ~/model-storage/reni --group published`. Point `RENI_PAPER_MODELS` at
+  `~/model-storage/reni/published`. The group contains
+  `reni_plus_plus_models` (including the masked model), `old_reni_models`,
+  spherical harmonics, spherical Gaussians, ablations and inverse-task
+  checkpoints.
 - `checkpoints/` keeps only what the archive lacks: SOLD_Net and
   InverseRenderNet baseline checkpoints, and the historical (unusable)
   `reni_original/` wandb dumps.

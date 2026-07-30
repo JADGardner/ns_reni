@@ -128,10 +128,30 @@ python scripts/inverse_rendering_assets/build_normal_maps.py \
 See [`scripts/inverse_rendering_assets/README.md`](scripts/inverse_rendering_assets/README.md)
 for source attribution, licence notes and reference-fidelity checks.
 
-Download the pretrained models:
+Download the current thesis model:
 
 ```bash
-python3 scripts/download_models.py ./output/model/
+python3 scripts/download_models.py model-storage/reni
 ```
 
-The data and model paths can be changed in the config.
+This retrieves the joint Gram-Schmidt, two-bracket, two-cycle D=100 model
+used as the thesis headline result. The downloader uses the tagged
+[RENI Models v1.0 release](https://huggingface.co/jadgardner/reni-models)
+and verifies every downloaded file against `MODEL_MANIFEST.json`.
+
+Other release groups are opt-in:
+
+```bash
+# Exact channelwise two-bracket prior used by NeuSky
+python3 scripts/download_models.py model-storage/reni --group neusky-prior
+
+# Current thesis size, equivariance, invariant and seed experiments
+python3 scripts/download_models.py model-storage/reni --group thesis
+
+# Final checkpoints from the published RENI/RENI++ experiments
+python3 scripts/download_models.py model-storage/reni --group published
+```
+
+Use `python3 scripts/download_models.py --list` to inspect the exact model
+identifiers. The release page also provides direct `curl` and Hugging Face
+CLI access.
