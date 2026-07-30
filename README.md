@@ -117,6 +117,17 @@ SHA256, and extracts `./data/RENI_HDR`. GNU `tar` and `zstd` are required.
 Release provenance, per-file checksums, split counts, and direct
 `curl`/Hugging Face CLI instructions are recorded on the dataset page.
 
+The inverse-rendering bunny and teapot normal maps are reproducibly generated
+from checksum-pinned public meshes:
+
+```bash
+python scripts/inverse_rendering_assets/build_normal_maps.py \
+  --output-dir data/RENI_HDR/3d_models/normal_maps
+```
+
+See [`scripts/inverse_rendering_assets/README.md`](scripts/inverse_rendering_assets/README.md)
+for source attribution, licence notes and reference-fidelity checks.
+
 Download the pretrained models:
 
 ```bash
