@@ -52,9 +52,97 @@ def load(args) -> None:
     if eval_bank is not None:
         for i in range(min(eval_bank.shape[0], 10)):
             STATE["bases"][f"env{i}"] = eval_bank[i].detach()
-    STATE["default_norm"] = float(bank.norm(dim=-1).median())
+    # Default command magnitude must match the SUN channel's trained norms;
+    # the all-channel median can be several times smaller and renders
+    # commands too faintly to see.
+    STATE["default_norm"] = float(bank[:, args.channel].norm(dim=-1).median())
+    if args.bases_file:
+        payload = torch.load(
+            args.bases_file, map_location="cpu", weights_only=True)
+        stored = payload["bases"] if "bases" in payload else payload
+        if args.bases_only:
+            STATE["bases"] = {}
+        for name, latent in stored.items():
+            if tuple(latent.shape) != tuple(bank.shape[1:]):
+                raise ValueError(
+                    f"Base {name!r} has shape {tuple(latent.shape)}, "
+                    f"expected {tuple(bank.shape[1:])}")
+            STATE["bases"][name] = latent.detach().cpu()
+        if "norm" in payload:
+            STATE["default_norm"] = float(payload["norm"])
+        print(f"[ui] loaded {len(stored)} fitted bases from "
+              f"{args.bases_file}")
+    STATE["exposure"] = {}
     print(f"[ui] model loaded; bases: {list(STATE['bases'])}; "
-          f"median channel norm {STATE['default_norm']:.3f}")
+          f"ch{args.channel} median norm {STATE['default_norm']:.3f} "
+          f"(all-channel {float(bank.norm(dim=-1).median()):.3f})")
+    if args.purify_bases:
+        purify_bases(args.purify_bases)
+
+
+def _decode_small(model, rb, z_lat):
+    outs = []
+    for s in range(0, rb.origins.shape[0], 65536):
+        e = s + 65536
+        sm = model.create_ray_samples(rb.origins[s:e], rb.directions[s:e],
+                                      rb.camera_indices[s:e])
+        out = model.field.forward(
+            sm, rotation=None,
+            latent_codes=z_lat.unsqueeze(0).repeat(sm.shape[0], 1, 1),
+        )[RENIFieldHeadNames.RGB]
+        if getattr(model, "two_bracket", False):
+            out = two_bracket_to_linear(
+                out, m_ldr=model.tonemap_m_ldr, m_log=model.tonemap_m_log)
+        else:
+            out = model.field.unnormalise(out)
+        outs.append(out)
+    return torch.cat(outs)
+
+
+def purify_bases(steps: int) -> None:
+    """Strip ghost suns from the env bases. Eval latents are fitted by pure
+    reconstruction, so their content channels re-encode the sun; commanding
+    ch9 then fights that ghost. Pin ch9 at the base's detected sun and refit
+    only the other channels against the base's own decode: the doubly
+    rendered sun overshoots the target, so the optimiser removes the
+    content-channel sun pathway."""
+    from reni.utils.tonemap import luminance
+
+    model, dev, ch = STATE["model"], STATE["device"], STATE["channel"]
+    rb = bundle(64)
+    for name in [b for b in STATE["bases"] if b.startswith("env")]:
+        H64, W64 = 64, 128
+        v = (torch.arange(H64) + 0.5) / H64 * math.pi
+        u = (torch.arange(W64) + 0.5) / W64 * 2.0 * math.pi - math.pi
+        pol, azm = torch.meshgrid(v, u, indexing="ij")
+        analytic = torch.stack([
+            torch.sin(pol) * torch.sin(azm), torch.cos(pol),
+            torch.sin(pol) * torch.cos(azm)], -1).reshape(-1, 3).to(dev)
+        base = STATE["bases"][name].clone().to(dev)
+        with torch.no_grad():
+            target = _decode_small(model, rb, base)
+            lum = luminance(target.reshape(-1, 3)).reshape(-1)
+            sel = lum >= torch.quantile(lum, 0.999)
+            d = torch.nn.functional.normalize(
+                (analytic[sel] * lum[sel][:, None]).sum(0), dim=0)
+        z = base.clone()
+        z[ch] = STATE["default_norm"] * d
+        others = [c for c in range(z.shape[0]) if c != ch]
+        free = z[others].clone().requires_grad_(True)
+        opt = torch.optim.Adam([free], lr=3e-2)
+        for _ in range(steps):
+            opt.zero_grad()
+            z_full = z.detach().clone()
+            z_full[others] = free
+            pred = _decode_small(model, rb, z_full)
+            loss = torch.nn.functional.mse_loss(
+                torch.log1p(pred.clamp(min=0)), torch.log1p(target))
+            loss.backward()
+            opt.step()
+        with torch.no_grad():
+            z[others] = free.detach()
+        STATE["bases"][name] = z.detach().cpu()
+        print(f"[ui] purified {name}: sun pinned, refit loss {loss.item():.5f}")
 
 
 def bundle(height: int):
@@ -74,7 +162,16 @@ def render(ax: float, ay: float, height: int, base: str, norm: float,
     W = height * 2
     col = min(int(ax * W), W - 1)
     row = min(int(ay * height), height - 1)
-    d = rb.directions[row * W + col].clone()
+    # Command in the GENERATOR's analytic ERP frame (y-up, top row =
+    # zenith): the training labels live there, so ch9 semantics do too.
+    # rb.directions uses the nerfstudio camera convention, which maps the
+    # same pixel to a very different direction (top-center reads ~-18 deg
+    # elevation) and silently breaks dot tracking.
+    pol = (row + 0.5) / height * math.pi
+    azm = (col + 0.5) / W * 2.0 * math.pi - math.pi
+    d = torch.tensor([math.sin(pol) * math.sin(azm), math.cos(pol),
+                      math.sin(pol) * math.cos(azm)],
+                     device=STATE["device"], dtype=torch.float32)
     # optional azimuth offset in the horizontal plane (y up; planar
     # components live in x/z)
     a = math.radians(azoff_deg)
@@ -103,7 +200,37 @@ def render(ax: float, ay: float, height: int, base: str, norm: float,
         else:
             outs.append(model.field.unnormalise(out))
     lin = torch.cat(outs).reshape(height, W, 3)
-    img = linear_to_sRGB(lin, use_quantile=True)
+    # Fixed exposure per (base, height), measured once from the UNMODIFIED
+    # base decode: per-frame quantile auto-exposure otherwise rescales the
+    # whole image whenever the commanded sun brightens the peak, which
+    # reads as a scene-wide colour "snap" while dragging.
+    key = (base, height)
+    if key not in STATE["exposure"]:
+        if base == "mean" or norm == 0.0:
+            ref = lin
+        else:
+            ref = None
+        if ref is None:
+            z_ref = STATE["bases"][base].clone().to(STATE["device"]).unsqueeze(0)
+            refs = []
+            for start in range(0, rb.origins.shape[0], 65536):
+                end = start + 65536
+                samples = model.create_ray_samples(
+                    rb.origins[start:end], rb.directions[start:end],
+                    rb.camera_indices[start:end])
+                out = model.field.forward(
+                    samples, rotation=None,
+                    latent_codes=z_ref.repeat(samples.shape[0], 1, 1),
+                )[RENIFieldHeadNames.RGB]
+                if getattr(model, "two_bracket", False):
+                    refs.append(two_bracket_to_linear(
+                        out, m_ldr=model.tonemap_m_ldr, m_log=model.tonemap_m_log))
+                else:
+                    refs.append(model.field.unnormalise(out))
+            ref = torch.cat(refs).reshape(height, W, 3)
+        STATE["exposure"][key] = float(
+            torch.quantile(ref.reshape(-1, 3).max(-1).values, 0.97).clamp(min=1e-6))
+    img = (lin / STATE["exposure"][key]).clamp(0, 1) ** (1.0 / 2.2)
     arr = (img.clamp(0, 1).cpu().numpy() * 255).astype(np.uint8)
     buf = io.BytesIO()
     Image.fromarray(arr).save(buf, format="PNG")
@@ -223,6 +350,15 @@ def main() -> None:
     parser.add_argument("--channel", type=int, default=9)
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--bases-file", type=Path, default=None,
+                        help="Optional .pt file containing {'bases': "
+                             "{name: latent}, 'norm': float}.")
+    parser.add_argument("--bases-only", action="store_true",
+                        help="With --bases-file, hide the checkpoint's mean "
+                             "and raw evaluation-bank bases.")
+    parser.add_argument("--purify-bases", type=int, default=0, metavar="STEPS",
+                        help="Refit env bases with ch pinned at their detected "
+                             "sun to strip content-channel ghost suns.")
     args = parser.parse_args()
     STATE["channel"] = args.channel
     load(args)
