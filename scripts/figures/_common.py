@@ -429,10 +429,22 @@ def load_model(load_dir: Path, device: str = "cuda:0", load_step: Optional[int] 
     model_state = model.state_dict()
     grafted, filtered = {}, {}
     for k, v in model_dict.items():
+        # Structural sun-control checkpoints carry deterministic row mappings
+        # that ordinary RENI configs do not instantiate. Inference tools pass
+        # explicit latent codes and only need these buffers retained for
+        # checkpoint fidelity; rebuilding the 32k-image training dataset just
+        # to register them would make every figure/evaluation load needlessly
+        # expensive.
+        structural_buffer = k in {
+            "field.structural_group_representative",
+            "field.structural_sun_directions",
+        }
         zero_stride_target = (
             k in model_state and any(stride == 0 for stride in model_state[k].stride())
         )
-        if k in model_state and (model_state[k].shape != v.shape or zero_stride_target):
+        if structural_buffer and k not in model_state:
+            grafted[k] = v
+        elif k in model_state and (model_state[k].shape != v.shape or zero_stride_target):
             grafted[k] = v
         else:
             filtered[k] = v
@@ -445,6 +457,11 @@ def load_model(load_dir: Path, device: str = "cuda:0", load_step: Optional[int] 
                     torch.nn.Parameter(value, requires_grad=False))
         elif param_name in mod._buffers:
             mod._buffers[param_name] = value
+        elif k in {
+            "field.structural_group_representative",
+            "field.structural_sun_directions",
+        }:
+            mod.register_buffer(param_name, value)
         else:
             setattr(mod, param_name, value)
     missing, unexpected = model.load_state_dict(filtered, strict=False)

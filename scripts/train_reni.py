@@ -79,6 +79,13 @@ def parse_args() -> argparse.Namespace:
                              "shared frame (mitigates the frame collapse observed "
                              "in the unmitigated 2026-07-15 runs).")
     parser.add_argument(
+        "--structural-sun-labels", type=Path, default=None,
+        help="Synthetic sun label sidecar. When set, non-sun latent channels "
+             "are structurally shared within each labelled nuisance group "
+             "and --structural-sun-channel is hard-set to its direction.",
+    )
+    parser.add_argument("--structural-sun-channel", type=int, default=9)
+    parser.add_argument(
         "--equivariance",
         default=None,
         choices=["None", "SO2", "SO3"],
@@ -219,6 +226,11 @@ def main() -> None:
         config.pipeline.model.field.invariant_function = args.invariant_function
     if args.canonical_frame_ortho:
         config.pipeline.model.field.canonical_frame_orthonormalise = True
+    if args.structural_sun_labels is not None:
+        config.pipeline.model.field.structural_sun_labels = \
+            args.structural_sun_labels
+        config.pipeline.model.field.structural_sun_channel = \
+            args.structural_sun_channel
     if args.seed is not None:
         config.machine.seed = args.seed
     if args.equivariance is not None:

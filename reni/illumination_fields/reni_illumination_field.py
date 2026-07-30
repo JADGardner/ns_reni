@@ -14,9 +14,11 @@
 
 """RENI field"""
 
+import json
 from typing import Literal, Type, Dict, Any, Optional, Union
 from dataclasses import dataclass, field
 import contextlib
+from pathlib import Path
 
 import torch
 from torch import nn, Tensor
@@ -33,6 +35,62 @@ from reni.field_components.vn_layers import VNInvariant, VNLinear, VNReLU
 
 from nerfstudio.cameras.rays import RaySamples
 from nerfstudio.field_components.encodings import NeRFEncoding
+
+
+def _load_structural_sun_layout(
+    labels_path: Path,
+    num_train_data: int,
+) -> tuple[Tensor, Tensor, int]:
+    """Build row-to-representative and row-to-sun mappings from labels.
+
+    The dataparser stores original images in sorted-filename order and, when
+    mirror augmentation is enabled, appends a second mirrored copy. Each
+    nuisance group gets one representative content row per augmentation half;
+    every member's sun direction remains image-specific.
+    """
+    labels = json.loads(labels_path.read_text())
+    names = sorted(labels)
+    num_originals = len(names)
+    if num_train_data == num_originals:
+        copies = 1
+    elif num_train_data == 2 * num_originals:
+        copies = 2
+    else:
+        raise ValueError(
+            f"Structural sun labels contain {num_originals} images, but the "
+            f"training bank has {num_train_data} rows (expected N or 2N).")
+
+    group_to_representative: dict[object, int] = {}
+    base_representatives = []
+    directions = []
+    for index, name in enumerate(names):
+        info = labels[name]
+        group_id = info.get("group_id", info.get("pair_id"))
+        if group_id is None:
+            raise ValueError(
+                f"{name} has no group_id (or legacy pair_id) in "
+                f"{labels_path}")
+        group_to_representative.setdefault(group_id, index)
+        base_representatives.append(group_to_representative[group_id])
+        directions.append(info["sun_direction"])
+
+    base_representatives_t = torch.tensor(
+        base_representatives, dtype=torch.long)
+    directions_t = torch.nn.functional.normalize(
+        torch.tensor(directions, dtype=torch.float32), dim=-1)
+    row_to_representative = [base_representatives_t]
+    row_to_direction = [directions_t]
+    if copies == 2:
+        row_to_representative.append(
+            base_representatives_t + num_originals)
+        mirrored = directions_t * torch.tensor([-1.0, 1.0, 1.0])
+        row_to_direction.append(mirrored)
+
+    return (
+        torch.cat(row_to_representative),
+        torch.cat(row_to_direction),
+        len(group_to_representative) * copies,
+    )
 
 
 @dataclass
@@ -100,6 +158,14 @@ class RENIFieldConfig(BaseRENIFieldConfig):
     """Whether to match implementation of old RENI, when using old checkpoints"""
     view_train_latents: bool = False
     """Whether to select train latents regardless of eval mode"""
+    structural_sun_labels: Optional[Path] = None
+    """Optional label sidecar for structurally shared synthetic sun groups.
+    All non-sun channels are read from one representative row per nuisance
+    group, while the designated channel is hard-set from the labelled sun
+    direction for every image."""
+    structural_sun_channel: int = 9
+    """Latent channel reserved for the labelled sun direction when
+    structural_sun_labels is set."""
     canonical_frame_orthonormalise: bool = False
     """VNJoint and VNCanonical: Gram-Schmidt orthonormalise the shared
     predicted frame before use. Orthonormalisation is rotation-equivariant
@@ -155,6 +221,33 @@ class RENIField(BaseRENIField):
 
             if self.config.trainable_scale in [True, "eval", "both"]:
                 self.eval_scale = nn.Parameter(torch.ones(self.num_eval_data))
+
+        self.structural_sun_enabled = False
+        if self.config.structural_sun_labels is not None:
+            if self.num_train_data is None:
+                raise ValueError(
+                    "structural_sun_labels requires a training latent bank")
+            if not 0 <= self.config.structural_sun_channel < self.latent_dim:
+                raise ValueError(
+                    f"structural_sun_channel "
+                    f"{self.config.structural_sun_channel} is outside latent "
+                    f"dimension {self.latent_dim}")
+            representatives, directions, group_count = \
+                _load_structural_sun_layout(
+                    Path(self.config.structural_sun_labels),
+                    self.num_train_data,
+                )
+            self.register_buffer(
+                "structural_group_representative", representatives)
+            self.register_buffer(
+                "structural_sun_directions", directions)
+            self.structural_sun_enabled = True
+            self.structural_sun_group_count = group_count
+            self.materialise_structural_train_latents()
+            print(
+                f"[sun-structural] {self.num_train_data} image rows -> "
+                f"{group_count} shared content rows; channel "
+                f"{self.config.structural_sun_channel} is hard-set")
 
         if self.config.invariant_function == "GramMatrix":
             self.invariant_function = self.gram_matrix_invariance
@@ -695,6 +788,49 @@ class RENIField(BaseRENIField):
         assert network is not None, "unknown conditioning type"
         return network
 
+    def _sample_structural_train_latent(self, idx, stochastic: bool):
+        representative = self.structural_group_representative[idx]
+        mu = self.train_mu[representative, :, :].clone()
+        log_var = self.train_logvar[representative, :, :].clone()
+        target = self.structural_sun_directions[idx]
+        channel = self.config.structural_sun_channel
+        mu[..., channel, :] = target
+        # The supervised direction is deterministic, not a variational degree
+        # of freedom. Keeping a fixed finite log variance also avoids adding a
+        # meaningless optimisable parameter to the KLD term.
+        log_var[..., channel, :] = -5.0
+        if stochastic:
+            sample = mu + torch.randn_like(mu) * torch.exp(0.5 * log_var)
+            sample[..., channel, :] = target
+        else:
+            sample = mu
+        return sample, mu, log_var
+
+    def materialise_structural_train_latents(self) -> None:
+        """Copy the current shared representation into every compatibility row.
+
+        Forward passes always gather the representative rows directly. The
+        materialised full bank keeps saved checkpoints and existing analysis
+        tools self-contained and truthful without weakening the training-time
+        structural constraint.
+        """
+        if not getattr(self, "structural_sun_enabled", False):
+            return
+        channel = self.config.structural_sun_channel
+        with torch.no_grad():
+            mu = self.train_mu[
+                self.structural_group_representative].clone()
+            log_var = self.train_logvar[
+                self.structural_group_representative].clone()
+            mu[:, channel, :] = self.structural_sun_directions
+            log_var[:, channel, :] = -5.0
+            self.train_mu.copy_(mu)
+            self.train_logvar.copy_(log_var)
+
+    def _save_to_state_dict(self, destination, prefix, keep_vars):
+        self.materialise_structural_train_latents()
+        super()._save_to_state_dict(destination, prefix, keep_vars)
+
     def sample_latent(self, idx):
         """Sample the latent code at a given index
 
@@ -705,6 +841,11 @@ class RENIField(BaseRENIField):
         tuple (torch.Tensor, torch.Tensor, torch.Tensor): A tuple containing the sampled latent variable, the mean of the latent variable and the log variance of the latent variable
         """
 
+        if (self.config.view_train_latents
+                and self.structural_sun_enabled):
+            return self._sample_structural_train_latent(
+                idx, stochastic=False)
+
         if self.config.view_train_latents:
             sample = self.train_mu[idx, :, :]
             mu = self.train_mu[idx, :, :]
@@ -712,6 +853,11 @@ class RENIField(BaseRENIField):
             
             return sample, mu, log_var
         
+        if (self.training and not self.fixed_decoder
+                and self.structural_sun_enabled):
+            return self._sample_structural_train_latent(
+                idx, stochastic=True)
+
         if self.training and not self.fixed_decoder:
             # use reparameterization trick
             mu = self.train_mu[idx, :, :]
