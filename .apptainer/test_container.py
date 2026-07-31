@@ -27,7 +27,15 @@ def check(description, fn):
 
 def check_nerfstudio_revision():
     revision = subprocess.check_output(
-        ["git", "-C", "/opt/nerfstudio", "rev-parse", "HEAD"],
+        [
+            "git",
+            "-c",
+            "safe.directory=/opt/nerfstudio",
+            "-C",
+            "/opt/nerfstudio",
+            "rev-parse",
+            "HEAD",
+        ],
         text=True,
     ).strip()
     if revision != NERFSTUDIO_COMMIT:
