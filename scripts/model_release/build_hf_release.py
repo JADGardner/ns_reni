@@ -7,8 +7,13 @@ import argparse
 import hashlib
 import json
 import shutil
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+
+RELEASE_VERSION = "1.1"
 
 
 @dataclass(frozen=True)
@@ -260,6 +265,78 @@ def stage_published(
     return models
 
 
+def stage_minimal_decoder(
+    phd_root: Path,
+    output: Path,
+) -> dict[str, object]:
+    """Export and stage the PyTorch-only form of the headline decoder."""
+    spec = RUNS[0]
+    source_run = phd_root / spec.source_run
+    destination = output / "minimal"
+    exporter = (
+        phd_root
+        / "code"
+        / "ns_reni"
+        / "scripts"
+        / "export_minimal_decoder.py"
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(exporter),
+            "--checkpoint",
+            str(source_run / "nerfstudio_models" / spec.checkpoint),
+            "--config",
+            str(source_run / "config.yml"),
+            "--output-dir",
+            str(destination),
+            "--model-id",
+            spec.model_id,
+        ],
+        check=True,
+    )
+
+    example_root = (
+        phd_root / "code" / "ns_reni" / "examples" / "minimal_inference"
+    )
+    for name in (
+        "README.md",
+        "pyproject.toml",
+        "render.py",
+        "reni_decoder.py",
+        "uv.lock",
+    ):
+        copy_file(example_root / name, destination / name)
+    copy_file(
+        phd_root / "code" / "ns_reni" / "LICENSE",
+        destination / "LICENSE",
+    )
+
+    files = []
+    for path in sorted(destination.iterdir()):
+        if not path.is_file():
+            continue
+        files.append(
+            {
+                "path": path.relative_to(output).as_posix(),
+                "size_bytes": path.stat().st_size,
+                "sha256": sha256(path),
+            }
+        )
+    return {
+        "id": "thesis-vnjoint-ortho-so2-d100-minimal",
+        "groups": ["minimal"],
+        "source_run": spec.source_run,
+        "source_checkpoint": spec.checkpoint,
+        "notes": (
+            "Decoder-only PyTorch reference artifact for inference and "
+            "latent fitting; excludes Nerfstudio, latent banks and optimiser "
+            "state."
+        ),
+        "files": files,
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -287,11 +364,16 @@ def main() -> None:
 
     models = [stage_run(phd_root, output, spec) for spec in RUNS]
     models.extend(stage_published(model_storage, output))
+    models.append(stage_minimal_decoder(phd_root, output))
     shutil.copy2(Path(__file__).with_name("MODEL_CARD.md"), output / "README.md")
+    shutil.copy2(
+        phd_root / "code" / "ns_reni" / "LICENSE",
+        output / "LICENSE",
+    )
 
     manifest = {
         "schema_version": 1,
-        "release_version": "1.0",
+        "release_version": RELEASE_VERSION,
         "repository": "jadgardner/reni-models",
         "models": models,
     }

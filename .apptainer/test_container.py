@@ -5,12 +5,14 @@ Run after building the SIF or Docker image:
     # Apptainer:
     .apptainer/apptainer.sh exec -- python .apptainer/test_container.py
     # Docker:
-    docker compose run research python /workspace/ns_reni/.apptainer/test_container.py
+    docker compose run --rm research python .apptainer/test_container.py
 """
 
+import subprocess
 import sys
 
 errors = []
+NERFSTUDIO_COMMIT = "50e0e3c70c775e89333256213363badbf074f29d"
 
 
 def check(description, fn):
@@ -21,6 +23,15 @@ def check(description, fn):
     except Exception as e:
         print(f"  [FAIL] {description}: {e}")
         errors.append(description)
+
+
+def check_nerfstudio_revision():
+    revision = subprocess.check_output(
+        ["git", "-C", "/opt/nerfstudio", "rev-parse", "HEAD"],
+        text=True,
+    ).strip()
+    if revision != NERFSTUDIO_COMMIT:
+        raise RuntimeError(f"found {revision}, expected {NERFSTUDIO_COMMIT}")
 
 
 print("=== ns_reni Container Verification ===\n")
@@ -52,6 +63,7 @@ check("tinycudann", lambda: __import__("tinycudann"))
 # -- nerfstudio + ns_reni --
 print("\n[4/4] nerfstudio + ns_reni")
 check("nerfstudio", lambda: __import__("nerfstudio"))
+check("nerfstudio revision", check_nerfstudio_revision)
 check("reni", lambda: __import__("reni"))
 check("einops", lambda: __import__("einops"))
 check("pyexr", lambda: __import__("pyexr"))

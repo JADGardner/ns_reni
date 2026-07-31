@@ -17,6 +17,8 @@ This repository contains the released checkpoints for
 
 The release is deliberately divided into groups:
 
+- `minimal`: the headline decoder as a self-contained, PyTorch-only
+  reference artifact and locked CPU rendering example.
 - `core`: the thesis headline model, with joint Gram-Schmidt invariant
   conditioning, two HDR brackets and two latent-reset cycles.
 - `neusky-prior`: the channelwise two-bracket prior used by every released
@@ -41,6 +43,7 @@ python scripts/download_models.py model-storage/reni
 Download another release group:
 
 ```bash
+python scripts/download_models.py model-storage/reni --group minimal
 python scripts/download_models.py model-storage/reni --group neusky-prior
 python scripts/download_models.py model-storage/reni --group thesis
 python scripts/download_models.py model-storage/reni --group published
@@ -59,10 +62,28 @@ For example:
 
 ```bash
 hf download jadgardner/reni-models \
-  --revision v1.0 \
-  --include "thesis/vnjoint-ortho/so2/d100/*" \
+  --revision v1.1 \
+  --include "minimal/*" \
   --local-dir model-storage/reni
 ```
+
+## Minimal PyTorch Inference
+
+The `minimal` group is the quickest way to evaluate the thesis model. It
+contains only the 3.57 MiB decoder weights and the code needed to sample an
+environment map:
+
+```bash
+python scripts/download_models.py model-storage/reni --group minimal
+cd model-storage/reni/minimal
+uv run render.py --weights decoder.pt --output-dir render
+```
+
+It requires no Nerfstudio, tiny-cuda-nn, COLMAP, CUDA, or `ns_reni`
+installation. The artifact includes the joint Vector Neuron frame, attention
+decoder, architecture metadata and two-bracket HDR constants. The full
+checkpoint remains available in `core` for continued training and analysis of
+the learned training latents.
 
 ## Data
 

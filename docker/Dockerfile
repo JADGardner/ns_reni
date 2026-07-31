@@ -79,12 +79,15 @@ RUN conda run -n research pip install --no-cache-dir \
     --extra-index-url https://miropsota.github.io/torch_packages_builder \
     "tinycudann==2.0+pt2.8.0cu128"
 
-# -- nerfstudio (mainline) -----------------------------------------------------
-# ns_reni is a nerfstudio extension — install mainline nerfstudio.
-# Shallow clone to save space (no git history needed).
+# -- nerfstudio ---------------------------------------------------------------
+# Pin the exact revision verified with the released thesis implementation.
+ARG NERFSTUDIO_COMMIT=50e0e3c70c775e89333256213363badbf074f29d
 RUN conda run -n research bash -c " \
-    git clone --depth 1 https://github.com/nerfstudio-project/nerfstudio.git /opt/nerfstudio && \
+    git init /opt/nerfstudio && \
     cd /opt/nerfstudio && \
+    git remote add origin https://github.com/nerfstudio-project/nerfstudio.git && \
+    git fetch --depth 1 origin ${NERFSTUDIO_COMMIT} && \
+    git checkout --detach FETCH_HEAD && \
     pip install --no-cache-dir -e . \
     && pip cache purge && rm -rf /tmp/*"
 

@@ -8,7 +8,10 @@ Paper: RENI++: A Rotation-Equivariant, Scale-Invariant, Natural Illumination Pri
 
 ## Installation
 
-RENI++ is a nerfstudio extension. It requires CUDA 12.8, Python 3.12, PyTorch 2.x, tiny-cuda-nn, and nerfstudio. The recommended way to run it is via Docker or Apptainer (for HPC clusters).
+RENI++ is a nerfstudio extension. It requires CUDA 12.8, Python 3.12,
+PyTorch 2.x, tiny-cuda-nn, and Nerfstudio revision
+`50e0e3c70c775e89333256213363badbf074f29d`. The recommended way to run it
+is via Docker or Apptainer (for HPC clusters).
 
 ### Option 1: Docker (recommended for local machines)
 
@@ -41,6 +44,9 @@ OUTPUTS_PATH=/path/to/outputs
 ```bash
 # Build the image (compiles CUDA extensions — takes 20-40 min first time)
 docker compose build research
+
+# Verify a clean clone
+docker compose run --rm research python .apptainer/test_container.py
 
 # Start an interactive shell
 docker compose run research bash
@@ -93,7 +99,12 @@ pip install torch torchvision torchaudio --extra-index-url https://download.pyto
 conda install -c conda-forge colmap -y
 sudo apt install libopenexr-dev  # or: conda install -c conda-forge openexr
 pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
-git clone --depth 1 https://github.com/nerfstudio-project/nerfstudio.git
+NERFSTUDIO_COMMIT=50e0e3c70c775e89333256213363badbf074f29d
+git init nerfstudio
+git -C nerfstudio remote add origin \
+  https://github.com/nerfstudio-project/nerfstudio.git
+git -C nerfstudio fetch --depth 1 origin "$NERFSTUDIO_COMMIT"
+git -C nerfstudio checkout --detach FETCH_HEAD
 cd nerfstudio && pip install -e . && cd ..
 pip install -e .
 ```
@@ -136,12 +147,15 @@ python3 scripts/download_models.py model-storage/reni
 
 This retrieves the joint Gram-Schmidt, two-bracket, two-cycle D=100 model
 used as the thesis headline result. The downloader uses the tagged
-[RENI Models v1.0 release](https://huggingface.co/jadgardner/reni-models)
+[RENI Models v1.1 release](https://huggingface.co/jadgardner/reni-models)
 and verifies every downloaded file against `MODEL_MANIFEST.json`.
 
 Other release groups are opt-in:
 
 ```bash
+# PyTorch-only decoder and a locked CPU rendering example
+python3 scripts/download_models.py model-storage/reni --group minimal
+
 # Exact channelwise two-bracket prior used by NeuSky
 python3 scripts/download_models.py model-storage/reni --group neusky-prior
 
@@ -155,3 +169,17 @@ python3 scripts/download_models.py model-storage/reni --group published
 Use `python3 scripts/download_models.py --list` to inspect the exact model
 identifiers. The release page also provides direct `curl` and Hugging Face
 CLI access.
+
+For the lightweight path, continue with:
+
+```bash
+cd model-storage/reni/minimal
+uv run render.py --weights decoder.pt --output-dir render
+```
+
+This path uses only PyTorch, NumPy and Pillow. It includes the complete
+reusable prior, including the learned joint Vector Neuron frame and
+two-bracket HDR reconstruction, but deliberately omits Nerfstudio, training
+latents and optimiser state. See
+[`examples/minimal_inference/README.md`](examples/minimal_inference/README.md)
+for the artifact contract.

@@ -21,8 +21,10 @@ set -e
 # Install mounted ns_reni code editably (--no-deps: all deps are in the image)
 PROJECT_ROOT="${PROJECT_ROOT:-/workspace}"
 if [ -f "$PROJECT_ROOT/pyproject.toml" ]; then
-    rm -rf "$PROJECT_ROOT"/*.egg-info 2>/dev/null || true
-    pip install -e "$PROJECT_ROOT" --no-deps --quiet 2>/dev/null || true
+    pip install -e "$PROJECT_ROOT" \
+        --no-deps \
+        --no-build-isolation \
+        --quiet
 fi
 
 # Run whatever command was passed
