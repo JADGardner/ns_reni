@@ -6,7 +6,7 @@
 # Stage 1 (builder): nvidia/cuda devel image with compilers for CUDA extensions
 # Stage 2 (runtime): nvidia/cuda runtime image, copies conda env from builder
 #
-# Requires: nerfstudio (mainline), tiny-cuda-nn, COLMAP
+# Requires: pinned nerfstudio, tiny-cuda-nn, COLMAP
 # Does NOT need: gsplat, nvdiffrast, transformer-engine, flash-attn, DiffusionRenderer
 #
 # Usage:
