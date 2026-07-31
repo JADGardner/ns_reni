@@ -120,7 +120,7 @@ class BaselineComparison:
         self,
         reni_checkpoint: str = "checkpoints/reni_plus_plus_models/latent_dim_100",
         soldnet_checkpoint: str = "checkpoints/SOLD_Net/pretrained_model",
-        output_dir: str = "publication/figures_baseline",
+        output_dir: str = "outputs/figures/baseline_comparison",
         device: str = "cuda:0" if torch.cuda.is_available() else "cpu",
     ):
         self.output_dir = Path(output_dir)
@@ -512,7 +512,8 @@ def main():
     parser.add_argument("--soldnet_checkpoint", type=str,
                        default="checkpoints/SOLD_Net/pretrained_model",
                        help="Path to SOLD-Net pretrained models")
-    parser.add_argument("--output_dir", type=str, default="publication/figures_baseline",
+    parser.add_argument("--output_dir", type=str,
+                        default="outputs/figures/baseline_comparison",
                        help="Output directory for figures")
     parser.add_argument("--num_images", type=int, default=None,
                        help="Limit to first N images (for quick testing)")

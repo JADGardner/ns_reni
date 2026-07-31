@@ -21,8 +21,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from _common import (init_fit_latent,
-                     MODEL_DIRS, add_common_args, collect_model_outputs,
+from _common import (MODEL_DIRS, REPO_ROOT, add_common_args,
+                     collect_model_outputs, init_fit_latent,
                      add_figure_label, axis_center, equirect_ray_bundle,
                      eval_image_tensor, load_model, render_eval_image,
                      save_figure, seed_all)
@@ -341,10 +341,9 @@ def main():
     parser.add_argument("--eval-width", type=int, default=512,
                         help="Eval image width for GT/fits (dataset resize)")
     parser.add_argument("--data-dir", type=Path,
-                        default=Path("/home/james/data/RENI_HDR_hires_figs"),
-                        help="Dataset root (default: hi-res figure test set "
-                             "from the highres mapping; low-res train/val "
-                             "splits symlinked for datamanager setup)")
+                        default=REPO_ROOT / "data" / "RENI_HDR",
+                        help="RENI HDR dataset root; optional high-resolution "
+                             "images are resolved by the shared mapping")
     parser.add_argument("--model", default="vnjoint_ortho_2cyc_testfit",
                         help="MODEL_DIRS key for the perspective figure "
                              "(default: thesis joint-frame two-bracket "

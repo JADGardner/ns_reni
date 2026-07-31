@@ -61,8 +61,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sweep", type=Path,
                         default=REPO_ROOT / "publication" / "tables" / "rotation_sweep.json")
-    parser.add_argument("--output", type=Path,
-                        default=REPO_ROOT / "publication" / "figures" / "rotation_error_thesis")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=REPO_ROOT / "outputs" / "figures" / "rotation_error_thesis",
+    )
     parser.add_argument("--dpi", type=int, default=300)
     args = parser.parse_args()
 

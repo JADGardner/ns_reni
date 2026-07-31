@@ -97,8 +97,11 @@ def output_column(ax, x, y_center, n=7, s=0.36):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path,
-                        default=REPO_ROOT / "publication" / "figures" / "model_types")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=REPO_ROOT / "outputs" / "figures" / "model_types",
+    )
     parser.add_argument("--dpi", type=int, default=300)
     parser.add_argument("--svg", action="store_true")
     args = parser.parse_args()

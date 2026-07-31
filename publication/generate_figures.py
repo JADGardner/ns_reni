@@ -13,23 +13,20 @@ Usage:
 
 import copy
 import os
-import sys
 import argparse
 import logging
 import warnings
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Any, Literal, Tuple
+from typing import Optional, Dict, List, Any, Literal
 import re
 
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 from matplotlib.cm import get_cmap
 import yaml
-from PIL import Image
 import io
 
 from nerfstudio.cameras.cameras import Cameras, CameraType
@@ -65,7 +62,9 @@ class FigureConfig:
     # Base directories
     project_root: Path = field(default_factory=lambda: find_nerfstudio_project_root(Path(os.getcwd())))
     checkpoint_base: Path = field(default_factory=lambda: Path("checkpoints"))
-    output_dir: Path = field(default_factory=lambda: Path("publication/figures_updated"))
+    output_dir: Path = field(
+        default_factory=lambda: Path("outputs/figures/legacy_generate")
+    )
     teaser_base_path: Path = field(default_factory=lambda: Path("publication/figures/teaser_base.png"))
     
     # Device settings
@@ -1099,8 +1098,7 @@ class FigureGenerator:
         
         # Use keys that exist in both
         old_keys = list(old_output_images.keys())
-        new_keys = list(new_output_images.keys())
-        
+
         # Map old keys to new keys for comparison
         key_mapping = {
             'ndims_9': 'latent_dim_9',
@@ -1270,8 +1268,8 @@ def parse_args():
     parser.add_argument(
         '--output-dir',
         type=str,
-        default='publication/figures_updated',
-        help='Output directory for figures (default: publication/figures_updated)'
+        default="outputs/figures/legacy_generate",
+        help="Output directory for legacy figure generation"
     )
     parser.add_argument(
         '--checkpoint-base',

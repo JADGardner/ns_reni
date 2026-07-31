@@ -14,7 +14,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import torch
 
-from _common import (MODEL_DIRS, add_common_args, load_model,
+from _common import (MODEL_DIRS, REPO_ROOT, add_common_args, load_model,
                      render_eval_image, save_figure)
 
 
@@ -28,7 +28,9 @@ def main():
     parser.add_argument("--labels", nargs=2,
                         default=["RENI++", "Two-Bracket\n(Single Cycle)"])
     parser.add_argument("--data-dir", type=Path,
-                        default=Path("/home/james/data/RENI_HDR_hires_figs"))
+                        default=REPO_ROOT / "data" / "RENI_HDR",
+                        help="RENI HDR dataset root; optional high-resolution "
+                             "images are resolved by the shared mapping")
     parser.add_argument("--eval-width", type=int, default=512)
     args = parser.parse_args()
 

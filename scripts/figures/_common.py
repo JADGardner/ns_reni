@@ -48,7 +48,7 @@ import torch
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PHD_ROOT = REPO_ROOT.parents[1]
+PHD_ROOT = REPO_ROOT.parents[1] if REPO_ROOT.parent.name == "code" else REPO_ROOT
 # Relative paths in saved configs (data/RENI_HDR etc.) resolve from repo root.
 os.chdir(REPO_ROOT)
 

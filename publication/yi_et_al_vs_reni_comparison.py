@@ -48,7 +48,6 @@ from reni.field_components.field_heads import RENIFieldHeadNames
 from reni.model_components.illumination_samplers import EquirectangularSamplerConfig
 from reni.model_components.shaders import BlinnPhongShader
 from reni.utils.colourspace import linear_to_sRGB
-from reni.utils.utils import find_nerfstudio_project_root
 from reni.utils.checkpoint_locator import find_checkpoint
 from nerfstudio.cameras.cameras import Cameras, CameraType
 
@@ -438,7 +437,8 @@ def compute_metrics(gt: np.ndarray, pred: np.ndarray) -> Dict[str, float]:
 def main():
     parser = argparse.ArgumentParser(description="Yi et al. vs RENI++ inverse rendering comparison")
     parser.add_argument("--num_images", type=int, default=10, help="Number of test envmaps")
-    parser.add_argument("--output_dir", type=str, default="publication/figures_yi_et_al")
+    parser.add_argument("--output_dir", type=str,
+                        default="outputs/figures/yi_et_al")
     parser.add_argument("--reni_steps", type=int, default=500, help="RENI++ optimisation steps")
     parser.add_argument("--image_size", type=int, default=128, help="Rendered object image size")
     args = parser.parse_args()

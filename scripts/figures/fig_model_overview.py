@@ -48,7 +48,7 @@ from matplotlib.patches import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PHD_ROOT = REPO_ROOT.parents[1]
+PHD_ROOT = REPO_ROOT.parents[1] if REPO_ROOT.parent.name == "code" else REPO_ROOT
 
 
 def default_envmap() -> Path:
@@ -737,9 +737,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--envmap", type=Path, default=None,
                         help="EXR environment map to project onto the output sphere")
-    parser.add_argument("--output", type=Path,
-                        default=REPO_ROOT / "publication" / "figures" / "model_overview",
-                        help="Output stem without extension")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=REPO_ROOT / "outputs" / "figures" / "model_overview",
+        help="Output stem without extension",
+    )
     parser.add_argument("--dpi", type=int, default=300)
     parser.add_argument("--sphere_size", type=int, default=700)
     parser.add_argument("--sphere_yaw", type=float, default=210.0)

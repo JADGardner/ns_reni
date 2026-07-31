@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PHD_ROOT = REPO_ROOT.parents[1]
+PHD_ROOT = REPO_ROOT.parents[1] if REPO_ROOT.parent.name == "code" else REPO_ROOT
 LATENT_DIMS = (9, 36, 49, 100)
 ARCHITECTURE_TIMESTAMP = "2026-07-14_50k_spherical"
 EQUIVARIANCE_TIMESTAMP = "2026-07-14_two_bracket_2cycles"

@@ -13,8 +13,10 @@ decoder (out_features=6, sigmoid) + the two-bracket flags + the frozen decoder
 checkpoint, so no plugin re-registration is needed.
 
     PYTHONPATH=.:scripts/figures python scripts/figures/fit_inverse_two_bracket.py \
-        --decoder-ckpt /workspace/phd/outputs/reni/_figshim_w3_2cyc --decoder-step 100001 \
-        --output-dir /workspace/phd/outputs/reni_inverse_two_bracket --max-iters 50400
+        --decoder-ckpt outputs/reni_latent_reset_d100_two_bracket_ldrw3_2cyc_vnjoint_ortho \
+        --invariant-function VNJoint --canonical-frame-ortho \
+        --output-dir ../../outputs/reni_inverse_two_bracket_vnjoint_ortho \
+        --max-iters 50400
 """
 
 import argparse
@@ -22,6 +24,9 @@ import copy
 from pathlib import Path
 
 from reni.configs.reni_inverse_config import RENIInverse
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PHD_ROOT = REPO_ROOT.parents[1] if REPO_ROOT.parent.name == "code" else REPO_ROOT
 
 # (object, environment_map_idx) cells shown in fig_inverse_rendering's
 # OUTPUT_CONFIG; --figure-subset fits only these (x6 speculars = 24 images) so
@@ -47,12 +52,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--decoder-ckpt", required=True,
                         help="Dir with nerfstudio_models/ holding the two-bracket "
-                             "RENI++ decoder checkpoint (e.g. the _figshim_w3_2cyc "
-                             "shim; its decoder weights equal the raw 2-cycle run)")
+                             "RENI++ decoder checkpoint")
     parser.add_argument("--decoder-step", type=int, default=100001)
-    parser.add_argument("--data", default="data/RENI_HDR")
-    parser.add_argument("--output-dir", default="/workspace/phd/outputs/reni_inverse_two_bracket")
-    parser.add_argument("--experiment-name", default="reni_inverse_two_bracket")
+    parser.add_argument("--data", default=PHD_ROOT / "data" / "RENI_HDR")
+    parser.add_argument(
+        "--output-dir",
+        default=PHD_ROOT / "outputs" / "reni_inverse_two_bracket_vnjoint_ortho",
+    )
+    parser.add_argument(
+        "--experiment-name",
+        default="reni_inverse_two_bracket_vnjoint_ortho",
+    )
     parser.add_argument("--max-iters", type=int, default=50400)
     parser.add_argument("--steps-per-save", type=int, default=2000)
     parser.add_argument("--split", default="test",
@@ -62,12 +72,16 @@ def main():
                              "(24 images); pair with --max-iters 4800 (200/image)")
     parser.add_argument("--m-ldr", type=float, default=16.0)
     parser.add_argument("--m-log", type=float, default=10000.0)
-    parser.add_argument("--invariant-function", default=None,
+    parser.add_argument("--invariant-function", default="VNJoint",
                         choices=["GramMatrix", "VN", "VNJoint", "VNCanonical", "Norms"],
                         help="Override the field invariant function to match "
-                             "the decoder checkpoint (config default: VN).")
-    parser.add_argument("--canonical-frame-ortho", action="store_true",
-                        help="Gram-Schmidt frame decoders: must match training.")
+                             "the decoder checkpoint (default: thesis VNJoint).")
+    parser.add_argument(
+        "--canonical-frame-ortho",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use the thesis Gram-Schmidt frame (default: enabled).",
+    )
     parser.add_argument("--vis", default="tensorboard")
     args = parser.parse_args()
 

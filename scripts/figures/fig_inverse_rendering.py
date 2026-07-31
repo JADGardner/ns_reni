@@ -1,10 +1,10 @@
 """Inverse rendering figure (paper Fig: inverse_rendering).
 
 Bunny and teapot renders under unknown illumination across six specular
-levels: ground truth alongside SH (9th order) and RENI++ (D=100) inverse
-fits, with the recovered environment maps. Uses the fitted inverse-task
-checkpoints from the paper archive; the collage layout is ported verbatim
-from publication/inverse_task.ipynb.
+levels: ground truth alongside SH (9th order) and the thesis RENI++ (D=100)
+inverse fits, with the recovered environment maps. The SH fit comes from the
+paper archive and the RENI++ fit uses the joint-frame, two-bracket thesis
+decoder. The collage layout preserves the published figure.
 
     PYTHONPATH=. python scripts/figures/fig_inverse_rendering.py
 """
@@ -24,9 +24,9 @@ import torch.nn.functional as F
 import yaml
 from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 
-from _common import (PAPER_MODELS, add_common_args, equirect_ray_bundle,
-                     mapped_eval_image_path, read_clean_exr, save_figure,
-                     seed_all)
+from _common import (PAPER_MODELS, PHD_ROOT, add_common_args,
+                     equirect_ray_bundle, mapped_eval_image_path,
+                     read_clean_exr, save_figure, seed_all)
 from nerfstudio.cameras.rays import Frustums, RaySamples  # noqa: E402
 
 from reni.configs.reni_inverse_config import RENIInverse  # noqa: E402
@@ -48,6 +48,16 @@ OUTPUT_CONFIG = {
 }
 SPECULARS = ["0.000000", "0.200000", "0.400000", "0.600000", "0.800000",
              "1.000000"]
+
+DEFAULT_THESIS_INVERSE_MODEL = Path(os.environ.get(
+    "RENI_THESIS_INVERSE_MODEL",
+    PHD_ROOT
+    / "outputs"
+    / "reni_inverse_two_bracket_vnjoint_ortho"
+    / "reni_inverse_two_bracket_vnjoint_ortho"
+    / "reni-inverse"
+    / "2026-07-16_124535",
+))
 
 INVERSE_PSNR = {
     0: (("23.10 dB", "32.03 dB"), ("24.69 dB", "35.48 dB"),
@@ -475,9 +485,9 @@ def main():
                         help="SH inverse-task run dir (contains nerfstudio_models); "
                              "default = paper archive, unchanged")
     parser.add_argument("--reni_inverse_model", type=Path,
-                        default=PAPER_MODELS / "inverse_task" / "reni_plus_plus" / "latent_dim_100",
-                        help="RENI++ inverse-task run dir; point at a two-bracket "
-                             "fit (fit_inverse_two_bracket.py) for the thesis figure")
+                        default=DEFAULT_THESIS_INVERSE_MODEL,
+                        help="Joint-frame two-bracket RENI++ inverse-task run "
+                             "(override with RENI_THESIS_INVERSE_MODEL)")
     parser.add_argument("--recompute_labels", action="store_true",
                         help="Recompute the baked PSNR labels from the rendered "
                              "cells (needed when the RENI++ model differs from the paper)")

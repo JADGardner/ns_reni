@@ -214,16 +214,21 @@ def _write_table(metrics, out_stem: Path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    add_common_args(parser, "inversenet_comparison_thesis")
-    parser.add_argument("--model", default="two_bracket_w3_2cyc",
-                        help="MODEL_DIRS key for the RENI++ decoder (default: "
-                             "thesis two-bracket 2-cycle, the completion-optimal "
-                             "model; use reni_pp for the paper model)")
+    add_common_args(parser, "inversenet_comparison_published")
+    parser.add_argument(
+        "--model",
+        default="reni_pp",
+        help=(
+            "MODEL_DIRS key for the RENI++ decoder (default: published "
+            "RENI++; use vnjoint_ortho_2cyc for the thesis model)"
+        ),
+    )
     parser.add_argument("--data_dir", type=str, default="data/RENI_HDR/test")
     parser.add_argument("--inversenet_weights", type=str,
                         default="checkpoints/inverserendernet/model_ckpt.pth")
     parser.add_argument("--table_output", type=Path,
-                        default=REPO_ROOT / "publication" / "tables" / "inversenet_comparison_thesis",
+                        default=REPO_ROOT / "publication" / "tables"
+                        / "inversenet_comparison_published",
                         help="Output stem for the LaTeX metrics table")
     parser.add_argument("--crop_fov", type=float, default=120.0)
     parser.add_argument("--crop_v_fov", type=float, default=120.0)

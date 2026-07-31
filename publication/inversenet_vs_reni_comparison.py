@@ -38,9 +38,7 @@ except ImportError:
     HAS_LPIPS = False
 
 # Additional imports for RENI++ pipeline context
-from torch.utils.tensorboard import SummaryWriter
 from nerfstudio.cameras.cameras import Cameras
-from nerfstudio.cameras.rays import RayBundle
     
 # InverseRenderNet
 from reni.baselines.inversenet import InverseRenderNet, load_pytorch_weights
@@ -57,7 +55,6 @@ from nerfstudio.engine.optimizers import Optimizers
 from nerfstudio.engine.optimizers import AdamOptimizerConfig
 from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
 from reni.configs.reni_config import RENIField
-from reni.utils.utils import find_nerfstudio_project_root
 
 # EXR loading
 import OpenEXR
@@ -431,7 +428,7 @@ class InverseRenderNetVsRENI:
         data_dir: str = "data/RENI_HDR/test",
         inversenet_weights: str = "checkpoints/inverserendernet/inversenet_weights.pth",
         reni_checkpoint: str = "checkpoints/reni_plus_plus_models/latent_dim_100",
-        output_dir: str = "publication/figures_inversenet",
+        output_dir: str = "outputs/figures/inversenet",
         device: str = "cuda:0" if torch.cuda.is_available() else "cpu",
         envmap_width: int = 128,
         crop_h_fov: float = 90.0,
@@ -1040,7 +1037,8 @@ def main():
     parser.add_argument("--reni_checkpoint", type=str,
                        default="checkpoints/reni_plus_plus_models/latent_dim_100",
                        help="Path to RENI++ checkpoint")
-    parser.add_argument("--output_dir", type=str, default="publication/figures_inversenet",
+    parser.add_argument("--output_dir", type=str,
+                        default="outputs/figures/inversenet",
                        help="Output directory")
     parser.add_argument("--num_images", type=int, default=None,
                        help="Limit to first N images")

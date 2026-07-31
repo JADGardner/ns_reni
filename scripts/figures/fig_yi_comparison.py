@@ -202,10 +202,15 @@ def _write_table(mean_metrics, out_stem: Path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    add_common_args(parser, "yi_comparison_thesis")
-    parser.add_argument("--model", default="two_bracket_w3_2cyc",
-                        help="MODEL_DIRS key for the RENI++ decoder (default: "
-                             "thesis two-bracket 2-cycle; use reni_pp for the paper model)")
+    add_common_args(parser, "yi_comparison_published")
+    parser.add_argument(
+        "--model",
+        default="reni_pp",
+        help=(
+            "MODEL_DIRS key for the RENI++ decoder (default: published "
+            "RENI++; use vnjoint_ortho_2cyc for the thesis model)"
+        ),
+    )
     parser.add_argument("--m_ldr", type=float, default=16.0)
     parser.add_argument("--m_log", type=float, default=10000.0)
     parser.add_argument("--num_images", type=int, default=10,
