@@ -1,5 +1,11 @@
 # TPAMI Revision Plan: RENI++
 
+> **Historical document (December 2024).** This records the TPAMI revision
+> process and intentionally retains the paths and task state from that period.
+> Current figure and evaluation entry points are documented in
+> `scripts/figures/README.md`; the notebook workflow described below has been
+> replaced by deterministic scripts.
+>
 > **Status**: Major Revision Required  
 > **Priority**: Address ALL reviewer concerns to avoid rejection
 
