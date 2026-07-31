@@ -9,7 +9,8 @@ Run from the ns_reni repo root with the reni++ environment, e.g.:
 
     PYTHONPATH=. python scripts/figures/fig_comparison.py
 
-Checkpoint layout expected under <repo>/checkpoints/ (all committed):
+Checkpoint roles are resolved through ``reni.utils.checkpoint_locator`` from
+the public model release or an explicitly configured local archive:
     reni_plus_plus_models/latent_dim_{9,36,49,100}
     reni_plus_plus_models/masked_models/latent_dim_100
     reni_original/ndims_{9,20,36,49,100}
@@ -541,8 +542,9 @@ def rotation_fn(model):
 
 
 def decode_latents(model, ray_samples, latent_code, rotation=None,
-                   height: int = 64, chunk_size: Optional[int] = None):
-    """Decode a [1, latent_dim, 3] latent code to an sRGB envmap [H, W, 3]."""
+                   height: int = 64, chunk_size: Optional[int] = None,
+                   return_linear: bool = False):
+    """Decode a [1, latent_dim, 3] latent code to an envmap [H, W, 3]."""
     H, W = height, height * 2
     if chunk_size is None:
         chunk_size = int(os.environ.get("RENI_FIGURE_DECODE_CHUNK", 65536))
@@ -573,6 +575,8 @@ def decode_latents(model, ray_samples, latent_code, rotation=None,
             chunks.append(rgb.cpu())
 
     img = torch.cat(chunks, dim=0).reshape(H, W, 3)
+    if return_linear:
+        return img.cpu().detach()
     return linear_to_sRGB(img, use_quantile=True).cpu().detach()
 
 
@@ -720,7 +724,10 @@ def add_common_args(parser, default_output: str):
                              "use 0 to decode a full envmap in one pass")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--svg", action="store_true", help="Also write SVG")
-    parser.add_argument("--output", type=Path,
-                        default=REPO_ROOT / "publication" / "figures" / default_output,
-                        help="Output stem (no extension)")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=REPO_ROOT / "outputs" / "figures" / default_output,
+        help="Output stem (no extension)",
+    )
     return parser

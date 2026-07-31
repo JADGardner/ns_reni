@@ -109,7 +109,7 @@ RUN conda run -n research pip install --no-cache-dir \
     jupyterlab ipywidgets \
     open3d trimesh plyfile pycolmap \
     tyro rich jaxtyping viser nerfview splines \
-    einops pyyaml packaging requests \
+    einops pyyaml packaging requests cairosvg \
     pyexr OpenEXR roma wget \
     "imageio[all]" \
     && pip cache purge && rm -rf /tmp/*

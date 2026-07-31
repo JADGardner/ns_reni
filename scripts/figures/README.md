@@ -17,9 +17,9 @@ PYTHONPATH=. $PY scripts/figures/fig_outpainting.py       # masked completion
 PYTHONPATH=. $PY scripts/figures/fig_mirror.py            # O(3) negations
 PYTHONPATH=. $PY scripts/figures/fig_model_overview.py    # model diagram
 PYTHONPATH=. $PY scripts/figures/fig_teaser.py            # teaser overlay
+PYTHONPATH=. $PY scripts/figures/fig_teaser_animation.py  # rotating latent GIF
 PYTHONPATH=. $PY scripts/figures/fig_old_vs_new.py        # needs old ckpts!
 PYTHONPATH=. $PY scripts/figures/fig_inverse_rendering.py # bunny/teapot inverse
-PYTHONPATH=. $PY scripts/figures/fig_car_relighting.py    # Blender car relighting
 PYTHONPATH=. $PY scripts/figures/fig_latent_reset_tsne.py # latent-reset t-SNE
 PYTHONPATH=. $PY scripts/figures/fig_baseline_comparison.py  # vs SOLD-Net + Hosek-Wilkie (+ Table 2.2)
 PYTHONPATH=. $PY scripts/figures/fig_yi_comparison.py        # vs Yi et al. (SH) inverse rendering
@@ -48,9 +48,24 @@ docker compose run --rm -e RENI_PAPER_MODELS=/home/james/model-storage/reni_pape
   PYTHONPATH=. python scripts/figures/fig_baseline_comparison.py --device cuda:0"
 ```
 
-Outputs default to `publication/figures/<name>.{png,pdf}` and
-`publication/tables/comparison.{tex,csv}` (`--output` overrides; `--svg`
-adds SVG).
+Figures default to `outputs/figures/<name>.{png,pdf}` so exploratory reruns do
+not repopulate the reviewed `publication/figures/` snapshot. Tables default to
+`publication/tables/` because those compact metric sources are versioned.
+`--output` overrides either location and `--svg` adds SVG.
+
+The README animation is the one intentional generated exception:
+
+```bash
+PYTHONPATH=. $PY scripts/figures/fig_teaser_animation.py
+```
+
+It loads the joint-frame, two-bracket, two-cycle D=100 thesis model, uses the
+fitted latent paired with `00030.exr`, rotates it through $360^\circ$, and
+reuses the blue decoder artwork from `publication/figures/teaser_base.svg`.
+The two output panels show the same decoded linear HDR signal after display
+mapping and as fixed-range log-HDR luminance. It writes
+`publication/figures/reni_thesis_rotation.gif`; pass `--latent-file` or
+`--latent-index` to choose another training example.
 
 Text baked into regenerated figures uses a Times-compatible serif stack
 (`Nimbus Roman`, `Times New Roman`, `Liberation Serif`, `STIXGeneral`) to match
@@ -71,10 +86,9 @@ high-resolution RENI_HDR mapping.
 - `checkpoints/` keeps only what the archive lacks: SOLD_Net and
   InverseRenderNet baseline checkpoints, and the historical (unusable)
   `reni_original/` wandb dumps.
-- Data: `data/RENI_HDR/` (test split = 21 envmaps the fits index into;
-  `3d_models/` bunny+teapot for the inverse figure, plus the optional
-  `frazer_nash_super_sport_1929.blend` Blender asset for the car relighting
-  figure).
+- Data: `data/RENI_HDR/` (test split = 21 environment maps indexed by the
+  fits; `3d_models/` contains the reproducibly generated bunny and teapot
+  normal maps used by the inverse-rendering figure).
 
 ### High-resolution RENI_HDR test images
 
@@ -212,20 +226,16 @@ For example, to raise row 4 slightly while preserving its roll/yaw:
 
 ## Original-RENI checkpoints (resolved 2026-06-10)
 
-The full paper model archive lives at
-`/home/james/model-storage/reni_paper_models/` (old_reni_models,
-reni_plus_plus_models, ablations, inverse_task, spherical_harmonics,
-spherical_gaussians). `checkpoints/old_reni_models` is a symlink into it and
-is what `MODEL_DIRS["reni_old"]` uses; `fig_old_vs_new.py` and the table's
-RENI column work from these.
+The full paper model archive is available through the `published` Hugging Face
+release group and may also be pointed to with `RENI_PAPER_MODELS`. It contains
+`old_reni_models`, `reni_plus_plus_models`, ablations, inverse-task fits,
+spherical harmonics and spherical Gaussians. `MODEL_DIRS["reni_old"]` resolves
+the released modern-format original-RENI checkpoints directly.
 
-CORRECTION: `checkpoints/reni_original/` (original-repo wandb dumps) ARE the
-published original-RENI weights — `publication/generate_figures.py`
-(`_load_old_format`) loads them correctly and reproduces the published
-table values. The `old_implementation` path in the modern field (and the
-naive manual decode) does NOT reproduce them — use the generate_figures
-loader for old-format checkpoints. `convert_original_reni.py` is retained
-but should be ported to that loader's conventions before trusting it.
+The historical `checkpoints/reni_original/` W&B dumps remain useful for
+provenance. Only `publication/generate_figures.py`'s `_load_old_format` path
+should be used with them; the modern-format release is the supported route for
+new evaluations.
 
 All checkpoint paths resolve through `reni/utils/checkpoint_locator.py`
 (repo extras → paper archive → baselines archive; `$RENI_CHECKPOINT_ROOTS`

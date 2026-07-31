@@ -10,6 +10,7 @@ dependencies=[
     "requests",
     "wget",
     "roma",
+    "cairosvg",
 ]
 
 [tool.setuptools.packages.find]
@@ -21,3 +22,6 @@ sh-illumination-field = 'reni.configs.sh_sg_envmap_configs:SHField'
 sg-illumination-field = 'reni.configs.sh_sg_envmap_configs:SGField'
 envrionment-map-field = 'reni.configs.sh_sg_envmap_configs:EnvMapField'
 reni-inverse = 'reni.configs.reni_inverse_config:RENIInverse'
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

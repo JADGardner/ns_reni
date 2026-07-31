@@ -4,7 +4,7 @@
 
 Paper: RENI++: A Rotation-Equivariant, Scale-Invariant, Natural Illumination Prior
 
-![NeuSky Teaser](publication/figures/reni_plus_plus_teaser.gif)
+![RENI++ latent rotation](publication/figures/reni_thesis_rotation.gif)
 
 ## Installation
 
@@ -22,15 +22,8 @@ git clone https://github.com/JADGardner/ns_reni.git
 cd ns_reni
 ```
 
-**Set up data and model directories.** Either create symlinks in the project root:
-
-```bash
-ln -s /path/to/datasets data
-ln -s /path/to/pretrained-models model-storage
-mkdir -p outputs
-```
-
-Or set environment variables (in your shell or a `.env` file in the project root):
+**Set up data and model directories.** Set the host paths in your shell or a
+`.env` file in the project root:
 
 ```bash
 # .env
@@ -38,6 +31,10 @@ DATA_PATH=/path/to/datasets
 MODEL_STORAGE_PATH=/path/to/pretrained-models
 OUTPUTS_PATH=/path/to/outputs
 ```
+
+Path resolution also supports `DATA_PATH`, `MODEL_STORAGE_PATH` and
+`OUTPUTS_PATH` when running outside the container; no compatibility symlinks
+are required.
 
 **Build and run:**
 
