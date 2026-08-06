@@ -1,13 +1,13 @@
 [project]
 name = "reni-minimal-inference"
-version = "1.0.0"
+version = "1.0.1"
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "numpy==2.2.6",
-    "pillow==11.3.0",
-    "torch==2.7.1+cpu",
+    "pillow==12.3.0",
+    "torch==2.13.0+cpu",
 ]
 
 [tool.uv]
 package = false
-extra-index-url = ["https://download.pytorch.org/whl/cpu"]
+find-links = ["https://download.pytorch.org/whl/cpu/torch/"]

@@ -144,7 +144,7 @@ python3 scripts/download_models.py model-storage/reni
 
 This retrieves the joint Gram-Schmidt, two-bracket, two-cycle D=100 model
 used as the thesis headline result. The downloader uses the tagged
-[RENI Models v1.1 release](https://huggingface.co/jadgardner/reni-models)
+[RENI Models v1.2 release](https://huggingface.co/jadgardner/reni-models)
 and verifies every downloaded file against `MODEL_MANIFEST.json`.
 
 Other release groups are opt-in:

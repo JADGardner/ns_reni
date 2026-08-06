@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-RELEASE_VERSION = "1.1"
+RELEASE_VERSION = "1.2"
 
 
 @dataclass(frozen=True)

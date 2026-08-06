@@ -13,7 +13,7 @@ import requests
 
 
 REPO_ID = "jadgardner/reni-models"
-RELEASE_VERSION = "1.1"
+RELEASE_VERSION = "1.2"
 REVISION = f"v{RELEASE_VERSION}"
 BASE_URL = f"https://huggingface.co/{REPO_ID}/resolve/{REVISION}"
 MANIFEST_NAME = "MODEL_MANIFEST.json"

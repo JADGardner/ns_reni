@@ -62,7 +62,7 @@ For example:
 
 ```bash
 hf download jadgardner/reni-models \
-  --revision v1.1 \
+  --revision v1.2 \
   --include "minimal/*" \
   --local-dir model-storage/reni
 ```
@@ -84,6 +84,10 @@ installation. The artifact includes the joint Vector Neuron frame, attention
 decoder, architecture metadata and two-bracket HDR constants. The full
 checkpoint remains available in `core` for continued training and analysis of
 the learned training latents.
+
+Release `v1.2` updates the locked minimal environment to PyTorch 2.13.0 CPU,
+Pillow 12.3.0 and setuptools 83.0.0. The decoder weights and all full
+checkpoints are unchanged from `v1.1`.
 
 ## Data
 
