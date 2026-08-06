@@ -180,3 +180,30 @@ two-bracket HDR reconstruction, but deliberately omits Nerfstudio, training
 latents and optimiser state. See
 [`examples/minimal_inference/README.md`](examples/minimal_inference/README.md)
 for the artifact contract.
+
+## Citation
+
+Please cite the RENI and RENI++ publications:
+
+```bibtex
+@inproceedings{gardner2022reni,
+  title     = {Rotation-Equivariant Conditional Spherical Neural Fields for
+               Learning a Natural Illumination Prior},
+  author    = {Gardner, James A. D. and Egger, Bernhard and
+               Smith, William A. P.},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {35},
+  pages     = {26309--26323},
+  year      = {2022}
+}
+
+@article{gardner2026renipp,
+  title   = {{RENI++}: A Rotation-Equivariant, Scale-Invariant, Natural
+             Illumination Prior},
+  author  = {Gardner, James A. D. and Egger, Bernhard and
+             Smith, William A. P.},
+  journal = {IEEE Transactions on Pattern Analysis and Machine Intelligence},
+  year    = {2026},
+  doi     = {10.1109/TPAMI.2026.3691593}
+}
+```
