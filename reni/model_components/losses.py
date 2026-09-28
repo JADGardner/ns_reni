@@ -58,6 +58,31 @@ class ScaleInvariantLogLoss(nn.Module):
                 residual (still invariant to a global log-space shift); when
                 None the original unweighted computation is used exactly.
         """
+        # Known legacy bug: both branches reduce over the whole ray batch and
+        # all RGB channels. They remove one batch-wide log-exposure offset,
+        # not an independent exposure offset for each image in a mixed batch.
+        # For example, equal-sized image groups with constant residuals +1
+        # and -1 give loss 1, although a per-image exposure loss would be zero.
+        # Preserve this behaviour for reproduction of existing checkpoints.
+        # The fixed-gauge two-bracket model does not use this loss.
+        #
+        # For future per-image exposure-invariant runs, pass image IDs from
+        # the ray sampler, group residuals by image, and compute for each i:
+        #   mu_i = sum(w_i * R_i) / sum(w_i)
+        #   loss_i = sum(w_i * (R_i - mu_i)**2) / sum(w_i)
+        # then average loss_i over sampled images. Use unit weights for the
+        # unweighted case and broadcast weights across RGB before summing.
+        # Each image has one scalar mu_i across its rays and RGB channels;
+        # skip groups with zero total weight. Do not infer image boundaries
+        # by reshaping the randomly sampled ray batch.
+        #
+        # The paper's vector equation instead centres each RGB channel
+        # separately, also removing channelwise colour offsets. That is a
+        # different invariance from a single achromatic exposure per image.
+        # Changing this loss requires new runs; it does not retrospectively
+        # change the objective used for the published results. Other loss
+        # terms (e.g. cosine similarity on log-RGB) must also be checked before
+        # claiming exposure invariance of the complete training objective.
         R = log_predicted - log_gt
 
         if weights is None:
