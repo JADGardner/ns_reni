@@ -34,6 +34,14 @@ def parse_args() -> argparse.Namespace:
                         help="Override the run timestamp directory name.")
     parser.add_argument("--output-dir", type=Path, default=Path("outputs"))
     parser.add_argument("--vis", default="wandb")
+    parser.add_argument("--log-loss-variant", default="legacy",
+                        choices=["legacy", "per_image", "linear_cosine", "both"])
+    parser.add_argument("--skip-periodic-eval", action="store_true",
+                        help="Train only; compare frozen checkpoints with a separate common refit protocol.")
+    parser.add_argument("--progress-jsonl", type=Path, default=None,
+                        help="Record timing and finite loss checks every 100 steps.")
+    parser.add_argument("--direct-single-device", action="store_true",
+                        help="Set up the trainer directly, avoiding unrelated registered method plugins.")
     parser.add_argument(
         "--quiet-local-writer",
         action="store_true",
@@ -215,7 +223,6 @@ def main() -> None:
         if args.training_paradigm != "standard" or args.latent_reset_cycles != 1:
             raise ValueError("Architecture ablations use one standard 50k training run.")
 
-    from nerfstudio.scripts.train import main as ns_train_main
     from reni.configs.reni_config import RENIField
 
     config = copy.deepcopy(RENIField.config)
@@ -242,6 +249,11 @@ def main() -> None:
         config.save_only_latest_checkpoint = False
     apply_ablation_recipe(config, args.ablation_recipe)
     apply_variant(config, args)
+    config.pipeline.model.log_loss_variant = args.log_loss_variant
+    if args.skip_periodic_eval:
+        config.steps_per_eval_image = 0
+        config.steps_per_eval_batch = 0
+        config.steps_per_eval_all_images = 0
     config.experiment_name = args.experiment_name or (
         f"reni_{args.training_paradigm}_d{args.latent_dim}"
         + (f"_{args.variant}" if args.variant != "baseline" else "")
@@ -253,7 +265,51 @@ def main() -> None:
     if args.quiet_local_writer:
         config.logging.local_writer.enable = False
 
-    ns_train_main(config)
+    if args.progress_jsonl is not None:
+        import json
+        import math
+        import time
+        from reni.engine.trainer import RENITrainer
+
+        args.progress_jsonl.parent.mkdir(parents=True, exist_ok=True)
+        original_iteration = RENITrainer.train_iteration
+        started = time.monotonic()
+
+        def logged_iteration(self, step):
+            result = original_iteration(self, step)
+            if step % 100 == 0 or step == config.max_num_iterations - 1:
+                import torch
+                torch.cuda.synchronize()
+                loss = float(result[0].detach())
+                record = {"step": step, "elapsed_s": time.monotonic() - started,
+                          "loss": loss, "losses": {k: float(v.detach()) for k, v in result[1].items()},
+                          "peak_memory_bytes": torch.cuda.max_memory_allocated()}
+                with args.progress_jsonl.open("a") as stream:
+                    stream.write(json.dumps(record) + "\n")
+                if not math.isfinite(loss):
+                    raise FloatingPointError(f"Non-finite training loss at step {step}")
+            return result
+
+        RENITrainer.train_iteration = logged_iteration
+    if args.direct_single_device:
+        import random
+        import numpy as np
+        import torch
+        if config.machine.num_devices != 1 or config.machine.num_machines != 1:
+            raise ValueError("Direct launch supports exactly one device")
+        torch.backends.cudnn.benchmark = True
+        random.seed(config.machine.seed)
+        np.random.seed(config.machine.seed)
+        torch.manual_seed(config.machine.seed)
+        config.set_timestamp()
+        config.print_to_terminal()
+        config.save_config()
+        trainer = config.setup(local_rank=0, world_size=1)
+        trainer.setup()
+        trainer.train()
+    else:
+        from nerfstudio.scripts.train import main as ns_train_main
+        ns_train_main(config)
 
 
 if __name__ == "__main__":

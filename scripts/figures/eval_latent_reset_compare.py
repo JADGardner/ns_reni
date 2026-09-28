@@ -170,6 +170,7 @@ def _copy_loss_settings(model_config: Any, saved_model: Dict[str, Any]) -> None:
         model_config.loss_coefficients = current
 
     for key in (
+        "log_loss_variant",
         "luminance_weighted_loss",
         "luminance_weight_power",
         "luminance_weight_cap",

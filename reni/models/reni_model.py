@@ -19,7 +19,7 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 from reni.illumination_fields.base_spherical_field import SphericalFieldConfig
 from reni.field_components.field_heads import RENIFieldHeadNames
-from reni.model_components.losses import KLD, ScaleInvariantLogLoss, WeightedMSELoss
+from reni.model_components.losses import KLD, ScaleInvariantLogLoss, WeightedMSELoss, per_image_exposure_loss, linear_rgb_cosine_from_logs
 from reni.utils.colourspace import linear_to_sRGB
 from reni.utils.hdr_metrics import compute_hdr_peak_metrics
 from reni.utils.tonemap import luminance, two_bracket_to_linear
@@ -58,6 +58,8 @@ class RENIModelConfig(ModelConfig):
     """Which losses to include in the training"""
     luminance_weighted_loss: bool = False
     """Weight scale_inv_loss / log_mse_loss per ray by GT linear luminance (upweights bright directions)."""
+    log_loss_variant: Literal["legacy", "per_image", "linear_cosine", "both"] = "legacy"
+    """Opt-in loss-correction experiment; legacy checkpoint behaviour is unchanged."""
     luminance_weight_power: float = 1.0
     """Exponent applied to the GT luminance when computing loss weights."""
     luminance_weight_cap: float = 100.0
@@ -113,6 +115,11 @@ class RENIModel(Model):
         super().populate_modules()
 
         normalisations = {"min_max": self.metadata["min_max"], "log_domain": self.metadata["convert_to_log_domain"]}
+        if self.config.log_loss_variant != "legacy":
+            if not normalisations["log_domain"] or normalisations["min_max"] is not None:
+                raise ValueError("Corrected log losses require raw, unnormalised natural-log RGB")
+            if self.metadata.get("tonemap_targets", False):
+                raise ValueError("Corrected log losses cannot be applied to two-bracket targets")
 
         # Two-bracket (complementary tonemapping) mode is driven by the dataparser metadata.
         self.two_bracket = bool(self.metadata.get("tonemap_targets", False))
@@ -321,12 +328,11 @@ class RENIModel(Model):
                 loss_dict["kld_loss"] = kld_loss
 
             if self.config.loss_inclusions["cosine_similarity_loss"] in [True, "train", "both"]:
-                similarity = self.cosine_similarity(outputs["rgb"], batch["image"])
-                cosine_similarity_loss = 1.0 - similarity.mean()
+                cosine_similarity_loss = self._colour_loss(outputs["rgb"], batch["image"])
                 loss_dict["cosine_similarity_loss"] = cosine_similarity_loss
 
             if self.config.loss_inclusions["scale_inv_loss"] in [True, "train", "both"]:
-                scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], batch["image"], weights=lum_weights)
+                scale_inv_loss = self._exposure_loss(outputs["rgb"], batch, lum_weights)
                 loss_dict["scale_inv_loss"] = scale_inv_loss
         else:
             if self.config.loss_inclusions["log_mse_loss"] in [True, "eval", "both"]:
@@ -349,18 +355,28 @@ class RENIModel(Model):
                 loss_dict["kld_loss"] = kld_loss
 
             if self.config.loss_inclusions["cosine_similarity_loss"] in [True, "eval", "both"]:
-                similarity = self.cosine_similarity(outputs["rgb"], batch["image"])
-                cosine_similarity_loss = 1.0 - similarity.mean()
+                cosine_similarity_loss = self._colour_loss(outputs["rgb"], batch["image"])
                 loss_dict["cosine_similarity_loss"] = cosine_similarity_loss
 
             if self.config.loss_inclusions["scale_inv_loss"] in [True, "eval", "both"]:
-                scale_inv_loss = self.scale_invariant_loss(outputs["rgb"], batch["image"], weights=lum_weights)
+                scale_inv_loss = self._exposure_loss(outputs["rgb"], batch, lum_weights)
                 loss_dict["scale_inv_loss"] = scale_inv_loss
 
         loss_dict.update(self._two_bracket_losses(outputs, batch))
 
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
         return loss_dict
+
+    def _colour_loss(self, prediction, target):
+        if self.config.log_loss_variant in ("linear_cosine", "both"):
+            return linear_rgb_cosine_from_logs(prediction, target)
+        return 1.0 - self.cosine_similarity(prediction, target).mean()
+
+    def _exposure_loss(self, prediction, batch, weights):
+        if self.config.log_loss_variant in ("per_image", "both"):
+            image_ids = batch["indices"][:, 0].to(device=prediction.device, dtype=torch.long)
+            return per_image_exposure_loss(prediction, batch["image"], image_ids, weights)
+        return self.scale_invariant_loss(prediction, batch["image"], weights=weights)
 
     def get_image_metrics_and_images(
         self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]

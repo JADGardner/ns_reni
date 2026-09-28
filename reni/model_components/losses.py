@@ -108,3 +108,48 @@ class WeightedMSELoss(nn.Module):
         weights = weights.expand_as(predicted)
         weight_sum = weights.sum().clamp_min(1e-12)
         return (weights * (predicted - gt) ** 2).sum() / weight_sum
+
+
+def per_image_exposure_loss(log_prediction, log_target, image_ids, weights=None):
+    """Equal-image log-MSE after removing one scalar exposure per sampled image.
+
+    Inputs are finite raw natural-log RGB, [rays, 3]. IDs come from the ray
+    sampler, not a reshape. Optional weights are fixed, nonnegative and
+    broadcastable to RGB. Empty-weight images do not contribute.
+    """
+    residual = log_prediction - log_target
+    if residual.ndim != 2 or residual.shape[1] != 3 or image_ids.shape != residual.shape[:1]:
+        raise ValueError("Expected [rays, 3] log-RGB and one image ID per ray")
+    if weights is None:
+        weights = torch.ones_like(residual)
+    else:
+        if weights.requires_grad:
+            raise ValueError("Exposure-loss weights must be prediction-independent")
+        if weights.ndim == 1:
+            weights = weights[:, None]
+        weights = weights.to(residual).expand_as(residual)
+    groups, inverse = torch.unique(image_ids, return_inverse=True)
+
+    def aggregate(values):
+        return residual.new_zeros(groups.numel()).index_add(0, inverse, values)
+
+    mass = aggregate(weights.sum(-1))
+    valid = mass > 0
+    denominator = torch.where(valid, mass, torch.ones_like(mass))
+    mean = aggregate((weights * residual).sum(-1)) / denominator
+    squared = weights * (residual - mean[inverse, None]).square()
+    # All-zero weights return NaN deliberately so the run's finite-loss guard
+    # rejects an invalid batch rather than silently accepting zero loss.
+    return (aggregate(squared.sum(-1)) / denominator * valid).sum() / valid.sum()
+
+
+def linear_rgb_cosine_from_logs(log_prediction, log_target):
+    """Linear-RGB colour direction, evaluated stably from raw natural logs.
+
+    Rescaling each RGB triplet before exponentiation prevents HDR overflow.
+    This colour loss must accompany a spatial reconstruction loss. The
+    dataset's log epsilon defines the behaviour at black/near-black pixels.
+    """
+    prediction = (log_prediction - log_prediction.amax(-1, keepdim=True)).exp()
+    target = (log_target - log_target.amax(-1, keepdim=True)).exp()
+    return (1 - torch.nn.functional.cosine_similarity(prediction, target, dim=-1, eps=1e-8)).mean()
